@@ -1,0 +1,347 @@
+import 'dart:math' as math;
+
+import 'package:flutter/widgets.dart';
+import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem;
+
+import '../reference_ui_theme.dart';
+import '../widget/live_buy_widget_visibility.dart';
+import 'live_buy_player.dart';
+import 'live_entry_position_timing.dart'
+    show LBFloatingEntryPosition, lbLiveEntryClampDx;
+import 'reference_ui_design.dart';
+
+// CollapsibleLivebuyPlayer — collapsible player presenter (Flutter, rb-flutter-collapsible-player).
+//
+// Parity: iOS `Container/LivebuyPlayerPresenter.swift` (`livebuyPlayer(video:)`) — the turnkey
+// "full-screen player + minimize → bottom-right floating preview" container. Four-platform
+// parity: Flutter / Android / RN previously had NO collapsible presenter (minimize→floating was
+// host-owned and unimplemented in the samples); this builds it.
+//
+// COMPOSITION: an OVERLAY widget the host stacks ABOVE its app shell (so the floating preview
+// survives tab switches — issue 3). `video != null` → the turnkey `LivebuyPlayer` is composed
+// FULL-SCREEN; the minimize button (`config.onMinimize`, taken over here) COLLAPSES it to a
+// bottom-right `FloatingWidgetView` preview card.
+//
+// KEEP-ALIVE (issue 5, iOS parity): the `LivebuyPlayer` stays MOUNTED the whole time a session
+// exists — minimize only HIDES it (`Opacity(0)` + `IgnorePointer`), it is NOT torn down — so
+// playback continues while minimized and tapping the card to restore is an instant RESUME
+// (no reload). DRAG/TAP (issue 4): the floating card is draggable to reposition (clamped
+// on-screen) and a TAP restores; the drag pan recognizer and the card's own tap are separated.
+//
+// The pure phase / reopen / clamp helpers are extracted (testable) — mirror iOS
+// `collapsiblePhase` / `shouldReopenOnVideoChange` / `clampFloatingOffset`.
+
+/// The presentation phase of a collapsible player (parity iOS `CollapsiblePlayerPhase`).
+enum CollapsiblePlayerPhase { closed, full, floating }
+
+/// Pure phase derivation: no video → closed; minimized → floating; else full.
+CollapsiblePlayerPhase collapsiblePhase({required bool hasVideo, required bool isMinimized}) {
+  if (!hasVideo) return CollapsiblePlayerPhase.closed;
+  return isMinimized ? CollapsiblePlayerPhase.floating : CollapsiblePlayerPhase.full;
+}
+
+/// Whether the presenter should declare the home-screen widget previews COVERED (fed into the
+/// opt-in `LivebuyWidgetVisibility` bridge's `notCovered` third axis). Contract:
+/// `covered ⟺ phase == full ⟺ (hasVideo && !isMinimized)` — reuses [collapsiblePhase] so there is
+/// no second source of truth. Pure (parity iOS `presenterWidgetCovered`, flutter-refui-presenter-
+/// widget-cover-by-phase).
+///
+/// Only the FULL phase declares cover: the keep-alive full-screen player keeps hardware-decoding
+/// while the FULL overlay is visible — it is the hardware-decoder contention source, so the home
+/// previews must yield the decoder then. FLOATING hides the full player (`Opacity(0)`) down to a
+/// single tiny card, so releasing the N home previews then costs far less than "full-screen live +
+/// N previews"; CLOSED has no session. Hence `floating`/`closed` → NOT covered.
+bool presenterWidgetCovered({required bool hasVideo, required bool isMinimized}) =>
+    collapsiblePhase(hasVideo: hasVideo, isMinimized: isMinimized) == CollapsiblePlayerPhase.full;
+
+/// Whether a change of the bound video's id should auto-restore the full-screen player: true
+/// ONLY when a new (non-null) video arrives while minimized (the host swapped in another video).
+/// Restoring from the floating card keeps the SAME id (only flips minimized) → returns false.
+/// Pure (parity iOS `shouldReopenOnVideoChange`).
+bool shouldReopenOnVideoChange({required String? newVideoId, required bool isMinimized}) {
+  return newVideoId != null && isMinimized;
+}
+
+/// Clamp the floating card's committed-plus-live drag offset so it can be dragged to reposition
+/// but never pushed off-screen. Offsets are SCREEN coordinates measured from the resting corner
+/// (resting offset `Offset.zero`; `+x` right, `+y` down). Pure (parity iOS `clampFloatingOffset`).
+///
+/// [position] selects WHICH bottom corner the card rests in and therefore which way it may be
+/// dragged (rb-flutter-floating-entry-position-timing). It is OPTIONAL and defaults to
+/// [LBFloatingEntryPosition.rightBottom], so the pre-existing call sites
+/// ([CollapsibleLivebuyPlayer]'s own floating preview) and their tests are bit-for-bit unchanged:
+///
+/// ```text
+/// rightBottom : dx ∈ [min(0, -span), 0]   靜止在右，只能往左
+/// leftBottom  : dx ∈ [0, max(0,  span)]   靜止在左，只能往右
+/// dy          ∈ [min(0, -spanY), 0]       兩個落點相同(皆錨底)
+/// 其中 span = 容器邊長 − 卡片邊長 − inset(同一個量，非退化時左右對稱)
+/// ```
+///
+/// 水平夾取委派給 pure [lbLiveEntryClampDx]，該處記錄了「右下分支語意逐位元不變（字面已改寫並換檔）」與 Dart 的
+/// `-0.0` 語意(本函式**不宣稱**絕不產生 `-0.0`；在 Flutter 那既無行為影響也不會造成測試假紅)。
+Offset clampFloatingOffset({
+  required Offset committed,
+  required Offset translation,
+  required Size cardSize,
+  required Size containerSize,
+  required Offset inset,
+  LBFloatingEntryPosition position = LBFloatingEntryPosition.rightBottom,
+}) {
+  final desiredX = committed.dx + translation.dx;
+  final desiredY = committed.dy + translation.dy;
+  final minY = math.min(0.0, -(containerSize.height - cardSize.height - inset.dy));
+  final clampedX = lbLiveEntryClampDx(
+    position: position,
+    desiredDx: desiredX,
+    span: containerSize.width - cardSize.width - inset.dx,
+  );
+  final clampedY = math.max(minY, math.min(0.0, desiredY));
+  return Offset(clampedX, clampedY);
+}
+
+/// The turnkey collapsible player OVERLAY: full-screen [LivebuyPlayer] for the bound [video],
+/// with a built-in minimize → bottom-right floating preview. Place it in a root `Stack` ABOVE
+/// the host's app shell so the floating preview survives navigation (issue 3). `video == null`
+/// → renders nothing.
+class CollapsibleLivebuyPlayer extends StatefulWidget {
+  /// The host's session source of truth: non-null → present; null → fully closed.
+  final LBVideoItem? video;
+
+  /// Called when the presenter clears the session (close / fatal dismiss) → host sets `video` null.
+  final ValueChanged<LBVideoItem?> onVideoChanged;
+
+  /// The host's player config. The presenter OWNS `onMinimize` / `onDismiss`; every other seam
+  /// passes through unchanged.
+  final LivebuyPlayerConfig config;
+
+  /// Resolved reference-ui theme for the floating card.
+  final ReferenceUITheme theme;
+
+  const CollapsibleLivebuyPlayer({
+    super.key,
+    required this.video,
+    required this.onVideoChanged,
+    required this.theme,
+    this.config = const LivebuyPlayerConfig(),
+  });
+
+  @override
+  State<CollapsibleLivebuyPlayer> createState() => _CollapsibleLivebuyPlayerState();
+}
+
+class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
+  /// Resting bottom-right padding of the floating card (parity iOS `floatingInset`).
+  static const Offset _floatingInset = Offset(12, 24);
+
+  bool _isMinimized = false;
+  Offset _committedOffset = Offset.zero;
+  Offset _dragTranslation = Offset.zero;
+  Size _cardSize = Size.zero;
+
+  /// The video the floating preview card SHOWS (rb-flutter-collapsible-player-track-switch). Init
+  /// to the entry `video`; the turnkey container reports an in-place switch (hot-pick / swipe) via
+  /// `config.onVideoSwitchedItem` (consumed in `_composedConfig` below), which updates this to the
+  /// switched video's item (REAL cover / title for hot-pick; cover-empty + right id for swipe).
+  /// Distinct from the host's `video` (which drives the keep-alive `videoId` prop + the auto-restore
+  /// trigger): an in-place switch updates ONLY `_shownVideo`, NOT the keep-alive prop — the switch
+  /// already loaded in the native player, so re-driving the prop would force a redundant reload
+  /// (same as Android / RN; no latch needed — auto-restore keys on the host `video.id`).
+  LBVideoItem? _shownVideo;
+
+  @override
+  void initState() {
+    super.initState();
+    _shownVideo = widget.video;
+    // Seed the opt-in cover bridge from the INITIAL phase (parity iOS onAppear): a host that mounts
+    // the presenter already bound to a non-null video (straight to full-screen) declares covered at
+    // once; a null-video mount stays at the default false (no-op). See `presenterWidgetCovered`.
+    _syncWidgetCover();
+  }
+
+  @override
+  void didUpdateWidget(CollapsibleLivebuyPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A HOST swap (different id) re-seeds the floating card's shown video to the new host video (an
+    // in-place switch never changes `widget.video.id`, so this only fires for genuine host swaps).
+    if (oldWidget.video?.id != widget.video?.id) {
+      _shownVideo = widget.video;
+      // A newly-bound video while minimized → close the floating preview and re-present full-screen
+      // for the new video (e.g. tapping another carousel card). Tapping the card to RESTORE keeps
+      // the same id, so it never trips this. Reset the drag offset.
+      if (shouldReopenOnVideoChange(newVideoId: widget.video?.id, isMinimized: _isMinimized)) {
+        setState(() {
+          _isMinimized = false;
+          _committedOffset = Offset.zero;
+          _dragTranslation = Offset.zero;
+        });
+      }
+      // Sync the cover bridge AFTER any auto-restore has updated `_isMinimized` (parity iOS
+      // onChange(video?.id) end). Covers open (null→id → covered), close (id→null → uncovered),
+      // host swap (idA→idB → covered), and auto-restore (floating→full → covered). Reads the fresh
+      // `widget.video` (already the new prop here) + the post-setState `_isMinimized`.
+      _syncWidgetCover();
+    }
+  }
+
+  LivebuyPlayerConfig get _composedConfig => widget.config.copyWith(
+        // Minimize → collapse to the floating preview (keep the session alive — keep-alive).
+        // full→floating: sync the cover bridge imperatively (parity iOS onChange(isMinimized)) →
+        // `presenterWidgetCovered(true, true)` == false → home previews resume.
+        onMinimize: () {
+          setState(() => _isMinimized = true);
+          _syncWidgetCover();
+        },
+        // Fatal-moment dismiss (end-screen close / unrecoverable error close) → close all.
+        onDismiss: () {
+          widget.onVideoChanged(null);
+          setState(() {
+            _isMinimized = false;
+            _committedOffset = Offset.zero;
+            _dragTranslation = Offset.zero;
+          });
+          // → closed: release the cover claim with a LITERAL false — NOT `_syncWidgetCover()`,
+          // because `onVideoChanged(null)` does not synchronously update `widget.video` (the parent
+          // rebuilds next frame), so `_syncWidgetCover()` here would read a stale non-null video and
+          // wrongly declare covered. Closing is unconditionally uncovered; the next-frame
+          // didUpdateWidget sync (video→null) is an edge-triggered no-op.
+          LivebuyWidgetVisibility.setWidgetsCovered(false);
+        },
+        // In-place switch (hot-pick / swipe) → re-bind the FLOATING card's shown video to the
+        // switched video's item so the minimized preview shows the switched video, NOT the entry
+        // one (rb-flutter-collapsible-player-track-switch). Guard same-id so a no-op switch neither
+        // re-binds nor churns. Does NOT touch the keep-alive prop (`v.id`) → no redundant reload +
+        // no auto-restore misfire. Any host-supplied `onVideoSwitchedItem` is preserved by chaining.
+        onVideoSwitchedItem: (item) {
+          widget.config.onVideoSwitchedItem?.call(item);
+          if (item.id != _shownVideo?.id) setState(() => _shownVideo = item);
+        },
+      );
+
+  // floating→full (tap the floating card): sync imperatively (parity iOS onChange(isMinimized)) →
+  // `presenterWidgetCovered(true, false)` == true → home previews pause (yield the decoder).
+  void _restore() {
+    setState(() => _isMinimized = false);
+    _syncWidgetCover();
+  }
+
+  void _close() {
+    widget.onVideoChanged(null);
+    setState(() {
+      _isMinimized = false;
+      _committedOffset = Offset.zero;
+      _dragTranslation = Offset.zero;
+    });
+    // → closed: LITERAL false (see `onDismiss` for why not `_syncWidgetCover()` — stale `widget.video`).
+    LivebuyWidgetVisibility.setWidgetsCovered(false);
+  }
+
+  /// Drive the opt-in cover bridge from the CURRENT phase. `covered ⟺ full` (see
+  /// [presenterWidgetCovered]). `setWidgetsCovered` is edge-triggered (same value = no-op), so
+  /// calling this from multiple hooks is safe and never churns. NOTE: callers on the CLOSE path
+  /// (`_close` / `onDismiss`) MUST NOT use this (they set `widget.video` null via the host, which is
+  /// not yet reflected here) — they call `setWidgetsCovered(false)` directly instead.
+  void _syncWidgetCover() {
+    LivebuyWidgetVisibility.setWidgetsCovered(
+      presenterWidgetCovered(hasVideo: widget.video != null, isMinimized: _isMinimized),
+    );
+  }
+
+  @override
+  void dispose() {
+    // Presenter removed from the tree → release any cover claim so the home previews are NOT left
+    // permanently paused (parity iOS onDisappear — the important edge case). Literal false:
+    // unconditional on unmount. Edge-triggered, so it is a no-op when already uncovered.
+    LivebuyWidgetVisibility.setWidgetsCovered(false);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final v = widget.video;
+    if (v == null) return const SizedBox.shrink();
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final containerSize = Size(constraints.maxWidth, constraints.maxHeight);
+        return Stack(
+          children: [
+            // KEEP-ALIVE full player: mounted the whole time `video != null`. Minimize only HIDES
+            // it (Opacity 0 + IgnorePointer) so playback continues + restore is an instant resume.
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: _isMinimized,
+                child: Opacity(
+                  opacity: _isMinimized ? 0 : 1,
+                  child: LivebuyPlayer(videoId: v.id, config: _composedConfig),
+                ),
+              ),
+            ),
+
+            // Bottom-right floating preview while minimized. Draggable (clamped on-screen);
+            // a tap restores, the close button clears.
+            if (_isMinimized)
+              Positioned(
+                right: _floatingInset.dx - (_committedOffset.dx + _dragTranslation.dx),
+                bottom: _floatingInset.dy - (_committedOffset.dy + _dragTranslation.dy),
+                child: GestureDetector(
+                  onPanUpdate: (d) => setState(() => _dragTranslation += d.delta),
+                  onPanEnd: (_) => setState(() {
+                    _committedOffset = clampFloatingOffset(
+                      committed: _committedOffset,
+                      translation: _dragTranslation,
+                      cardSize: _cardSize,
+                      containerSize: containerSize,
+                      inset: _floatingInset,
+                    );
+                    _dragTranslation = Offset.zero;
+                  }),
+                  child: _MeasureSize(
+                    onChange: (size) => _cardSize = size,
+                    // The floating preview card is composed by the resolved design (granularity
+                    // A). Default MinimalDesign = the verbatim `FloatingWidgetView`; a host
+                    // injects its own via `config.design`.
+                    child: widget.config.design.floatingPlayerCard(
+                      FloatingCardContext(
+                        theme: widget.theme,
+                        // The SWITCHED video (rb-flutter-collapsible-player-track-switch): an
+                        // in-place switch updates `_shownVideo` so the card shows the switched
+                        // video, not the entry `v`.
+                        video: _shownVideo ?? v,
+                        // A genuine live session → load the real cover (parity with iOS
+                        // `LivebuyPlayerPresenter` `FloatingCardContext(live: true)`).
+                        live: true,
+                        onTap: (_) => _restore(),
+                        onClose: _close,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Reports its child's rendered size once (for clamping the floating card's drag offset).
+class _MeasureSize extends StatefulWidget {
+  final ValueChanged<Size> onChange;
+  final Widget child;
+  const _MeasureSize({required this.onChange, required this.child});
+
+  @override
+  State<_MeasureSize> createState() => _MeasureSizeState();
+}
+
+class _MeasureSizeState extends State<_MeasureSize> {
+  @override
+  Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final size = context.size;
+      if (size != null) widget.onChange(size);
+    });
+    return widget.child;
+  }
+}

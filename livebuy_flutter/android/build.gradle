@@ -1,0 +1,119 @@
+// Android build config for the `livebuy_flutter` plugin.
+//
+// This file makes the plugin's native Kotlin bridge (src/main/kotlin/tv/livebuy/flutter/*)
+// compilable by a host Flutter app. Without it the plugin only ships Dart + a
+// MethodChannel contract that is never compiled against the real Android SDK —
+// native bridge breakage (an SDK API rename, a new enum case, a changed model
+// type) would only surface in a consumer's `./gradlew assembleDebug`, far too late.
+// CI compiles it via flutter/example (see .github/workflows/flutter-bridge-build.yml).
+//
+// Dependency on the Livebuy Android SDK (`tv.livebuy.sdk.*`):
+//   • In the monorepo (CI + local dev) the SDK is published to mavenLocal first
+//     (`./gradlew :livebuy:publishToMavenLocal` with the publish init script) so it
+//     is consumed as a pre-built AAR. The SDK is pinned to AGP 8.2.2 / Gradle 8.6
+//     and the host app to AGP 9 / Gradle 9.1 — incompatible for a Gradle composite
+//     build, so an AAR consumed across toolchains is the supported path.
+//   • Published consumers (pub.dev) resolve the same coordinates from JitPack via
+//     the host app's repositories.
+group = "tv.livebuy.flutter"
+version = "1.3.0"
+
+buildscript {
+    ext.kotlin_version = "2.3.20"
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:9.0.1"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+apply plugin: "org.jetbrains.kotlin.android"
+
+android {
+    namespace = "tv.livebuy.flutter"
+    compileSdk = 36
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    sourceSets {
+        main.java.srcDirs += "src/main/kotlin"
+        // flutter-android-auto-pip-entry — JVM unit tests for the pure AutoPipPolicy helpers.
+        test.java.srcDirs += "src/test/kotlin"
+    }
+
+    defaultConfig {
+        minSdk = 24
+    }
+}
+
+repositories {
+    mavenLocal()   // resolves tv.livebuy:livebuy (published by bootstrap.sh / flutter-bridge-build CI via `:livebuy:publishToMavenLocal -PuseRealIvs`)
+    google()
+    mavenCentral()
+    // Livebuy Android SDK remote channel — static Maven tree served by GitHub Pages
+    // from the public mirror repo `ariesweng/livebuy-android-sdk` (symmetric to iOS,
+    // and to react-native/android/build.gradle's identical declaration). This is the
+    // PRIMARY published-consumer channel; jitpack below is a fallback only.
+    maven { url "https://ariesweng.github.io/livebuy-android-sdk/" }
+    maven { url "https://jitpack.io" }   // published-consumer fallback for the SDK artifact
+}
+
+dependencies {
+    // Livebuy Android SDK — the bridge imports tv.livebuy.sdk.{LivebuySDK, models, events, player, widget, core}.
+    // Version is the outward-facing Maven coordinate (LIVEBUY_MAVEN_VERSION) and MUST be a PUBLISHED
+    // remote-channel version (Livebuy Pages Maven / JitPack fallback above) whose core artifact carries
+    // the bridge's full core API surface. Do NOT pin the core-internal `defaultConfig.versionName`
+    // (X-SDK-Version header only; the remote channel has NO such artifact, so it is unresolvable for
+    // pub.dev consumers). Distinct from this file's own `version` (the tv.livebuy.flutter plugin
+    // artifact version) — different version axis.
+    //
+    // Current pin: 4.11.0 — the current outward-facing release (iOS + Android lockstep, tag
+    // `android-v4.11.0`), verified to carry the bridge's full core API surface, including the
+    // 2026-07-16 brand-casing rename (`LiveBuySDK`/`LiveBuyPlayerView` -> `LivebuySDK`/
+    // `LivebuyPlayerView`, commit `c140f4bf`) that this bridge imports post-rename. v4.11.0's one
+    // BREAKING item (`WinClaimStage.CONFIRM_CLOSE` / `confirmClose` removal) is scoped to
+    // reference-ui-internal and does not touch this bridge (verified: zero references in
+    // flutter/android/src) — this bump is routine maintenance, not a compile-failure fix.
+    //
+    // ⚠️ THIS PIN WILL GO STALE AGAIN — read before bumping it (or trusting it).
+    // In the monorepo + CI this pin does NOT gate correctness: flutter-bridge-build.yml /
+    // bootstrap.sh publish :livebuy to mavenLocal under THIS EXACT coordinate string
+    // (`-PLIVEBUY_MAVEN_VERSION=<parsed from this file>`), so the AAR is always built from
+    // current HEAD source regardless of what version number is written here. Only a PUBLISHED
+    // pub.dev / git-dependency consumer resolves the REAL remote artifact at this pin — that is
+    // the only path that ever proves whether the pin is actually still good. This is exactly how
+    // the pin 3.2.0 once went undetected-stale: it satisfied every monorepo/CI build while
+    // silently resolving pre-rename classes for real external consumers (see change
+    // `flutter-distribution-core-pin-refresh` for the incident). This time (4.10.0 -> 4.11.0) is
+    // the milder, expected case the same doc predicted: a pin left unbumped simply falls behind
+    // the current outward-facing release over time (see change
+    // `flutter-android-bridge-core-pin-4-11-0`).
+    implementation "tv.livebuy:livebuy:4.11.0"
+
+    // The bridge uses kotlinx.coroutines directly (CoroutineScope / Dispatchers / launch).
+    // The SDK pulls it transitively but as `implementation`, so it is not on the
+    // plugin's compile classpath — declare it explicitly.
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+
+    // flutter-android-auto-pip-entry — JVM unit tests for the zero-Android-dependency
+    // AutoPipPolicy pure helpers (AutoPipPolicyTest).
+    testImplementation "junit:junit:4.13.2"
+}

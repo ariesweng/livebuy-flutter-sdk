@@ -1,0 +1,22 @@
+name: livebuy_flutter_ui
+description: Default UI template layer for the Livebuy Flutter SDK.
+version: 1.3.0
+homepage: https://github.com/livebuy/livebuy-sdk/tree/main/flutter-ui
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  livebuy_flutter:
+    path: ../livebuy_flutter
+  # In-app browser for diversion=1 purchase pages
+  # (fix-ui-template-default-parity-template #2, LaunchMode.inAppBrowserView).
+  url_launcher: ^6.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0

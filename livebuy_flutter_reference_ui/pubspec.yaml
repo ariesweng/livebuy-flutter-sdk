@@ -1,0 +1,60 @@
+name: livebuy_flutter_reference_ui
+description: Reference-UI (drop-in default pixel) layer for the Livebuy Flutter SDK.
+version: 1.3.0
+homepage: https://github.com/livebuy/livebuy-sdk/tree/main/flutter-reference-ui
+# Internal monorepo package consumed via a path dependency on the template layer
+# (`livebuy_flutter_ui`); not published to pub.dev.
+publish_to: none
+
+# Phase 3 — Flutter parity of iOS `LivebuyReferenceUI` (SPM) / Android
+# `:livebuy-reference-ui` (Gradle). This is the ONLY Flutter layer that may
+# contain widget pixels; dependency direction is strictly unidirectional:
+#   livebuy_flutter_reference_ui -> livebuy_flutter_ui (template) -> livebuy_flutter (core)
+# `livebuy_flutter` / `livebuy_flutter_ui` MUST NOT depend on this package.
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Single-direction path dependency on the existing template layer. Through it
+  # the reference-ui layer transitively reaches the core (`livebuy_flutter`)
+  # public types (e.g. `LBSdkTheme`). This package adds NO new view-model.
+  livebuy_flutter_ui:
+    path: ../livebuy_flutter_ui
+  # rb-flutter-widget-card-looping-preview: the widget card's `preview` looping animation
+  # (parity iOS AVFoundation / Android media3 / RN react-native-video). A federated Flutter
+  # plugin (auto-registers on iOS/Android in consumer apps); built ONLY on the host-runtime
+  # `live == true` path, so golden tests (live == false) never instantiate a controller.
+  video_player: ^2.8.0
+  # flutter-refui-widget-preview-lifecycle-pause: off-screen detection for the widget card looping
+  # preview (parity with the widget-preview half of Android `android-refui-player-lifecycle-pause`).
+  # A pure Flutter package (no native plugin); only instantiated on the host-runtime `live == true`
+  # path (inside `LoopingVideoView`), so golden tests (live == false, no `LoopingVideoView`) never
+  # touch it. Combined with a `WidgetsBindingObserver` it stops background / off-screen decoding.
+  visibility_detector: ^0.4.0+2
+  # dropin-player-default-share-sheet-flutter: the default channel-share system sheet
+  # (parity iOS UIActivityViewController / Android Intent.ACTION_SEND / RN Share.share). A
+  # federated Flutter plugin (auto-registers on iOS/Android in consumer apps). Only invoked on
+  # the footer onShare default when the host did not wire `config.onShare`.
+  share_plus: ^7.2.0
+  # rb-flutter-win-claim-footer-links: opens the win-claim modal's footer legal links
+  # (`LaunchMode.inAppBrowserView` / `.externalApplication`, routed by core
+  # `LBURLOpenPolicy`). Was already resolved transitively (via the `livebuy_flutter_ui` path
+  # dependency) and already used directly by `widget/external_live.dart`; this makes the
+  # direct dependency explicit for the package's second direct consumer of it.
+  url_launcher: ^6.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+# rb-flutter-loading-mark-png-sequence: the `.loading` phase brand animation (17-frame
+# PNG sequence, parity iOS `Resources/LoadingMark` / Android drawable-nodpi). Bundled
+# locally (NOT Image.network) — this is the package's first bundled asset.
+flutter:
+  assets:
+    - assets/loading_mark/
