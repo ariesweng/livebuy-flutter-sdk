@@ -11,7 +11,10 @@ dependencies:
   flutter:
     sdk: flutter
   livebuy_flutter:
-    path: ../livebuy_flutter
+    git:
+      url: https://github.com/ariesweng/livebuy-flutter-sdk.git
+      path: livebuy_flutter
+      ref: v1.3.0
   # In-app browser for diversion=1 purchase pages
   # (fix-ui-template-default-parity-template #2, LaunchMode.inAppBrowserView).
   url_launcher: ^6.2.0

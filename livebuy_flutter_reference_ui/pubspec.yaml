@@ -23,7 +23,10 @@ dependencies:
   # the reference-ui layer transitively reaches the core (`livebuy_flutter`)
   # public types (e.g. `LBSdkTheme`). This package adds NO new view-model.
   livebuy_flutter_ui:
-    path: ../livebuy_flutter_ui
+    git:
+      url: https://github.com/ariesweng/livebuy-flutter-sdk.git
+      path: livebuy_flutter_ui
+      ref: v1.3.0
   # rb-flutter-widget-card-looping-preview: the widget card's `preview` looping animation
   # (parity iOS AVFoundation / Android media3 / RN react-native-video). A federated Flutter
   # plugin (auto-registers on iOS/Android in consumer apps); built ONLY on the host-runtime
