@@ -585,6 +585,14 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
               theme: theme,
               event: m.currentActiveEvent!,
               joined: m.activeEventJoined,
+              // rb-flutter-activity-sheet-pagination — pageCount/pageIndex read
+              // straight off the bound template (`DefaultActiveEvent.activities` /
+              // `.currentActivityPageIndex`); `onPage` forwards to
+              // `setActivityPageIndex`, which already clamps internally, so no
+              // container-level bounds-check is needed here.
+              pageCount: m.activities.length,
+              pageIndex: m.activityPageIndex,
+              onPage: m.setActivityPageIndex,
               onJoin: _handleJoinActivity,
               onClose: _handleCloseActivitySheet,
               onOpenTermsOfUse: () => openLegalLink(LBLegalLinks.termsOfUse),
@@ -671,11 +679,39 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
     setState(() => _activitySheetOpen = true);
   }
 
-  /// Forward「立即參加」to the bound template (`DefaultActiveEvent.join()` — the
-  /// view-model handles dedupe-by-id, this layer does not repeat that check).
-  /// No-op for demo instances (no bound template).
+  /// Handle the activity sheet's「立即參加」CTA tap
+  /// (rb-flutter-activity-entry-cta-gate-and-close).
+  ///
+  /// Order mirrors [_handleJoin]'s existing gating discipline (same shared
+  /// [widget.joinGate] seam, consulted BEFORE any side effect):
+  ///   0. No current event, or its `keyword` empty/absent → return early. The
+  ///      real CTA is only wired to this handler when
+  ///      `activitySheetCtaKind(keyword, joined) == .join` (keyword non-empty,
+  ///      not yet joined — see `activity_sheet.dart`), so this is defensive,
+  ///      same posture as [_handleJoin]'s own `keyword.isEmpty` guard.
+  ///   1. [widget.joinGate] (rb-flutter-event-join-gate three-tier gate: 登入 →
+  ///      暱稱 → 放行) consulted with the open event's `(id, keyword)`. `true` →
+  ///      the gate INTERCEPTED (raised a 登入 / 暱稱 modal) → return: MUST NOT
+  ///      join, MUST NOT close the sheet (the user still needs to see it while
+  ///      handling that modal — closing here would leave them unsure which
+  ///      activity the login/nickname flow was for). `null` (demo / golden /
+  ///      no host gate) → `?? false` → proceed, existing behaviour.
+  ///   2. `_model.joinActiveEvent()` — forwards to the bound template
+  ///      (`DefaultActiveEvent.join()` — the view-model handles dedupe-by-id,
+  ///      this layer does not repeat that check). No-op for demo instances (no
+  ///      bound template).
+  ///   3. Close the sheet (`_activitySheetOpen = false`) — ONLY reached on an
+  ///      actual join. Before this change the sheet never auto-closed on
+  ///      success; the user had to tap the separate close affordance even
+  ///      after「已參加」took effect.
   void _handleJoinActivity() {
+    final event = _model.currentActiveEvent;
+    if (event == null) return;
+    final keyword = event.keyword ?? '';
+    if (keyword.isEmpty) return;
+    if (widget.joinGate?.call(event.id, keyword) ?? false) return;
     _model.joinActiveEvent();
+    setState(() => _activitySheetOpen = false);
   }
 
   /// Close the activity sheet. 🔴 **純 dismiss** (design.md D4): closing the

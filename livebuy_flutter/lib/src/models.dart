@@ -1143,24 +1143,88 @@ class LBPlaybackProgress {
   final bool isPlaying;
   final bool isReplay;
 
+  /// Products currently "on screen" at [position] during VOD/replay playback
+  /// (vod-narrating-products-core-flutter, parity iOS
+  /// `LivebuyPlayerViewController.vodActiveProducts(products:position:)` / Android
+  /// `LivebuyPlayerView.vodActiveProducts(products:position:)` / RN
+  /// `vodActiveProducts(products, position)`). Every entry's `[beginTime, endTime)`
+  /// window (seconds, begin inclusive / end exclusive) contains [position]; entries
+  /// missing `beginTime`/`endTime` are excluded; may contain multiple entries when
+  /// windows overlap; ordered by `beginTime` ascending. Computed by the top-level
+  /// pure function [computeVodActiveProducts] from the wire's raw `products` snapshot +
+  /// this same snapshot's [position] — UNCONDITIONALLY (not gated on
+  /// `liveStatus`); whether/when a host reads this vs. a LIVE-only narration
+  /// signal is entirely the host's decision. Default `[]`. Flutter has no
+  /// moment-state type exposed to Dart today — this field MUST NOT be merged into
+  /// one if such a type is ever added.
+  final List<LBProduct> vodActiveProducts;
+
   const LBPlaybackProgress({
     this.position = 0,
     this.duration = 0,
     this.isPlaying = false,
     this.isReplay = false,
+    this.vodActiveProducts = const [],
   });
 
   /// Decode from the native `{"event":"playbackProgress", …}` EventChannel
   /// payload. Tolerant (parity with `LBPlayerChannelInfo.fromMap` /
   /// `LBProduct.fromMap`): missing/null numeric fields → 0; missing/null bool
-  /// fields → false.
-  factory LBPlaybackProgress.fromMap(Map<Object?, Object?> map) =>
-      LBPlaybackProgress(
-        position: (map['position'] as num?)?.toDouble() ?? 0,
-        duration: (map['duration'] as num?)?.toDouble() ?? 0,
-        isPlaying: (map['isPlaying'] as bool?) ?? false,
-        isReplay: (map['isReplay'] as bool?) ?? false,
-      );
+  /// fields → false; missing/null/non-List `products` → `[]` (an older native
+  /// plugin binary that doesn't yet send `products` degrades gracefully, never
+  /// throws).
+  factory LBPlaybackProgress.fromMap(Map<Object?, Object?> map) {
+    final position = (map['position'] as num?)?.toDouble() ?? 0;
+    final products = _asProductList(map['products']);
+    return LBPlaybackProgress(
+      position: position,
+      duration: (map['duration'] as num?)?.toDouble() ?? 0,
+      isPlaying: (map['isPlaying'] as bool?) ?? false,
+      isReplay: (map['isReplay'] as bool?) ?? false,
+      vodActiveProducts: computeVodActiveProducts(products, position),
+    );
+  }
+}
+
+/// Coerce a value to `List<LBProduct>` (mirrors [_asSpecList]/[_asSpecOptionList]).
+/// null / non-`List` → `[]`; each entry is decoded via the existing tolerant
+/// [LBProduct.fromMap] (non-`Map` entries are skipped, not thrown on).
+List<LBProduct> _asProductList(Object? value) {
+  if (value is! List) return const [];
+  return value
+      .whereType<Map>()
+      .map((e) => LBProduct.fromMap(Map<Object?, Object?>.from(e)))
+      .toList();
+}
+
+/// Pure VOD-active-products filter (vod-narrating-products-core-flutter, mirrors
+/// iOS `LivebuyPlayerViewController.vodActiveProducts(products:position:)` /
+/// Android `LivebuyPlayerView.vodActiveProducts(products:position:)` / RN
+/// `vodActiveProducts(products, position)`): returns every product in [products]
+/// whose `[beginTime, endTime)` window (seconds, begin inclusive / end exclusive)
+/// contains [position]. Products missing `beginTime` or `endTime` are excluded.
+/// May return multiple entries when windows overlap; ordered by `beginTime`
+/// ascending (tie-break order is unspecified, matching every other platform's
+/// identical non-reliance on sort stability for equal `beginTime`s).
+///
+/// Named `computeVodActiveProducts` (NOT `vodActiveProducts`, unlike the other
+/// three platforms' equivalent function) because `LBPlaybackProgress` already
+/// declares an INSTANCE field called `vodActiveProducts` — inside that class's own
+/// factory constructor, a bare `vodActiveProducts` identifier resolves to that
+/// instance member (Dart's class-body lexical scope shadows library scope for a
+/// same-named top-level declaration), not this top-level function, and instance
+/// members are unreachable from a factory constructor (no `this` yet). This is a
+/// Dart-specific naming constraint, not a semantic difference — the algorithm is a
+/// literal mirror of the other platforms' identically-behaving function.
+List<LBProduct> computeVodActiveProducts(
+    List<LBProduct> products, double position) {
+  final hits = products.where((p) {
+    final begin = p.beginTime;
+    final end = p.endTime;
+    return begin != null && end != null && begin <= position && position < end;
+  }).toList();
+  hits.sort((a, b) => a.beginTime!.compareTo(b.beginTime!));
+  return hits;
 }
 
 /// Pure VOD-scrub gate (flutter-vod-playback-progress-core, parity iOS `static

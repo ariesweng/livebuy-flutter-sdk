@@ -686,16 +686,25 @@ class DefaultPlayerTemplate {
   }
 
   /// `VIDEO_SWITCH` — reset the per-video-session family-2 overlay so the next video
-  /// starts clean: clear the merged feed + the win-claim unclaimed entry / result +
-  /// the active-event snapshot / joined set (live-activity-entry-flutter-template)
-  /// (parity with iOS `handleVideoSwitch`). Each `clear()` fires its own coalesced
-  /// notification; the reference-ui re-reads the now-empty state. Also resets the
-  /// per-session backlog-ingested flag so the next video's first round re-shows its
-  /// history backlog (chat-history-dedupe-template).
-  void handleVideoSwitch() {
+  /// starts clean: clear the merged feed + the win-claim unclaimed entry / result
+  /// (parity with iOS `handleVideoSwitch`). Also resets the per-session
+  /// backlog-ingested flag so the next video's first round re-shows its history
+  /// backlog (chat-history-dedupe-template).
+  ///
+  /// [from] / [to] (activity-entry-video-switch-cache-and-hide-flutter) are the
+  /// wire's `from_video_id` / `to_video_id` (forwarded by `TemplateAttachment`'s
+  /// `LBEvent.videoSwitch` case) — optional named params so existing no-arg call
+  /// sites (direct unit tests) keep working unchanged. Forwarded to
+  /// `activeEvent.switchVideo(from:, to:)` (replacing the plain `activeEvent.clear()`)
+  /// so the activity entry resolves IMMEDIATELY for the new video — a session-cached
+  /// snapshot restores instantly, an unvisited video collapses to empty — instead of
+  /// waiting for the next 5s poll. `feed` / `winClaim` are unaffected (out of scope —
+  /// only the activity entry gets a switch cache); each `clear()` / `switchVideo()`
+  /// still fires its own coalesced notification.
+  void handleVideoSwitch({String? from, String? to}) {
     feed.clear();
     winClaim.clear();
-    activeEvent.clear();
+    activeEvent.switchVideo(from: from, to: to);
     _hasIngestedBacklog = false;
   }
 

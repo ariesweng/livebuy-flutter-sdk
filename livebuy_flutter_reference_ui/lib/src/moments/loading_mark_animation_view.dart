@@ -138,7 +138,10 @@ class _LoadingMarkAnimationViewState extends State<LoadingMarkAnimationView> {
 
   void _precacheAllFrames() {
     for (final path in _framePaths) {
-      precacheImage(AssetImage(path), context);
+      precacheImage(
+        AssetImage(path, package: 'livebuy_flutter_reference_ui'),
+        context,
+      );
     }
   }
 
@@ -146,6 +149,7 @@ class _LoadingMarkAnimationViewState extends State<LoadingMarkAnimationView> {
   Widget build(BuildContext context) {
     return Image.asset(
       _framePaths[_currentIndex],
+      package: 'livebuy_flutter_reference_ui',
       width: widget.size,
       height: widget.size,
       fit: BoxFit.contain,

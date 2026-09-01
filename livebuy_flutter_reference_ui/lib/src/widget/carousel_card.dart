@@ -732,6 +732,16 @@ class CarouselCardView extends StatelessWidget {
         item.title,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
+        // `_cardHeight` (carousel.dart) estimates this line's height from
+        // `theme.fontScale` alone. Without pinning textScaler here, a host
+        // device / app's environment text-scale (MediaQuery.textScalerOf)
+        // stacks on top of that estimate and can push the rendered title
+        // taller than the fixed-height sizer allows, overflowing the card's
+        // Column (RenderFlex "BOTTOM OVERFLOWED" debug-only warning; content
+        // is still clipped in release). `theme.fontScale` itself still scales
+        // the title normally — only the host environment's own scaling is
+        // excluded.
+        textScaler: TextScaler.noScaling,
         style: TextStyle(
           fontSize: 12 * theme.fontScale,
           fontWeight: FontWeight.w600,

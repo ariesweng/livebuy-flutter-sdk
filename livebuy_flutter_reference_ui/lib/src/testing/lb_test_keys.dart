@@ -148,6 +148,13 @@ abstract final class LbTestKeys {
   static const Key activitySheetFooterPrivacy =
       ValueKey('lb_activity_sheet_footer_privacy');
 
+  // rb-flutter-activity-sheet-pagination — `ActivitySheetView` 分頁圓點，鏡射
+  // `WinClaimSheetView` 的 `winClaimPageDots` / `winClaimPageDot` key 慣例。
+  /// 分頁圓點列外層容器（`pageCount > 1` 時才畫）。個別圓點的可點擊 key 見
+  /// [activitySheetPageDot]。
+  static const Key activitySheetPageDots =
+      ValueKey('lb_activity_sheet_page_dots');
+
   // ── Family 3 — product + sheets ───────────────────────────────────────────
   static const Key productList = ValueKey('lb_product_list');
   static const Key sheetSearchField = ValueKey('lb_sheet_search_field');
@@ -310,4 +317,9 @@ abstract final class LbTestKeys {
   /// Per-item win-claim pagination dot key (rb-flutter-win-claim-pagination, R27),
   /// e.g. `winClaimPageDot(0) == const ValueKey('lb_win_claim_page_dot_0')`.
   static Key winClaimPageDot(int index) => ValueKey('lb_win_claim_page_dot_$index');
+
+  /// Per-item activity-sheet pagination dot key (rb-flutter-activity-sheet-pagination),
+  /// e.g. `activitySheetPageDot(0) == const ValueKey('lb_activity_sheet_page_dot_0')`.
+  static Key activitySheetPageDot(int index) =>
+      ValueKey('lb_activity_sheet_page_dot_$index');
 }

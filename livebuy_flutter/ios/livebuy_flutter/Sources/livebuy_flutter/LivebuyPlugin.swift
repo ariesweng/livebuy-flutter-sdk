@@ -644,64 +644,8 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
         playerVC.onProductTap = { product in
             // product-bridge-data-core: emit the full field set (camelCase
             // keys per design D1) incl. nested specifications / specOptions.
-            // `price` / `originalPrice` carried as the core Double value;
-            // `originalPrice == 0` → omit (no original price). begin/end nil
-            // → omit. Aligned field-by-field with core LBProduct (23 fields).
-            var payload: [String: Any] = [
-                "event": "productTap",
-                "id": product.id,
-                "goodsNo": product.goodsNo,
-                "name": product.name,
-                "price": product.price,
-                "priceShow": product.priceShow,
-                "originalPriceShow": product.originalPriceShow,
-                "stock": product.stock,
-                "pic": product.pic,
-                "photos": product.photos,
-                "brief": product.brief,
-                // add-product-description-core-flutter: camelCase key, always present
-                // (possibly ""), parallel to `brief`.
-                "description": product.description,
-                "goodsGpn": product.goodsGpn,
-                "soldOut": product.soldOut,
-                "isHot": product.isHot,
-                "isOutSoon": product.isOutSoon,
-                "narrateStatus": product.narrateStatus,
-                // Goods conclusion fields (goods-conclusion-fields spec; native
-                // LBProduct has these as defaulted props, a9d13a7).
-                "canView": product.canView,
-                "canBuy": product.canBuy,
-                "isNarrating": product.isNarrating,
-                "needLabel": product.needLabel,
-                "label": product.label,
-                "isAwait": product.isAwait,
-                "isAwaitNotice": product.isAwaitNotice,
-                "diversionUrl": product.diversionUrl,
-                "specifications": product.specifications.map { spec in
-                    [
-                        "id": spec.id,
-                        "name": spec.name,
-                        "specificationNo": spec.specificationNo,
-                        "price": spec.price,
-                        "priceShow": spec.priceShow,
-                        "originalPrice": spec.originalPrice as Any,
-                        "originalPriceShow": spec.originalPriceShow,
-                        "stock": spec.stock,
-                        "photos": spec.photos,
-                    ]
-                },
-                "specOptions": product.specOptions.map { opt in
-                    ["name": opt.name, "child": opt.child]
-                },
-            ]
-            if let op = product.originalPrice, op != 0 { payload["originalPrice"] = op }
-            if let bt = product.beginTime { payload["beginTime"] = bt }
-            if let et = product.endTime { payload["endTime"] = et }
-            // add-product-video-id-core-flutter: cross-video product reference
-            // (other_goods[] only). nil (goods[] items) → key omitted, camelCase
-            // per design D1, same "if let" omit-when-nil convention as
-            // originalPrice/beginTime/endTime above.
-            if let videoId = product.videoId { payload["videoId"] = videoId }
+            var payload = Self.lbProductToBody(product)
+            payload["event"] = "productTap"
             LivebuyEventHandler.shared.emit(payload)
         }
 
@@ -761,13 +705,23 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
         // `LivebuyPlayerViewController.onPlaybackProgressChange` already exists
         // natively (2026-06-08-vod-playback-progress-core), so this is a real
         // hook (not the reverted onChannelChange situation above).
-        playerVC.onPlaybackProgressChange = { progress in
+        // vod-narrating-products-core-flutter: additive `products` wire key — the
+        // raw, unfiltered `channel.goods` snapshot (same source core's own
+        // `vodActiveProducts(products:position:)` reads), serialized via the same
+        // `lbProductToBody(_:)` helper `onProductTap` uses. Dart independently
+        // filters by `[beginTime, endTime)` + `position` (component-contracts
+        // `Player（Flutter）VOD playback-progress 頻道與控制出口 — core bridge
+        // parity`). `[weak self]` added (this closure did not previously capture
+        // self) to read `self.playerVC.channel`, mirroring `onStateChange`'s
+        // existing `[weak self]` capture for the same `channel` property.
+        playerVC.onPlaybackProgressChange = { [weak self] progress in
             LivebuyEventHandler.shared.emit([
                 "event": "playbackProgress",
                 "position": progress.position,
                 "duration": progress.duration,
                 "isPlaying": progress.isPlaying,
                 "isReplay": progress.isReplay,
+                "products": (self?.playerVC.channel?.goods ?? []).map { Self.lbProductToBody($0) },
             ])
         }
 
@@ -785,6 +739,73 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
     }
 
     func view() -> UIView { container }
+
+    /// Serialize a full `LBProduct` to the Flutter bridge wire dict (camelCase keys per design D1,
+    /// incl. nested specifications / specOptions). Extracted from the former inline body of
+    /// `onProductTap` (vod-narrating-products-core-flutter DRY refactor, mirroring the RN iOS
+    /// bridge's `lbProductToBody(_:)` precedent) so the new `products` wire key on
+    /// `onPlaybackProgressChange` (above) reuses the EXACT SAME wire shape as `productTap`, instead
+    /// of drifting — no behavior change to the existing `productTap` event. `price` /
+    /// `originalPrice` carried as the core Double value; `originalPrice == 0` → omit (no original
+    /// price). `beginTime`/`endTime`/`videoId` nil → omit. Aligned field-by-field with core
+    /// `LBProduct` (23 fields). Does NOT set an `"event"` key — callers add their own.
+    private static func lbProductToBody(_ product: LBProduct) -> [String: Any] {
+        var body: [String: Any] = [
+            "id": product.id,
+            "goodsNo": product.goodsNo,
+            "name": product.name,
+            "price": product.price,
+            "priceShow": product.priceShow,
+            "originalPriceShow": product.originalPriceShow,
+            "stock": product.stock,
+            "pic": product.pic,
+            "photos": product.photos,
+            "brief": product.brief,
+            // add-product-description-core-flutter: camelCase key, always present
+            // (possibly ""), parallel to `brief`.
+            "description": product.description,
+            "goodsGpn": product.goodsGpn,
+            "soldOut": product.soldOut,
+            "isHot": product.isHot,
+            "isOutSoon": product.isOutSoon,
+            "narrateStatus": product.narrateStatus,
+            // Goods conclusion fields (goods-conclusion-fields spec; native
+            // LBProduct has these as defaulted props, a9d13a7).
+            "canView": product.canView,
+            "canBuy": product.canBuy,
+            "isNarrating": product.isNarrating,
+            "needLabel": product.needLabel,
+            "label": product.label,
+            "isAwait": product.isAwait,
+            "isAwaitNotice": product.isAwaitNotice,
+            "diversionUrl": product.diversionUrl,
+            "specifications": product.specifications.map { spec in
+                [
+                    "id": spec.id,
+                    "name": spec.name,
+                    "specificationNo": spec.specificationNo,
+                    "price": spec.price,
+                    "priceShow": spec.priceShow,
+                    "originalPrice": spec.originalPrice as Any,
+                    "originalPriceShow": spec.originalPriceShow,
+                    "stock": spec.stock,
+                    "photos": spec.photos,
+                ]
+            },
+            "specOptions": product.specOptions.map { opt in
+                ["name": opt.name, "child": opt.child]
+            },
+        ]
+        if let op = product.originalPrice, op != 0 { body["originalPrice"] = op }
+        if let bt = product.beginTime { body["beginTime"] = bt }
+        if let et = product.endTime { body["endTime"] = et }
+        // add-product-video-id-core-flutter: cross-video product reference
+        // (other_goods[] only). nil (goods[] items) → key omitted, camelCase
+        // per design D1, same "if let" omit-when-nil convention as
+        // originalPrice/beginTime/endTime above.
+        if let videoId = product.videoId { body["videoId"] = videoId }
+        return body
+    }
 
     /// Serialize an `LBActiveEvent` to the Flutter bridge wire dict — EQUIVALENT to the SDK's
     /// internal `LivebuyPlayerViewController.activeEventParams(_:)` (that helper is `internal`,
@@ -804,7 +825,7 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
         return body
     }
 
-    private func handle(_ call: FlutterMethodCall, result: FlutterResult) {
+    private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let args = call.arguments as? [String: Any]
         switch call.method {
         case "load":

@@ -122,63 +122,8 @@ class LivebuyFlutterPlayerView(
         playerView.onProductTap = { product ->
             // product-bridge-data-core: emit the full field set (camelCase
             // keys per design D1) incl. nested specifications / specOptions.
-            // `id` String per cross-platform parity. `originalPrice == 0` →
-            // omit (no original price). Aligned field-by-field with core
-            // LBProduct (23 fields).
-            val payload = mutableMapOf<String, Any?>(
-                "event" to "productTap",
-                "id" to product.id.toString(),
-                "goodsNo" to product.goodsNo,
-                "name" to product.name,
-                "price" to product.price,
-                "priceShow" to product.priceShow,
-                "originalPriceShow" to product.originalPriceShow,
-                "stock" to product.stock,
-                "pic" to product.pic,
-                "photos" to product.photos,
-                "brief" to product.brief,
-                // add-product-description-core-flutter: camelCase key, always present
-                // (possibly ""), parallel to `brief`.
-                "description" to product.description,
-                "goodsGpn" to product.goodsGpn,
-                "soldOut" to product.soldOut,
-                "isHot" to product.isHot,
-                "isOutSoon" to product.isOutSoon,
-                "narrateStatus" to product.narrateStatus,
-                // Goods conclusion fields (goods-conclusion-fields spec; native
-                // LBProduct has these as defaulted props, 1f5c730).
-                "canView" to product.canView,
-                "canBuy" to product.canBuy,
-                "isNarrating" to product.isNarrating,
-                "needLabel" to product.needLabel,
-                "label" to product.label,
-                "isAwait" to product.isAwait,
-                "isAwaitNotice" to product.isAwaitNotice,
-                "beginTime" to product.beginTime,
-                "endTime" to product.endTime,
-                "diversionUrl" to product.diversionUrl,
-                "specifications" to product.specifications.map { spec ->
-                    mapOf(
-                        "id" to spec.id,
-                        "name" to spec.name,
-                        "specificationNo" to spec.specificationNo,
-                        "price" to spec.price,
-                        "priceShow" to spec.priceShow,
-                        "originalPrice" to spec.originalPrice,
-                        "originalPriceShow" to spec.originalPriceShow,
-                        "stock" to spec.stock,
-                        "photos" to spec.photos,
-                    )
-                },
-                "specOptions" to product.specOptions.map { opt ->
-                    mapOf("name" to opt.name, "child" to opt.child)
-                },
-            )
-            product.originalPrice?.takeIf { it != 0.0 }?.let { payload["originalPrice"] = it }
-            // add-product-video-id-core-flutter: cross-video product reference
-            // (other_goods[] only). null (goods[] items) → key omitted, camelCase
-            // per design D1, same conditional-put convention as originalPrice above.
-            product.videoId?.let { payload["videoId"] = it }
+            val payload = productToMap(product).toMutableMap()
+            payload["event"] = "productTap"
             LivebuyEventHandler.emit(payload)
         }
 
@@ -240,6 +185,14 @@ class LivebuyFlutterPlayerView(
         // `LivebuyPlayerView.onPlaybackProgressChange` already exists natively
         // (Android isReplay-slice parity), so this is a real hook (not the
         // reverted onChannelChange situation above).
+        // vod-narrating-products-core-flutter: additive `products` wire key — the
+        // raw, unfiltered `channel.goods` snapshot (same source core's own
+        // `vodActiveProducts(products:position:)` reads), serialized via the same
+        // `productToMap(_:)` helper `onProductTap` uses. Dart independently
+        // filters by `[beginTime, endTime)` + `position` (component-contracts
+        // `Player（Flutter）VOD playback-progress 頻道與控制出口 — core bridge
+        // parity`). No weak-capture ceremony needed — this file's other closures
+        // already reference the outer `playerView` property directly.
         playerView.onPlaybackProgressChange = { progress ->
             LivebuyEventHandler.emit(
                 mapOf(
@@ -248,6 +201,7 @@ class LivebuyFlutterPlayerView(
                     "duration" to progress.duration,
                     "isPlaying" to progress.isPlaying,
                     "isReplay" to progress.isReplay,
+                    "products" to (playerView.channel?.goods ?: emptyList()).map { productToMap(it) },
                 )
             )
         }
@@ -660,6 +614,73 @@ private fun flutterOriginalPrice(value: Any?): Double? =
 @Suppress("UNCHECKED_CAST")
 private fun flutterStringList(value: Any?): List<String> =
     (value as? List<*>)?.map { it?.toString() ?: "" } ?: emptyList()
+
+// MARK: - Bridge serializer (vod-narrating-products-core-flutter DRY extraction)
+//
+// Serialize a full LBProduct to the Flutter bridge wire map (camelCase keys, same
+// shape as the existing `productTap` event). Extracted from the former inline body
+// of `onProductTap` so the `products` wire key on `playbackProgress` (above)
+// reuses the EXACT SAME field set instead of drifting (mirrors the RN Android
+// bridge's `productToMap`/`productsArray` precedent) — no behavior change to the
+// existing `productTap` event. `originalPrice`/`videoId` are conditionally
+// included (absent → key omitted), identical to the code this was moved from.
+
+private fun productToMap(product: LBProduct): Map<String, Any?> {
+    val payload = mutableMapOf<String, Any?>(
+        "id" to product.id.toString(),
+        "goodsNo" to product.goodsNo,
+        "name" to product.name,
+        "price" to product.price,
+        "priceShow" to product.priceShow,
+        "originalPriceShow" to product.originalPriceShow,
+        "stock" to product.stock,
+        "pic" to product.pic,
+        "photos" to product.photos,
+        "brief" to product.brief,
+        // add-product-description-core-flutter: camelCase key, always present
+        // (possibly ""), parallel to `brief`.
+        "description" to product.description,
+        "goodsGpn" to product.goodsGpn,
+        "soldOut" to product.soldOut,
+        "isHot" to product.isHot,
+        "isOutSoon" to product.isOutSoon,
+        "narrateStatus" to product.narrateStatus,
+        // Goods conclusion fields (goods-conclusion-fields spec; native
+        // LBProduct has these as defaulted props, 1f5c730).
+        "canView" to product.canView,
+        "canBuy" to product.canBuy,
+        "isNarrating" to product.isNarrating,
+        "needLabel" to product.needLabel,
+        "label" to product.label,
+        "isAwait" to product.isAwait,
+        "isAwaitNotice" to product.isAwaitNotice,
+        "beginTime" to product.beginTime,
+        "endTime" to product.endTime,
+        "diversionUrl" to product.diversionUrl,
+        "specifications" to product.specifications.map { spec ->
+            mapOf(
+                "id" to spec.id,
+                "name" to spec.name,
+                "specificationNo" to spec.specificationNo,
+                "price" to spec.price,
+                "priceShow" to spec.priceShow,
+                "originalPrice" to spec.originalPrice,
+                "originalPriceShow" to spec.originalPriceShow,
+                "stock" to spec.stock,
+                "photos" to spec.photos,
+            )
+        },
+        "specOptions" to product.specOptions.map { opt ->
+            mapOf("name" to opt.name, "child" to opt.child)
+        },
+    )
+    product.originalPrice?.takeIf { it != 0.0 }?.let { payload["originalPrice"] = it }
+    // add-product-video-id-core-flutter: cross-video product reference
+    // (other_goods[] only). null (goods[] items) → key omitted, camelCase
+    // per design D1, same conditional-put convention as originalPrice above.
+    product.videoId?.let { payload["videoId"] = it }
+    return payload
+}
 
 private fun lbProductFrom(map: Map<*, *>?): LBProduct? {
     // core `LBProduct.id: String` (7468cba6, cross-platform parity; JS Number-precision

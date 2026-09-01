@@ -149,6 +149,20 @@ class FeedWinModel {
   /// For demo instances always `false` (the pre-join prompt).
   bool get activeEventJoined => template?.activeEvent.joined ?? false;
 
+  /// Full list of currently-active events (`DefaultActiveEvent.activities`,
+  /// rb-flutter-activity-sheet-pagination) — `ActivitySheetView`'s pagination reads
+  /// `.length` as `pageCount`. For demo instances returns a single-element list
+  /// built from [FeedWinSeeds.activeEvent] (non-null) — this keeps the demo/golden
+  /// path's `pageCount == 1` (no pagination dots) consistent with
+  /// [hasActiveEvent]'s own demo default of `true` (one active event, not zero).
+  List<LBActiveEvent> get activities =>
+      template?.activeEvent.activities ?? [FeedWinSeeds.activeEvent];
+
+  /// The page index [currentActiveEvent] is derived from
+  /// (`DefaultActiveEvent.currentActivityPageIndex`, rb-flutter-activity-sheet-pagination).
+  /// For demo instances always `0`.
+  int get activityPageIndex => template?.activeEvent.currentActivityPageIndex ?? 0;
+
   // -- Read-only host intents (pass-through to the bound template) ------------
   //
   // The feed-win layer does NOT carry actions. These are thin forwarders for the
@@ -218,6 +232,13 @@ class FeedWinModel {
   /// view-model handles the `keyword`-forwarding + dedupe-by-id; this layer does
   /// not repeat either check). No-op for demo instances (no bound template).
   void joinActiveEvent() => template?.activeEvent.join();
+
+  /// Forward「換頁」to the bound template (`DefaultActiveEvent.setActivityPageIndex`,
+  /// rb-flutter-activity-sheet-pagination) — the view-model handles clamping
+  /// (`clampActivityPageIndex`), this layer does not repeat that check. No-op for
+  /// demo instances (no bound template).
+  void setActivityPageIndex(int index) =>
+      template?.activeEvent.setActivityPageIndex(index);
 
   // -- Convenience reads (surface helpers, pure) ------------------------------
 

@@ -12,6 +12,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import 'win_glyph.dart';
 
 // WinClaimSheetView — family-2 feed-win surface 3 (四階段領獎 modal，含 email 輸入，Flutter).
 //
@@ -287,14 +288,6 @@ const String _failNotice = '若持續發生，請聯繫客服';
 const String _retryLabel = '重新領獎';
 
 // MARK: - Pure color helpers
-
-/// A darker shade of [color] for the gift-badge gradient end-stop (mirrors the
-/// design's `lbShade(accent, -0.3)` and iOS `WinClaimModalView.shade`). Pure HSV
-/// value reduction by 0.3 (clamped at 0); no framework state.
-Color _shade(Color color) {
-  final hsv = HSVColor.fromColor(color);
-  return hsv.withValue((hsv.value - 0.3).clamp(0.0, 1.0)).toColor();
-}
 
 /// 把 [color] 朝白色提亮 [amount]（0…1），對應設計稿 `lbShade(hex, +amount)`
 /// （`c' = (255 - c) * p + c`）。disabled CTA 底色用。純函式。
@@ -747,14 +740,13 @@ class _WinClaimSheetViewState extends State<WinClaimSheetView> {
             alignment: Alignment.center,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: LinearGradient(
-                colors: [theme.accent, _shade(theme.accent)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              color: const Color(0xFFFFFFFF),
               border: Border.all(color: theme.background, width: 4),
             ),
-            child: const Icon(Icons.card_giftcard, size: 30, color: Colors.white),
+            child: CustomPaint(
+              size: const Size(30, 30),
+              painter: WinTrophyGlyphPainter(outerColor: theme.accent),
+            ),
           ),
         ],
       ),

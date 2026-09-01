@@ -281,7 +281,17 @@ class TemplateAttachment {
         // first-load / same-video retry never reach here). Reset the per-video-session
         // merged feed + win-claim entry so the next video starts clean. Notification
         // event (acknowledge); non-primary.
-        template.handleVideoSwitch();
+        //
+        // activity-entry-video-switch-cache-and-hide-flutter — forward the wire's
+        // `from_video_id` / `to_video_id` through so `activeEvent`'s per-videoId
+        // switch cache can resolve immediately (tolerant decode: non-String / missing
+        // → null, matching the existing `vid is String ? vid : null` convention below).
+        final fromVideoId = event.params['from_video_id'];
+        final toVideoId = event.params['to_video_id'];
+        template.handleVideoSwitch(
+          from: fromVideoId is String ? fromVideoId : null,
+          to: toVideoId is String ? toVideoId : null,
+        );
         return LBEventReply.acknowledge;
 
       case LBEvent.videoOpen:
