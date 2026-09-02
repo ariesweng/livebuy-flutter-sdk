@@ -6,10 +6,20 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
-> 🚀 **下一個發版 = v2.0.0（major / breaking）。** 自上一個發版以來累積的所有 breaking
-> 與散佈姿態改變一次發。完整對外說明見 [release notes](../docs/release-notes/v2.0.0.md)，升級照
-> [migration 總入口](../docs/migration/v2.0.0.md)。**發版時本 `[Unreleased]` → `## 2.0.0 - <date>`**；
-> 未 tag 的 `1.3.0`（api-version）內容一併併入 v2.0.0。
+（目前無待發項目——`2.0.0` 已於下方發布，涵蓋自上一個未 tag 的 `1.3.0` 以來累積的所有內容。）
+
+## 2.0.0 - 2026-09-03
+
+> **首次真實對外發版**（`livebuy-flutter-sdk` mirror repo，git dependency 消費）。自上一個從未
+> 真正 tag 對外發布的 `1.3.0`（api-version，2026-05-26 準備但未執行 `pub publish`）以來累積的
+> 所有 breaking 與散佈姿態改變一次發。完整對外說明見 [release notes](../docs/release-notes/v2.0.0.md)，
+> 升級照 [migration 總入口](../docs/migration/v2.0.0.md)。
+>
+> ⚠️ **既有紀錄補正**：本 mirror repo 曾於 2026-09-01 以驗證發版管線為目的真實發布過一次
+> `v1.3.0` tag（`ariesweng/livebuy-flutter-sdk`）——該次發布**內容上已經是本輪 v2.0.0 等級**
+> （brand-casing、headless 化等皆已完成），只是 `pubspec.yaml` 版號欄位當時尚未 bump，故被
+> 誤標成 `1.3.0`。**該 tag 應視為管線驗證產物、非正式對外版本，consumer 不應鎖定它**——`v2.0.0`
+> 是這個 mirror repo 第一個版號正確反映內容的真實發版。
 
 ### v2.0.0 — major / breaking（總覽）
 
@@ -51,6 +61,26 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 - **中獎領獎 modal 新增分頁 ＋ 活動/中獎入口堆疊順序反轉（`livebuy_flutter_reference_ui`）** — 多筆中獎紀錄可翻頁瀏覽；活動入口改佔主槽，中獎入口讓位。**⚠ BREAKING**：`WinClaimPhase.CONFIRM_CLOSE` 移除，連同 ✕ 關閉鈕與「關閉視窗」文字鈕，modal 現在只能透過 scrim 關閉——只有直接窮舉 `WinClaimPhase` 的 host 受影響。
 - **VOD / 直播回放播放進度條（`livebuy_flutter_reference_ui`）** — core 補齊控制轉發 API，reference-ui 綁上播放進度條。
 - **LIVE 底部 bar 貼底、拿掉裝飾性漸層、播放進度條細線真正貼齊底部（`livebuy_flutter_reference_ui`）** — 純視覺修復，對齊 iOS/Android 同輪修正。
+- **現正直播「前往直播」提示鈕（`livebuy_flutter_reference_ui`，新能力）** — 觀看 VOD / 已結束直播回放時，若偵測到同一頻道現正直播中，顯示提示鈕引導前往直播。對齊 iOS/Android/RN 同輪落地。
+- **VOD 正在介紹中商品訊號（core，parity iOS/Android/RN）** — 原生端新增 VOD 播放進度對應的「正在介紹中商品」訊號，四端收工。
+- **`ActivitySheet` 多活動分頁點＋滑動切換（`livebuy_flutter_reference_ui`）** — `DefaultActiveEvent` template 層反轉舊版「只取第一筆活動」決策，曝露完整清單與分頁索引；`FeedWinModel`/`FeedWinView` 相應調整。
+- **活動入口切換影片立即隱藏＋換片還原快取（`livebuy_flutter_reference_ui`）** — 換片時活動入口立即隱藏，換回原片時從快取還原顯示狀態。
+- **暫停覆蓋層 ＋ 靜音 toast ＋ 雙擊送愛心延遲取消（`livebuy_flutter_reference_ui`，補建追平 iOS/Android 既有能力）** — `PausedOverlayView` / `GestureMuteToastView` 新增，v4.13.0 批次同輪一併退役（見下方 R29 BREAKING）。
+- **播放器手勢三度改版 R29（`livebuy_flutter_reference_ui`，對齊 iOS/Android/RN v4.13.0 批次）新增**：`_cleanMode` 期間 `PlayerHeaderBarView` 新增靜音切換鈕；新增「退出乾淨模式」小圓鈕。
+- **縮小按鈕 icon 放大 18 → 20px（`livebuy_flutter_reference_ui`）**，對齊設計稿。
+
+**Changed**
+- **⚠️ BREAKING（reference-ui 內部行為契約，R29，`livebuy_flutter_reference_ui`）— 播放器手勢觸發語意整個對調**：取代 R23 舊模型（長按=乾淨模式、單擊=靜音/播放暫停）：短擊切換 `_cleanMode`；雙擊（僅 VOD/回放）依左右半螢幕 seek ±10 秒，雙擊送愛心整段退役；長按（僅 VOD/回放）近似 2 倍速快轉。中央暫停覆蓋層移除，播放/暫停改由播放進度條展開態上的小按鈕操作；商品袋按鈕縮小。
+
+**Fixed**
+- **暫停覆蓋層擴大觸控命中框修現正直播提示鈕點擊無反應（`livebuy_flutter_reference_ui`）**＋對齊設計稿縮小尺寸。
+- **iOS bridge `handle(_:result:)` 補 `@escaping` 修復編譯錯誤**——今天稍早已真實發版的 Flutter mirror repo（`livebuy-flutter-sdk` v1.3.0）需要在本輪落地後另行用修正後的來源重新發版覆蓋（真實對外發版動作，待另行確認執行）。
+- **卡片標題文字縮放隔離，避免 host 端文字放大時觸發 debug overflow**。
+- **loading 過場動畫資產補 `package:` scope**，修正被安裝進別的 app 時資產解析失敗。
+- **`WinClaimSheet` 領獎 modal 頂部禮物徽章換成白底圓＋trophy glyph 對齊設計稿**。
+- **活動入口 modal CTA 接上既有三層閘**，加入成功後自動關閉，被閘攔截時維持開啟。
+- **`release-flutter.sh` mirror 內部 sibling 依賴修正為完整 git 依賴**，修復 consumer `pub get` 直接失敗（純 release 腳本修復，不影響已發佈套件行為）。
+- **Android bridge core pin 例行追新 `4.10.0` → `4.11.0`**（`flutter/android/build.gradle`，已確認 v4.11.0 唯一 BREAKING 項不影響 bridge 原始碼，純例行維護）。
 
 **Removed**
 - SDK 內建 UI fallback / 預設 sheet（headless 後移除）；舊 UI snapshot 測試移至 reference-ui 套件的 golden 體系。

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart' show Colors, Icons;
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBProduct;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
@@ -13,6 +14,7 @@ import 'caption_overlay_view.dart';
 import 'contact_merchant_modal.dart';
 import 'heart_burst.dart';
 import 'live_bottom_bar_view.dart';
+import 'live_now_pill_view.dart';
 import 'live_overlay_chrome_view.dart';
 import 'operation_rail_view.dart';
 import 'playback_progress_bar_view.dart';
@@ -147,58 +149,86 @@ SwipeNavFallbackAction resolveSwipeNavFallback(bool hasAdjacentVideo) =>
 /// that also covers `isFinishedLiveReplay`. Unit-testable without a gesture.
 bool allowsSwipeNav(bool isLive) => !isLive;
 
-/// PURE: which action a single tap on the video area triggers
-/// (rb-flutter-gesture-clean-mode-rewrite, design `screens.jsx` `LBPPlayerScreen`
-/// `liveInProgress = isLive && !isUpcoming && !isReplay`, R23). `true` (isLive == false —
-/// VOD or a finished-live replay, `PlayerShellModel.isFinishedLiveReplay`, mutually
-/// exclusive with [isLive]) → the tap toggles play/pause (`widget.onTogglePlayPause`,
-/// the `rb-flutter-vod-playback-progress-bar` seam REUSED here — no second play/pause seam
-/// is added). `false` (isLive == true — live in progress) → the tap keeps the pre-existing
-/// mute toggle (`widget.onToggleMute`).
+/// Which half of the video area a video-area gesture landed in (rb-flutter-gesture-clean-mode-v2,
+/// design `screens.jsx:256`'s `zone = x < rect.width/2 ? 'rw' : 'ff'`). Drives both the
+/// double-tap-seek direction and (structurally, per [isSeekable]) whether a long-press may start
+/// the 2x-speed hold — though the hold itself deliberately does NOT read the zone (see
+/// [_PlayerShellViewState._scheduleNextSpeedModeTick]'s doc comment: R29 keeps the upstream demo's
+/// own direction bug, "always fast-forward regardless of side", verbatim).
+enum TapZone { rewind, fastForward }
+
+/// PURE: whether a video-area press may enter the delayed double-tap-seek judgment (short tap)
+/// and the long-press-driven 2x-speed hold (rb-flutter-gesture-clean-mode-v2, design `screens.jsx`
+/// `seekable = isReplay || !isLive`, R29 — SUPERSEDES the retired `tapTogglesPlayPause` /
+/// `allowsDoubleTapLike` decision points, which decided a DIFFERENT pair of gestures that no
+/// longer exist). `= isFinishedLiveReplay || !(isLive || isUpcoming)` — kept as a 3-argument
+/// mirror of the design formula (parity iOS `isSeekable(isLive:isUpcoming:isFinishedLiveReplay:)`),
+/// even though [isUpcoming] is always `false` at `PlayerShellView`'s own gesture call site
+/// (`_buildUpcoming` composes no gesture detector at all, same established precedent as
+/// [allowsSwipeNav] / [showsPlaybackProgressBar] in this file) — 1:1 fidelity with the design
+/// formula costs nothing.
 ///
-/// `= !isLive` — the SAME formula as [allowsSwipeNav], but kept as its OWN named function
-/// (not a call-site alias) per this file's existing convention of one named pure function
-/// per gesture decision point, even when two decisions happen to share a coefficient (see
-/// [allowsSwipeNav]'s own doc comment, which already documents this convention against
-/// [showsPlaybackProgressBar]). Upcoming is structurally unreachable here (`_buildUpcoming`
-/// composes no gesture detector at all), same precedent as [allowsSwipeNav]. Unit-testable
-/// without a gesture.
-bool tapTogglesPlayPause(bool isLive) => !isLive;
+/// NOT seekable (a real live broadcast in progress, or its upcoming preview) → a short tap
+/// toggles `_cleanMode` IMMEDIATELY (no double-tap outcome to protect on this branch — LIVE has
+/// no double-tap reaction at all under R29), and the long-press 2x-speed hold NEVER starts (see
+/// [_PlayerShellViewState._handleLongPressStart] — this is a STRUCTURAL no-op: the app-level
+/// speed-mode tick `Timer` is simply never scheduled, not "scheduled then gated"). SEEKABLE
+/// (VOD / a finished-live replay) → the short tap defers by [kDoubleTapSeekWindowMs] (see
+/// [isDoubleTapSeekHit]) and the long-press starts the 2x-speed hold. Unit-testable without a
+/// widget.
+bool isSeekable({
+  required bool isLive,
+  required bool isUpcoming,
+  required bool isFinishedLiveReplay,
+}) =>
+    isFinishedLiveReplay || !(isLive || isUpcoming);
 
-/// Default double-tap-like time window in milliseconds (rb-flutter-live-double-tap-like, design
-/// `screens.jsx:282`'s `onPointerUp` formula `sinceLast < 320`). Parity iOS `window: 0.32`s /
-/// Android `windowMs: Long = 320L` / RN `DOUBLE_TAP_LIKE_WINDOW_MS = 320`.
-const int kLiveDoubleTapWindowMs = 320;
+/// PURE: which [TapZone] a video-area press landed in, given its horizontal offset from the
+/// video area's own left edge and the area's total width (rb-flutter-gesture-clean-mode-v2,
+/// design `screens.jsx:256`). A [containerWidth] of `0` (defensive — should not occur once the
+/// area has been laid out at least once) falls through to [TapZone.fastForward], the same side a
+/// literal `startX < 0` comparison would land any non-negative [startX] on. Unit-testable without
+/// a widget.
+TapZone tapZone({required double startX, required double containerWidth}) =>
+    startX < containerWidth / 2 ? TapZone.rewind : TapZone.fastForward;
 
-/// PURE: whether a qualifying video-area tap should ALSO fire a like, given the elapsed
-/// milliseconds since the previous qualifying tap (`null` → no previous qualifying tap tracked
-/// yet / after a miss → always `false`). "Qualifying" originally meant LIVE-only
-/// (rb-flutter-live-double-tap-like); the name `isLiveDoubleTap` is kept unchanged even though
-/// rb-flutter-live-double-tap-like-replay-extend widened the caller's gate ([allowsDoubleTapLike])
-/// to also cover a finished-live replay — see that change's design.md Decision 3 for why this is
-/// a deliberate historical-baggage carryover rather than a rename. `< windowMs` (STRICT, matches
-/// design `screens.jsx:282`'s `sinceLast < 320` and RN's own boundary choice — NOT `<=`) →
-/// double-tap hit. Parity iOS `PlayerShellView.isLiveDoubleTap(elapsedSinceLastLiveTap:window:)` /
-/// Android top-level `isLiveDoubleTap` / RN `isLiveDoubleTap`. Unit-testable without a gesture —
-/// see design.md Decision 3 for why this stays a separate function from [tapTogglesPlayPause]
-/// rather than a merged type, and Decision 1 for why the caller
-/// ([_PlayerShellViewState._handleVideoTap]) does NOT use `GestureDetector.onDoubleTap` to arrive
-/// at this elapsed value.
-bool isLiveDoubleTap(int? elapsedSinceLastLiveTapMs, {int windowMs = kLiveDoubleTapWindowMs}) =>
-    elapsedSinceLastLiveTapMs != null && elapsedSinceLastLiveTapMs < windowMs;
+/// Double-tap-seek time window in milliseconds AND the delay a SEEKABLE short tap defers its
+/// `_cleanMode` toggle by (rb-flutter-gesture-clean-mode-v2, design `screens.jsx:306`'s
+/// `onPointerUp` formula `(now - last.t) < 320`). The value is carried over UNCHANGED from the
+/// retired `kLiveDoubleTapWindowMs` (same number, entirely new semantics — R29 retires
+/// double-tap-LIKE for double-tap-SEEK) — this is a fresh named constant, not the old symbol
+/// repurposed. Parity iOS `doubleTapSeekWindow = 0.32`s.
+const int kDoubleTapSeekWindowMs = 320;
 
-/// PURE: whether a video-area tap SHOULD ALSO run the double-tap-like-send-heart judgment
-/// (rb-flutter-live-double-tap-like-replay-extend — the user confirmed via an `/opsx:explore`
-/// session that a finished-live replay gets the same double-tap-like send-heart behaviour as
-/// LIVE). `= isLive || isFinishedLiveReplay` — LIVE (streaming or pre-recorded) and a
-/// finished-live replay (`PlayerShellModel.isFinishedLiveReplay`) both run the judgment; pure VOD
-/// (both false) does not. This is a SEPARATE decision from [tapTogglesPlayPause] (what the TAP
-/// ITSELF does — mute vs play/pause): a finished-live replay satisfies BOTH
-/// `tapTogglesPlayPause(isLive: false) == true` (single tap toggles play/pause, unchanged) AND
-/// `allowsDoubleTapLike(isLive: false, isFinishedLiveReplay: true) == true` (double-tap-like
-/// judgment runs) — the two used to be wrongly tied to the same early-return branch in
-/// `_handleVideoTap`; this function is what decouples them. Unit-testable without a gesture.
-bool allowsDoubleTapLike(bool isLive, bool isFinishedLiveReplay) => isLive || isFinishedLiveReplay;
+/// PURE: whether a SEEKABLE video-area tap completes a double-tap-seek, given the elapsed
+/// milliseconds since the previous SEEKABLE tap (`null` → none tracked yet / after a miss →
+/// always `false`) and whether that previous tap landed in the SAME [TapZone] (design
+/// `screens.jsx:306`'s `(now - last.t) < 320 && ... last.zone === ps.zone`). BOTH conditions
+/// must hold — a same-time-but-different-zone tap does NOT complete a double-tap; it starts its
+/// own independently tracked pair instead (see [_PlayerShellViewState._handleSeekableTap]).
+/// STRICT `<` (matches the retired `isLiveDoubleTap`'s own boundary choice, NOT `<=`). Parity
+/// iOS `PlayerShellView.isDoubleTapSeekHit(elapsedSinceLastSeekTap:sameZone:window:)`.
+/// Unit-testable without a gesture.
+bool isDoubleTapSeekHit({
+  required int? elapsedMs,
+  required bool sameZone,
+  int windowMs = kDoubleTapSeekWindowMs,
+}) =>
+    elapsedMs != null && elapsedMs < windowMs && sameZone;
+
+/// Seek step for a double-tap-seek hit, in seconds (rb-flutter-gesture-clean-mode-v2, design
+/// `screens.jsx`'s `deltaSec = ps.zone === 'ff' ? 10 : -10`). [TapZone.fastForward] → `+`,
+/// [TapZone.rewind] → `-`.
+const double kSeekStepSeconds = 10;
+
+/// Long-press 2x-speed hold's tick interval (rb-flutter-gesture-clean-mode-v2, design / iOS
+/// `speedModeTickInterval = 0.5s`). Each tick adds [kSpeedModeExtraSeekPerTick] on top of the
+/// engine's own normal 1x advance, so the NET effect over real time approximates 2x playback.
+const Duration kSpeedModeTickInterval = Duration(milliseconds: 500);
+
+/// Extra seconds a single 2x-speed tick adds (rb-flutter-gesture-clean-mode-v2, design / iOS
+/// `speedModeExtraSeekPerTick = 0.5`).
+const double kSpeedModeExtraSeekPerTick = 0.5;
 
 /// PURE: whether `PlaybackProgressBarView` should be composed (rb-flutter-vod-playback-progress-
 /// bar, design `screens.jsx` `LBPPlayerScreen` "Playback progress bar — VOD and replay only").
@@ -225,6 +255,46 @@ bool showsPlaybackProgressBar({
   required bool isReplay,
 }) =>
     isMain && !isUpcoming && (!isLive || isReplay);
+
+/// PURE: whether `LiveNowPillView` should be composed (rb-flutter-live-now-pill, design
+/// `claude-design-sync.md` R28 / `components.md` `LBLiveNowPill`). Parity iOS `showsLiveNowPill`
+/// (post `fix-ios-live-now-pill-active-live-leak`) / Android (post round-2 correction) / RN —
+/// Flutter starts from the ALREADY-corrected formula: the `isLive` exclusion is present from
+/// day one, not bolted on after an independent verifier caught the leak (see design.md Decision
+/// 3 for the two-platform round-1 incident history this avoids).
+///
+/// `= hasLiveNow && (isMain || isFinishedLiveReplay) && !isUpcoming && !cleanMode && !isScrubbing
+///    && (!isLive || isFinishedLiveReplay)` — the LAST clause is independently ANDed onto the
+/// existing formula, NOT substituted for the `isMain` term: `showsPlaybackProgressBar`'s own
+/// `isLive` exclusion works because its second term is a bare `isMain`, but this formula's
+/// second term is `(isMain || isFinishedLiveReplay)` (using `||`), so the exclusion cannot be
+/// folded into it — see design.md Decision 3 for the full derivation.
+///
+/// [isMain] MUST feed the SAME `isMainPlaybackPhase` value `showsPlaybackProgressBar` uses — it
+/// only excludes the opening MP4 / cold-start loading / splash sequence, and is `true`
+/// throughout an ACTUALLY-live broadcast, which is exactly why the independent [isLive]
+/// exclusion is required. [isFinishedLiveReplay] MUST feed `model.isFinishedLiveReplay` — MUST
+/// NOT feed core's narrower DVR `model.isReplay` (same call-site discipline as
+/// `showsPlaybackProgressBar`'s own `isReplay` parameter). The design's `!isMinimized` condition
+/// is deliberately NOT a parameter here — `CollapsibleLivebuyPlayer` is a KEEP-ALIVE design (an
+/// ancestor hides the collapsed player via `Opacity`/`IgnorePointer`, it does not unmount it),
+/// so that exclusion is satisfied by an ancestor further up the tree, not by this function.
+/// Unit-testable without a widget.
+bool showsLiveNowPill({
+  required bool hasLiveNow,
+  required bool isMain,
+  required bool isUpcoming,
+  required bool isLive,
+  required bool isFinishedLiveReplay,
+  required bool cleanMode,
+  required bool isScrubbing,
+}) =>
+    hasLiveNow &&
+    (isMain || isFinishedLiveReplay) &&
+    !isUpcoming &&
+    !cleanMode &&
+    !isScrubbing &&
+    (!isLive || isFinishedLiveReplay);
 
 /// PURE: whether `CaptionOverlayView` should be mounted (rb-flutter-subtitle-vtt-caption-display,
 /// design `sdk-components.jsx` `LBPCaptionOverlay`). `= !isLive && !introPlaying && subtitleEnabled
@@ -397,6 +467,17 @@ class PlayerShellView extends StatefulWidget {
   /// upcoming SLIM bar is unaffected.
   final bool composerPresented;
 
+  /// Whether another live broadcast is CURRENTLY detected (rb-flutter-live-now-pill) — feeds
+  /// [showsLiveNowPill]'s `hasLiveNow` argument. Container-resolved (`LivebuyPlayerConfig
+  /// .shopId`-driven `LiveNowPollController.liveNow != null`); the shell itself does not poll.
+  /// Default `false` → the pill never composes (demo / golden / existing call sites unchanged).
+  final bool hasLiveNow;
+
+  /// Host-wired tap on `LiveNowPillView` (rb-flutter-live-now-pill). The shell only reports the
+  /// tap — it does not resolve or hold the target video (see `LiveNowPillView`'s own doc
+  /// comment). Default `null` → inert (demo / golden).
+  final VoidCallback? onGoLive;
+
   /// Host-wired play/pause toggle for `PlaybackProgressBarView`'s transport-bar button
   /// (rb-flutter-vod-playback-progress-bar). Host → the container's own held
   /// `LivebuyPlayerController.togglePlayPause()` — deliberately NOT routed through
@@ -419,6 +500,22 @@ class PlayerShellView extends StatefulWidget {
   /// fake here to drive the fetch pipeline deterministically without a real network call.
   @visibleForTesting
   final SubtitleVttFetcher? subtitleVttFetcherForTesting;
+
+  /// Test-only seed for the initial `_cleanMode` value (player-gesture-feedback-overlays-flutter,
+  /// retargeted by rb-flutter-gesture-clean-mode-v2 from a long-press trigger to a short-tap one;
+  /// `docs/unit-test-discipline.md` `*ForTesting` naming convention — parity iOS
+  /// `PlayerShellView.cleanModeForTesting` / Android `PlayerShellScaffold.cleanModeForTesting`).
+  /// `false` (production default) → unchanged existing behavior, `_cleanMode` starts `false` and
+  /// only flips via a real short tap (immediately when NOT `isSeekable`, deferred by
+  /// `kDoubleTapSeekWindowMs` when it IS). A widget/golden test that needs a `_cleanMode == true`
+  /// render seeds this directly instead of driving a real gesture at the video-area's geometric
+  /// center + waiting out the seekable branch's defer window — cheaper and keeps golden captures
+  /// synchronous. iOS/Android hit the identical "SwiftUI/Compose gestures cannot be reliably
+  /// driven from tests" limitation and resolved it the same way (a ctor-seeded test-only initial
+  /// value, bypassing gesture simulation entirely) — this mirrors that established, verified
+  /// pattern.
+  @visibleForTesting
+  final bool cleanModeForTesting;
 
   const PlayerShellView({
     super.key,
@@ -444,9 +541,12 @@ class PlayerShellView extends StatefulWidget {
     this.onInfoPanelOpenChange,
     this.onCleanModeChange,
     this.composerPresented = false,
+    this.hasLiveNow = false,
+    this.onGoLive,
     this.onTogglePlayPause,
     this.onSeek,
     this.subtitleVttFetcherForTesting,
+    this.cleanModeForTesting = false,
   });
 
   @override
@@ -474,14 +574,22 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     widget.onInfoPanelOpenChange?.call(open);
   }
 
-  /// 「乾淨模式」(rb-flutter-gesture-clean-mode-rewrite) — presentation-only local state
-  /// hiding most of the floating chrome, toggled by a long-press on the video area
-  /// (`onLongPressStart`, framework `LongPressGestureRecognizer` — see design.md D1).
-  /// Default `false`. Does NOT auto-reset across an in-place video switch (parity
+  /// 「乾淨模式」(rb-flutter-gesture-clean-mode-rewrite, retargeted by
+  /// rb-flutter-gesture-clean-mode-v2) — presentation-only local state hiding most of the
+  /// floating chrome. R23 toggled this via a long-press; R29 SUPERSEDES that — a short tap now
+  /// toggles it instead (immediately when NOT [isSeekable], deferred by
+  /// [kDoubleTapSeekWindowMs] when it IS — see [_handleVideoTap] / [_handleSeekableTap]). Long
+  /// press is now reserved for the 2x-speed hold (see [_handleLongPressStart]) and no longer
+  /// touches `_cleanMode` at all. Default `false`. Does NOT auto-reset across an in-place video
+  /// switch (parity
   /// `_infoPanelOpen`'s own persistence — see design.md D7): there is no "new video loaded"
   /// signal to hang a reset on (`didUpdateWidget` only rebuilds `_model` on a `template`
   /// REFERENCE change, which production in-place switches never trigger).
-  bool _cleanMode = false;
+  ///
+  /// Seeded from [PlayerShellView.cleanModeForTesting] in [initState] (player-gesture-feedback-
+  /// overlays-flutter) — a plain `= false` field initializer cannot reference `widget` (it runs
+  /// before this `State` is attached), so this is `late` and assigned in [initState] instead.
+  late bool _cleanMode;
 
   /// Toggle `_cleanMode` and report every flip up via [PlayerShellView.onCleanModeChange]
   /// (bubble pattern copied verbatim from [_setInfoPanel] / rb-ios-info-panel-not-covered-
@@ -491,63 +599,193 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     widget.onCleanModeChange?.call(_cleanMode);
   }
 
-  /// Video-area single-tap dispatch (rb-flutter-gesture-clean-mode-rewrite), extended by
-  /// rb-flutter-live-double-tap-like to ADD a same-`onTap` double-tap-like check, and by
-  /// rb-flutter-live-double-tap-like-replay-extend to widen that check from LIVE-only to
-  /// LIVE-or-finished-live-replay — see design.md Decision 1/2 for why this does NOT use
-  /// `GestureDetector.onDoubleTap` (Flutter's gesture arena defers `onTap` by
-  /// `kDoubleTapTimeout` — 300ms, confirmed against `package:flutter/src/gestures/multitap.dart`
-  /// — once a `DoubleTapGestureRecognizer` competes in the same arena, the same class of problem
-  /// Android's mirror change avoided in `detectTapGestures(onDoubleTap = ...)`).
+  /// Video-area single-tap dispatch (rb-flutter-gesture-clean-mode-v2, design R29 — SUPERSEDES
+  /// the retired `_handleLiveTap` / `_handleReplayTap` / `_registerLikeableTap` trio and the
+  /// double-tap-to-like feature they protected). Every short tap toggles `_cleanMode` — the only
+  /// question is WHEN:
   ///
-  /// EVERY tap — whether or not it turns out to be the second of a double-tap — fires its
-  /// existing dispatch synchronously first, via [tapTogglesPlayPause]: `isLive == true` →
-  /// `widget.onToggleMute`; `isLive == false` (VOD / finished-live replay) →
-  /// `widget.onTogglePlayPause`. That dispatch is now a plain if/else (no early return) —
-  /// [allowsDoubleTapLike] is a SEPARATE, orthogonal decision (see its own doc comment) that
-  /// decides whether the double-tap-like judgment runs AT ALL for this tap: `true` for LIVE
-  /// and for a finished-live replay, `false` for pure VOD (double-tap fast-forward/rewind there
-  /// is a different, currently-unimplemented Requirement — see proposal.md「與 sdk/player.md 的
-  /// 邊界」). When `false` this method returns immediately WITHOUT touching [_lastLiveTapAt] —
-  /// a pure-VOD tap sequence never writes to it, unchanged from before this extension. When
-  /// `true`, [_lastLiveTapAt] is updated and, when [isLiveDoubleTap] returns true for the
-  /// elapsed milliseconds since the PREVIOUS qualifying tap, ADDITIONALLY calls the existing
-  /// `_handleRailTap(LBSideRailKind.like)` + bumps `_liveHeartTick` — the exact same pair the
-  /// LIVE bottom bar's own like button already calls (see `onLike` in `_buildContent` /
-  /// `_buildUpcoming`).
-  void _handleVideoTap() {
+  /// - **NOT [isSeekable]** (a real live broadcast in progress, or its upcoming preview):
+  ///   toggles `_cleanMode` IMMEDIATELY via [_toggleCleanMode]. There is no double-tap outcome to
+  ///   protect against on this branch (LIVE has no double-tap reaction at all under R29), so no
+  ///   defer is needed.
+  /// - **[isSeekable]** (VOD / a finished-live replay): routes to [_handleSeekableTap], which
+  ///   DEFERS the toggle by [kDoubleTapSeekWindowMs] so a fast follow-up tap in the SAME
+  ///   [TapZone] can cancel it and seek instead — this is the exact "delay-commit + double-tap
+  ///   cancels it" shape the retired `_handleLiveTap` / `_handleReplayTap` already used to
+  ///   protect double-tap-to-LIKE; R29 reuses the same shape to protect double-tap-SEEK instead.
+  ///
+  /// [tapX] is the tap's horizontal offset from the video area's own left edge
+  /// (`TapUpDetails.localPosition.dx`, read at the `GestureDetector.onTapUp` call site) — only
+  /// consulted on the seekable branch (see [_handleSeekableTap] / [tapZone]).
+  void _handleVideoTap(double tapX) {
     final isLive = _model.isLive;
     final isFinishedLiveReplay = _model.isFinishedLiveReplay;
-    if (tapTogglesPlayPause(isLive)) {
-      widget.onTogglePlayPause?.call();
-    } else {
-      widget.onToggleMute?.call();
+    if (!isSeekable(isLive: isLive, isUpcoming: false, isFinishedLiveReplay: isFinishedLiveReplay)) {
+      _toggleCleanMode();
+      return;
     }
-    if (!allowsDoubleTapLike(isLive, isFinishedLiveReplay)) return;
+    _handleSeekableTap(tapZone(startX: tapX, containerWidth: _videoAreaWidth));
+  }
+
+  /// SEEKABLE-branch tap dispatch (VOD / finished-live replay, rb-flutter-gesture-clean-mode-v2)
+  /// — "delay the `_cleanMode` toggle, cancel-and-seek on a same-zone double-tap within
+  /// [kDoubleTapSeekWindowMs]" (design `screens.jsx:306`). A hit ([isDoubleTapSeekHit]) cancels
+  /// [_pendingCleanModeToggleTimer] (so `_cleanMode` never actually flips for either tap) and
+  /// commits a seek via [_commitSeek]; a miss (re)schedules the deferred toggle and remembers
+  /// this tap's time/zone as the new pairing candidate.
+  void _handleSeekableTap(TapZone zone) {
     final now = DateTime.now();
-    final last = _lastLiveTapAt;
-    _lastLiveTapAt = now;
-    final elapsedMs = last == null ? null : now.difference(last).inMilliseconds;
-    if (isLiveDoubleTap(elapsedMs)) {
-      _handleRailTap(LBSideRailKind.like);
-      setState(() => _liveHeartTick++);
+    final lastAt = _lastSeekTapAt;
+    final elapsedMs = lastAt == null ? null : now.difference(lastAt).inMilliseconds;
+    if (isDoubleTapSeekHit(elapsedMs: elapsedMs, sameZone: zone == _lastSeekTapZone)) {
+      _lastSeekTapAt = null;
+      _lastSeekTapZone = null;
+      _pendingCleanModeToggleTimer?.cancel();
+      _pendingCleanModeToggleTimer = null;
+      _commitSeek(zone == TapZone.fastForward ? kSeekStepSeconds : -kSeekStepSeconds);
+      return;
     }
+    _lastSeekTapAt = now;
+    _lastSeekTapZone = zone;
+    _pendingCleanModeToggleTimer?.cancel();
+    _pendingCleanModeToggleTimer =
+        Timer(const Duration(milliseconds: kDoubleTapSeekWindowMs), () {
+      _pendingCleanModeToggleTimer = null;
+      _toggleCleanMode();
+    });
+  }
+
+  /// Commit a one-shot seek by [deltaSeconds] relative to the model's CURRENT
+  /// `playbackPosition` (rb-flutter-gesture-clean-mode-v2, double-tap-seek). Forwards the
+  /// resulting ABSOLUTE target through the existing host-wired [PlayerShellView.onSeek] seam
+  /// (`rb-flutter-vod-playback-progress-bar` — the same seam `PlaybackProgressBarView`'s
+  /// draggable track already uses), clamped to `[0, playbackDuration]`. Flutter's `onSeek`
+  /// signature is absolute-seconds-plus-duration, unlike iOS's delta-based
+  /// `PlayerShellModel.seekBy(_:)` — this is the Flutter-side equivalent computation.
+  void _commitSeek(double deltaSeconds) {
+    final duration = _model.playbackDuration;
+    final target = (_model.playbackPosition + deltaSeconds).clamp(0.0, duration);
+    widget.onSeek?.call(target, duration: duration);
+  }
+
+  /// Video-area long-press dispatch (rb-flutter-gesture-clean-mode-v2). The framework
+  /// `LongPressGestureRecognizer` stays UNCONDITIONALLY wired (see the `GestureDetector` call
+  /// site) so the gesture arena keeps resolving a genuine long-press away from `onTapUp` exactly
+  /// as before (parity the existing "a completed long-press does NOT ALSO dispatch a tap"
+  /// guarantee) — but this callback's OWN body is what decides whether anything actually
+  /// happens: NOT [isSeekable] (a real live broadcast in progress, or its upcoming preview) MUST
+  /// `return` WITHOUT starting [_startSpeedMode] — this is a STRUCTURAL no-op, the app-level
+  /// 2x-speed tick `Timer` this Requirement introduces is simply never scheduled for this branch,
+  /// not "scheduled then gated inside the tick". [isSeekable] (VOD / finished-live replay) starts
+  /// the 2x-speed hold.
+  void _handleLongPressStart(LongPressStartDetails details) {
+    if (!isSeekable(
+        isLive: _model.isLive, isUpcoming: false, isFinishedLiveReplay: _model.isFinishedLiveReplay)) {
+      return;
+    }
+    _startSpeedMode();
+  }
+
+  /// Begin the long-press 2x-speed hold (rb-flutter-gesture-clean-mode-v2). Captures the
+  /// playback position AT THE MOMENT the hold starts as [_speedModeBaseline] — every subsequent
+  /// tick adds on top of this LOCAL baseline rather than re-reading `_model.playbackPosition`
+  /// (see [_scheduleNextSpeedModeTick]'s own doc comment for why), then kicks off the recurring
+  /// tick via [_scheduleNextSpeedModeTick].
+  void _startSpeedMode() {
+    _speedModeBaseline = _model.playbackPosition;
+    _speedModeTickCount = 0;
+    _speedMode = true;
+    _scheduleNextSpeedModeTick();
+  }
+
+  /// Recurring 2x-speed tick (rb-flutter-gesture-clean-mode-v2, parity iOS
+  /// `scheduleSpeedModeTick()`). Re-schedules itself every [kSpeedModeTickInterval] for as long
+  /// as [_speedMode] stays `true`; each firing bumps [_speedModeTickCount] and forwards
+  /// `_speedModeBaseline + _speedModeTickCount * kSpeedModeExtraSeekPerTick` through
+  /// [PlayerShellView.onSeek] — a MONOTONICALLY INCREASING absolute target computed purely from
+  /// the LOCAL baseline + tick count, deliberately NOT `_model.playbackPosition` re-read fresh
+  /// each tick: a real host's playback position is not guaranteed to have caught up with the
+  /// PREVIOUS tick's `onSeek` call by the time this one fires, and a widget test's static
+  /// template never updates it at all — re-reading would risk seeking to the SAME target
+  /// repeatedly instead of advancing. **MUST NOT read [TapZone] / the press position** — a
+  /// long-press hold is ALWAYS fast-forward (positive delta) regardless of which half of the
+  /// video area it started in, deliberately preserving the upstream design demo's own direction
+  /// bug ("long-press never rewinds") verbatim, per the user's explicit instruction after three
+  /// rounds of back-and-forth clarification (see design.md).
+  void _scheduleNextSpeedModeTick() {
+    _speedModeTickTimer = Timer(kSpeedModeTickInterval, () {
+      if (!_speedMode) return;
+      _speedModeTickCount++;
+      final duration = _model.playbackDuration;
+      final target =
+          (_speedModeBaseline + _speedModeTickCount * kSpeedModeExtraSeekPerTick)
+              .clamp(0.0, duration);
+      widget.onSeek?.call(target, duration: duration);
+      _scheduleNextSpeedModeTick();
+    });
+  }
+
+  /// End the long-press 2x-speed hold — release or cancel (rb-flutter-gesture-clean-mode-v2).
+  /// Safe no-op when [_speedMode] is already `false` (the NOT-seekable branch of
+  /// [_handleLongPressStart] never started it in the first place).
+  void _stopSpeedMode() {
+    if (!_speedMode) return;
+    _speedMode = false;
+    _speedModeTickTimer?.cancel();
+    _speedModeTickTimer = null;
   }
 
   /// LIVE 底部 bar 愛心 burst tick（rb-flutter-live-bottom-heart-burst，問題 5）：愛心點擊遞增 →
   /// 即時飄心回饋。靜止態（tick 不變）→ HeartBurst 不畫 → golden byte-identical。
   int _liveHeartTick = 0;
 
-  /// Timestamp of the previous video-area tap that qualified under [allowsDoubleTapLike]
-  /// (rb-flutter-live-double-tap-like, widened by rb-flutter-live-double-tap-like-replay-extend
-  /// from LIVE-only to LIVE-or-finished-live-replay — the name is kept unchanged, a deliberate
-  /// historical-baggage carryover per design.md Decision 3, even though it now also tracks
-  /// finished-live-replay taps, not just strict LIVE ones). Feeds [isLiveDoubleTap] via the
-  /// elapsed milliseconds since this value. `null` initially / after a video-area tap that misses
-  /// the window. Only read/written inside [_handleVideoTap] when [allowsDoubleTapLike] is true —
-  /// a long-press or a pure-VOD tap never touches it. Deliberately NOT reset on a video switch
-  /// (see design.md Decision 4, mirrors [_cleanMode]'s own no-reset precedent).
-  DateTime? _lastLiveTapAt;
+  /// Timestamp of the previous SEEKABLE video-area tap (rb-flutter-gesture-clean-mode-v2).
+  /// Feeds [isDoubleTapSeekHit] together with [_lastSeekTapZone]. `null` initially / after a
+  /// video-area tap that misses the double-tap-seek window. Only read/written inside
+  /// [_handleSeekableTap] — a long-press or a non-seekable tap never touches it. Deliberately
+  /// NOT reset on a video switch (mirrors [_cleanMode]'s own no-reset precedent).
+  DateTime? _lastSeekTapAt;
+
+  /// Which [TapZone] the previous SEEKABLE video-area tap landed in — paired with
+  /// [_lastSeekTapAt]; both must match for [isDoubleTapSeekHit] to fire.
+  TapZone? _lastSeekTapZone;
+
+  /// Cancellable pending `_cleanMode`-toggle timer for a SEEKABLE short tap
+  /// (rb-flutter-gesture-clean-mode-v2). Non-null ⟺ a single seekable tap is currently waiting
+  /// out [kDoubleTapSeekWindowMs] before its `_cleanMode` toggle actually commits. `null` once
+  /// fired / cancelled (by a same-zone double-tap-seek hit) / never scheduled (NOT-seekable
+  /// branch toggles immediately, bypassing this field entirely).
+  Timer? _pendingCleanModeToggleTimer;
+
+  /// True while a long-press-driven 2x-speed hold is active (VOD / finished-live replay only —
+  /// see [_handleLongPressStart] for why it structurally never becomes `true` for a genuinely-
+  /// live broadcast). Gates whether [_scheduleNextSpeedModeTick]'s recurring `Timer` keeps
+  /// firing `onSeek`; carries NO visual representation (design R29 shows no indicator during the
+  /// hold), so this is plain instance state, not `setState`-driven.
+  bool _speedMode = false;
+
+  /// The playback position (seconds) captured the MOMENT the current 2x-speed hold started (see
+  /// [_startSpeedMode]). Every tick's absolute seek target is computed relative to this fixed
+  /// baseline, not a freshly-read `_model.playbackPosition` — see
+  /// [_scheduleNextSpeedModeTick]'s own doc comment for why.
+  double _speedModeBaseline = 0;
+
+  /// Ticks elapsed since the current 2x-speed hold started. Multiplied by
+  /// [kSpeedModeExtraSeekPerTick] against [_speedModeBaseline] to compute each tick's target.
+  int _speedModeTickCount = 0;
+
+  /// The recurring 2x-speed tick timer (see [_scheduleNextSpeedModeTick]). A plain `Timer` — the
+  /// `flutter_test` binding advances real `Timer`s deterministically via `tester.pump(duration)`,
+  /// so no dependency-injection seam is needed here (unlike iOS's injected `cleanModeTapSchedule`
+  /// closure), matching this file's existing convention for its other timer-driven state.
+  Timer? _speedModeTickTimer;
+
+  /// The video area's current laid-out width (rb-flutter-gesture-clean-mode-v2), captured by the
+  /// `LayoutBuilder` wrapping the video-area `GestureDetector` at the `_buildContent` call site.
+  /// Feeds [tapZone] so a tap's horizontal offset can be classified into a [TapZone]. `0` before
+  /// the first layout pass — [tapZone] defensively falls back to [TapZone.fastForward] for a
+  /// zero-width container.
+  double _videoAreaWidth = 0;
 
   /// VOD 介紹卡輪播本地關閉的商品 id（rb-flutter-now-introducing，問題 9/10）：關掉某張介紹卡 → 加入
   /// 此集合、輪播略過；playhead 前進該商品重新命中時會再出現（iOS/Android 同行為）。
@@ -636,6 +874,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   @override
   void initState() {
     super.initState();
+    _cleanMode = widget.cleanModeForTesting;
     widget.template?.subtitle.addListener(_onSubtitleStateChanged);
     _maybeFetchSubtitleCues();
   }
@@ -674,6 +913,10 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   void dispose() {
     widget.template?.subtitle.removeListener(_onSubtitleStateChanged);
     _scrubCollapseTimer?.cancel();
+    // rb-flutter-gesture-clean-mode-v2 — cancel any pending deferred-clean-mode-toggle / 2x-speed
+    // tick timers so a fired callback never touches this unmounted state.
+    _pendingCleanModeToggleTimer?.cancel();
+    _speedModeTickTimer?.cancel();
     super.dispose();
   }
 
@@ -754,6 +997,19 @@ class _PlayerShellViewState extends State<PlayerShellView> {
       isReplay: m.isFinishedLiveReplay,
     );
 
+    // rb-flutter-live-now-pill display gate — reuses the SAME `isMainPlaybackPhase` local as
+    // `showsProgressBar` above (see `showsLiveNowPill`'s doc comment for why an independent
+    // `isLive` exclusion is still required on top of it).
+    final showsLiveNowPillNow = showsLiveNowPill(
+      hasLiveNow: widget.hasLiveNow,
+      isMain: isMainPlaybackPhase,
+      isUpcoming: m.isUpcoming,
+      isLive: m.isLive,
+      isFinishedLiveReplay: m.isFinishedLiveReplay,
+      cleanMode: _cleanMode,
+      isScrubbing: _isScrubbing,
+    );
+
     return Stack(
       children: [
         // Themed background placeholder painted ONLY in demo/golden (`live == false`). In host
@@ -766,40 +1022,48 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         if (!widget.live)
           Positioned.fill(child: ColoredBox(color: theme.background)),
 
-        // Tap over the video area — dispatched by `_handleVideoTap` (see below), which uses
-        // `tapTogglesPlayPause(_model.isLive)` (rb-flutter-gesture-clean-mode-rewrite): LIVE
-        // (isLive == true) keeps the pre-existing tap-to-mute (design「點擊靜音」/
-        // first-tap-unmutes); VOD / finished-live replay (isLive == false) toggles play/pause
-        // instead, REUSING the existing `rb-flutter-vod-playback-progress-bar` seam
-        // (`widget.onTogglePlayPause`) — no second play/pause seam is added. Independently,
-        // `allowsDoubleTapLike(_model.isLive, _model.isFinishedLiveReplay)`
-        // (rb-flutter-live-double-tap-like, widened to also cover finished-live replay by
-        // rb-flutter-live-double-tap-like-replay-extend — see that change's design.md Decision 1
-        // for why this does NOT use `GestureDetector.onDoubleTap`) ADDITIONALLY checks for a
-        // double-tap-like hit on BOTH the LIVE and finished-live-replay branches; only pure VOD
-        // (neither flag true) is out of scope. A transparent, full-bleed tap target placed BELOW
-        // the chrome so header / rail / info-panel / pinned-card taps win. Transparent → golden
-        // baselines unchanged; a no-op host callback makes it inert.
+        // Tap over the video area — dispatched by `_handleVideoTap` (rb-flutter-gesture-clean-
+        // mode-v2, design R29, SUPERSEDES the retired `tapTogglesPlayPause`/`allowsDoubleTapLike`
+        // dispatch): every short tap toggles `_cleanMode`, immediately when NOT `isSeekable`
+        // (a real live broadcast, or its upcoming preview), deferred by `kDoubleTapSeekWindowMs`
+        // when it IS seekable (VOD / finished-live replay) — see `_handleVideoTap` /
+        // `_handleSeekableTap`'s own doc comments. A `LayoutBuilder` wraps this detector to
+        // capture the video area's laid-out width into `_videoAreaWidth`, feeding `tapZone`'s
+        // left/right-half classification for the seekable branch's double-tap-seek judgment. The
+        // callback switched from `onTap` to `onTapUp` so it can read `TapUpDetails.localPosition`
+        // — a transparent, full-bleed tap target placed BELOW the chrome so header / rail /
+        // info-panel / pinned-card taps win. Transparent → golden baselines unchanged; a no-op
+        // host callback makes it inert.
         //
-        // Long-press on the SAME detector toggles「乾淨模式」(`_cleanMode`, brand-new —
-        // rb-flutter-gesture-clean-mode-rewrite): the framework's own gesture arena
-        // (`LongPressGestureRecognizer`, `GestureDetector.onLongPressStart`) arbitrates it
-        // against the vertical-drag and tap recognizers below — see design.md D1 for why no
-        // hand-rolled `Timer` / state machine is needed.
+        // Long-press on the SAME detector now drives the 2x-speed hold (`_handleLongPressStart`,
+        // seekable-only — a genuinely-live broadcast is a STRUCTURAL no-op, see that method's own
+        // doc comment) instead of R23's `_cleanMode` toggle. The framework's own gesture arena
+        // (`LongPressGestureRecognizer`, `GestureDetector.onLongPressStart`) still arbitrates it
+        // against the vertical-drag and tap recognizers below EXACTLY as before — kept
+        // unconditionally wired (not nulled out for the non-seekable branch) so a genuine
+        // long-press still never ALSO dispatches `onTapUp` on release, no hand-rolled `Timer` /
+        // state machine needed for that part.
         Positioned.fill(
-          child: GestureDetector(
-            key: LbTestKeys.playerVideoSurface,
-            behavior: HitTestBehavior.translucent,
-            onTap: _handleVideoTap,
-            onLongPressStart: (_) => _toggleCleanMode(),
-            // Vertical-swipe → adjacent-video navigation (rb-player-shell-swipe).
-            // The SAME detector keeps the tap dispatch above and the vertical drag —
-            // Flutter's gesture arena routes a pure tap to onTap and a committed
-            // vertical drag to the drag callbacks (parity to iOS .simultaneousGesture).
-            // Accumulate dy and decide on end: swipe-UP → next, swipe-DOWN → prev.
-            onVerticalDragStart: (_) => _swipeDy = 0,
-            onVerticalDragUpdate: (details) => _swipeDy += details.delta.dy,
-            onVerticalDragEnd: (_) => _handleSwipeEnded(_swipeDy),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              _videoAreaWidth = constraints.maxWidth;
+              return GestureDetector(
+                key: LbTestKeys.playerVideoSurface,
+                behavior: HitTestBehavior.translucent,
+                onTapUp: (details) => _handleVideoTap(details.localPosition.dx),
+                onLongPressStart: _handleLongPressStart,
+                onLongPressEnd: (_) => _stopSpeedMode(),
+                onLongPressCancel: _stopSpeedMode,
+                // Vertical-swipe → adjacent-video navigation (rb-player-shell-swipe).
+                // The SAME detector keeps the tap dispatch above and the vertical drag —
+                // Flutter's gesture arena routes a pure tap to onTapUp and a committed
+                // vertical drag to the drag callbacks (parity to iOS .simultaneousGesture).
+                // Accumulate dy and decide on end: swipe-UP → next, swipe-DOWN → prev.
+                onVerticalDragStart: (_) => _swipeDy = 0,
+                onVerticalDragUpdate: (details) => _swipeDy += details.delta.dy,
+                onVerticalDragEnd: (_) => _handleSwipeEnded(_swipeDy),
+              );
+            },
           ),
         ),
 
@@ -886,6 +1150,12 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               // 原位（design.md D3）。upcoming 分支（下方 `_buildUpcoming`）維持不傳（預設 false）——
               // `_cleanMode` 在該分支結構上不可達。
               hideHostPill: _cleanMode,
+              // 乾淨模式限定靜音鈕（rb-flutter-gesture-clean-mode-v2）：補回單擊切靜音手勢退役後
+              // 的操作管道，沿用既有 `widget.onToggleMute` host-wired seam，只是觸發手勢從「影片
+              // 區單擊」改成「點頂列這顆鈕」。`_cleanMode == false` 時 `onToggleMute` 傳 null →
+              // 鈕不渲染、不佔位，既有非乾淨模式 baseline byte-identical。
+              muted: m.muted,
+              onToggleMute: _cleanMode ? widget.onToggleMute : null,
             ),
             const Spacer(),
             // Side rail is VOD-ONLY chrome (design screens.jsx gates `LBPSideRail`
@@ -901,14 +1171,17 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               Row(
                 children: [
                   const Spacer(),
-                  // Rail anchored bottom 80 (design LBPSideRail) so the SEPARATE floating bag
-                  // (bottom 16) sits below it next to the mini-cart strip. Lifted an extra
-                  // _scrubChromeLift while released-but-still-held (rb-flutter-vod-playback-
-                  // progress-bar) so it clears the still-expanded transport bar.
+                  // Rail anchored bottom 68 (rb-flutter-gesture-clean-mode-v2, design LBPSideRail
+                  // R29 — was 80, moved down 12 to follow the floating bag's own R29 shrink, see
+                  // the `FloatingBagButton` size constants in `operation_rail.dart`) so the
+                  // SEPARATE floating bag (bottom 16) sits below it next to the mini-cart strip.
+                  // Lifted an extra _scrubChromeLift while released-but-still-held
+                  // (rb-flutter-vod-playback-progress-bar) so it clears the still-expanded
+                  // transport bar.
                   Padding(
                     padding: EdgeInsets.only(
                         right: 12,
-                        bottom: 80 + (_scrubBarExpanded ? _scrubChromeLift : 0.0)),
+                        bottom: 68 + (_scrubBarExpanded ? _scrubChromeLift : 0.0)),
                     child: OperationRailView(
                       theme: theme,
                       items: m.railItems,
@@ -925,7 +1198,8 @@ class _PlayerShellViewState extends State<PlayerShellView> {
 
         // Floating shopping bag (design LBPBagButton, iOS FloatingBagButtonView): a SEPARATE
         // affordance from the side rail, anchored low (bottom 16) — distinct from the rail
-        // (bottom 80). VOD-main chrome only. Tap → open the product list (_handleRailTap(goods)).
+        // (bottom 68, rb-flutter-gesture-clean-mode-v2 — was 80). VOD-main chrome only. Tap →
+        // open the product list (_handleRailTap(goods)).
         if (!m.isLive && !m.introPlaying && m.startPhase != LBPStartPhase.loading && m.startPhase != LBPStartPhase.splash && !_isScrubbing && !_cleanMode)
           Align(
             alignment: Alignment.bottomRight,
@@ -939,6 +1213,19 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 onTap: () => _handleRailTap(LBSideRailKind.goods),
               ),
             ),
+          ),
+
+        // 「退出乾淨模式」小圓鈕（rb-flutter-gesture-clean-mode-v2）：`_cleanMode == true` 時可見，
+        // 點擊即退出。VOD/回放（`!m.isLive`）疊在 transport 列展開態上方（`bottom: 44`，粗估清開
+        // 展開態進度條的高度）；LIVE（`m.isLive`）疊在畫面底部左側（`bottom: 16`）。兩者共用同一顆
+        // widget / 同一個 `LbTestKeys.cleanModeExitButton`（`m.isLive` 互斥，永遠只有一顆存在於
+        // 渲染子樹）。不要求逐位元組對齊設計稿座標，只要求「乾淨模式時可見、退出乾淨模式時消失、
+        // 點擊即退出」語意正確。
+        if (_cleanMode)
+          Positioned(
+            left: 14,
+            bottom: m.isLive ? 16 : 44,
+            child: _CleanModeExitButton(onTap: () => setState(() => _cleanMode = false)),
           ),
 
         // LIVE bottom bar — surfaces the design's `LBLiveBottomBar` at the bottom in
@@ -975,12 +1262,11 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // LIVE 底部 bar 愛心 burst（rb-flutter-live-bottom-heart-burst，問題 5）：錨於底部 bar 愛心
         // （trailing-most 鈕）上方。introPlaying（bag-only，無愛心）不畫。靜止態不畫 → golden 中立。
         // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）追加 `&& !_cleanMode`。
-        // rb-flutter-live-double-tap-like-replay-extend：已結束直播回放（isFinishedLiveReplay）雙擊
-        // 送愛心現在也會 bump `_liveHeartTick`（見 `_handleVideoTap` / `allowsDoubleTapLike`），故此
-        // widget 的組出條件追加 `|| m.isFinishedLiveReplay`——否則 tick 遞增了卻沒有任何畫面對應（沿用
-        // 既有 `right: 18, bottom: 64` 錨點；回放走 VOD 側欄 chrome，沒有 LIVE 底部 bar 可精確對齊，這是
-        // 一個裝飾性的浮動特效、非精確貼齊某顆按鈕，沿用既有座標即可）。靜止態（tick 不變）依然不畫，
-        // 既有 golden（`m.isLive == false` 且 tick 恆 0）不受影響。
+        // `|| m.isFinishedLiveReplay` 條款是 rb-flutter-live-double-tap-like-replay-extend（已
+        // retired，見「Flutter player-shell LIVE 模式雙擊影片區送愛心」REMOVED Requirement）留下的
+        // 歷史殘留——雙擊送愛心整段退役後，已結束直播回放已無任何路徑會遞增 `_liveHeartTick`（回放走
+        // VOD 側欄 chrome，不組出 `LiveBottomBarView`，故沒有 `onLike` 入口），此子句目前恆為
+        // no-op（不畫任何東西），保留不動不影響行為，MUST NOT 誤讀為「回放仍有送愛心入口」。
         if ((m.isLive || m.isFinishedLiveReplay) && !_cleanMode)
           Positioned(
             right: 18,
@@ -996,8 +1282,26 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // chrome branch this only ever overlays the VOD chrome (side rail / floating bag / now-
         // introducing carousel), never `LiveOverlayChromeView` — see design.md for why this
         // change does not retrofit iOS's `usesLiveChrome` unification.
+        //
+        // STABLE `Key` (player-gesture-feedback-overlays-flutter, kept by rb-flutter-gesture-
+        // clean-mode-v2 even though that change's own two paused-overlay/mute-toast slots were
+        // retired — see below): `PlaybackProgressBarView` MUST survive a mid-gesture rebuild (a
+        // touch-down…touch-up pair spans at least one `setState` — `onScrubStart` — in between)
+        // — its OWN internal `GestureDetector` is already keyed for exactly this reason (see this
+        // widget's own file-header comment), but that only protects ITS internal subtree, not
+        // THIS outer `Stack`'s reconciliation of `PlaybackProgressBarView` itself. Flutter's
+        // unkeyed list-child reconciliation (`Element.updateChildren`) matches a common PREFIX
+        // from the front and a common SUFFIX from the back, and only reuses a KEYED element for
+        // anything left in the unmatched middle — an UNKEYED item is simply discarded and
+        // recreated wherever it lands in that middle window. Other still-toggling trailing
+        // siblings (`LiveNowPillView`, gated on `_isScrubbing` among other things, and the
+        // contact-merchant modal further below) sit AFTER this item and can still break the
+        // backward scan the same way the now-removed paused-overlay/mute-toast slots once did —
+        // this `Key` is retained defensively so `PlaybackProgressBarView` stays positively
+        // identifiable regardless of how many other siblings appear/disappear around it.
         if (showsProgressBar)
           Positioned(
+            key: const ValueKey('lb-playback-progress-bar-slot'),
             left: 0,
             right: 0,
             bottom: 0,
@@ -1022,6 +1326,30 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               onScrubEnd: _handleScrubEnd,
             ),
           ),
+
+        // 「現正直播」右緣提示鈕 (rb-flutter-live-now-pill). Independent top-level `Align` Stack
+        // sibling (parity iOS `ZStack` sibling / Android `Box(contentAlignment=CenterEnd)` / RN
+        // absolute `View`): `Alignment.centerRight` naturally pins it vertically-centered to the
+        // right edge, matching the design's absolute positioning without needing an extra
+        // `Row`/`Spacer` wrapper. `live: widget.live` gates the pulse animation (see
+        // `LiveNowPillView`'s own doc comment) — demo/golden stays static, host runtime pulses.
+        if (showsLiveNowPillNow)
+          Align(
+            alignment: Alignment.centerRight,
+            child: LiveNowPillView(
+              theme: theme,
+              live: widget.live,
+              onTap: widget.onGoLive,
+            ),
+          ),
+
+        // rb-flutter-gesture-clean-mode-v2 — the centre paused-overlay / mute-toast slots that
+        // `player-gesture-feedback-overlays-flutter` composed here are RETIRED (the gestures that
+        // triggered them — single-tap-to-mute with a delayed commit, and a genuinely-paused VOD/
+        // replay state — no longer exist under the R29 model). `PlaybackPausedOverlayView` /
+        // `GestureMuteToastView` remain valid standalone widgets (see their own file headers) but
+        // are no longer composed by `PlayerShellView`. VOD / finished-live-replay play/pause now
+        // lives on `PlaybackProgressBarView`'s own expanded-state button below.
 
         // 會員等級限定升級遮罩（restriction-mask ②）。`is_restriction` 為**軟性顯示閘門**：core 不擋
         // 播放（後端仍回完整內容），reference-ui 在播放畫面上疊全幅暗罩 + 升級提示並阻擋下層互動。疊
@@ -1400,6 +1728,38 @@ class _RestrictionMask extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// MARK: - Clean-mode exit button (rb-flutter-gesture-clean-mode-v2)
+//
+// A small 36×36 dark-glass round button, shown only while `_cleanMode == true`, that exits clean
+// mode on tap — the reference-ui-side operation channel that supersedes the retired long-press
+// toggle (short tap now enters/defers into clean mode; this button is the dedicated exit). Exact
+// coordinates / icon are NOT required to align pixel-for-pixel with the design — only the
+// semantics (visible in clean mode, gone otherwise, tap exits) matter.
+
+class _CleanModeExitButton extends StatelessWidget {
+  final VoidCallback? onTap;
+
+  const _CleanModeExitButton({this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      key: LbTestKeys.cleanModeExitButton,
+      onTap: onTap,
+      child: Container(
+        width: 36,
+        height: 36,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.45),
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(Icons.fullscreen_exit, size: 18, color: Colors.white),
       ),
     );
   }

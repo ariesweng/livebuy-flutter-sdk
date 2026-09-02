@@ -52,8 +52,10 @@ const Color _railPillBackground = Color(0x8C141418); // 0x8C ≈ 0.55 alpha
 const double _railGap = 10; // flex gap between pills (`LBPSideRail`)
 const double _pillSize = 40; // 40×40 round pill
 const double _pillGlyphSize = 18; // Icons size 18
-const double _bagSize = 48; // 48×48 floating bag (`LBPBagButton`)
-const double _bagGlyphSize = 34; // Icons.bag size 34 (design `LBPBagButton`: 34/48 ≈ 70% of the button)
+const double _bagSize = 40; // 40×40 floating bag (rb-flutter-gesture-clean-mode-v2, design
+    // `LBPBagButton` R29 — was 48×48)
+const double _bagGlyphSize = 22; // Icons.bag size 22 (rb-flutter-gesture-clean-mode-v2, design
+    // `LBPBagButton`: 22/40 ≈ 55% of the button — was 34/48 ≈ 70%)
 const double _badgeMinSize = 20; // count chip minWidth / height
 const double _badgeFontSize = 11; // fontSize 11, weight 800
 const double _badgeBorderWidth = 2; // 2px solid #fff border
@@ -135,8 +137,9 @@ class OperationRailView extends StatelessWidget {
 }
 
 /// The floating shopping-bag affordance (design `LBPBagButton`, iOS `FloatingBagButtonView`): a
-/// 48×48 white circle + accent bag glyph + cart badge. Composed by the shell SEPARATELY from the
-/// side rail (so it sits lower, next to the mini-cart strip — design `bottom 16` vs rail `bottom 80`).
+/// 40×40 (rb-flutter-gesture-clean-mode-v2, R29 — was 48×48) white circle + accent bag glyph +
+/// cart badge. Composed by the shell SEPARATELY from the side rail (so it sits lower, next to the
+/// mini-cart strip — design `bottom 16` vs rail `bottom 68`, R29 — was `bottom 80`).
 class FloatingBagButton extends StatelessWidget {
   final ReferenceUITheme theme;
   final int bagCount;
@@ -205,9 +208,9 @@ class _PillButton extends StatelessWidget {
 
 // MARK: - Bag button (`LBPBagButton`)
 
-/// The bag button: a larger 48×48 white circle with the accent-tinted bag glyph,
-/// plus the cart badge when `bagCount > 0` (accent fill, white text, 2px white
-/// border, top-trailing). The iOS drop shadow is omitted (deterministic golden;
+/// The bag button: a 40×40 (rb-flutter-gesture-clean-mode-v2, R29 — was 48×48) white circle with
+/// the accent-tinted bag glyph, plus the cart badge when `bagCount > 0` (accent fill, white text,
+/// 2px white border, top-trailing). The iOS drop shadow is omitted (deterministic golden;
 /// `debugDisableShadows` is on for tests) — shape + colors match.
 class _BagButton extends StatelessWidget {
   final ReferenceUITheme theme;

@@ -212,6 +212,19 @@ class PlayerHeaderBarView extends StatelessWidget {
   /// 單一布林，語意上仍精確覆蓋「minimize 鈕留、其餘 header 內容走」。
   final bool hideHostPill;
 
+  /// The CURRENT mute state (`PlayerShellModel.muted`) — selects the mute button's glyph
+  /// (rb-flutter-gesture-clean-mode-v2). Only meaningful when [onToggleMute] is non-null (the
+  /// button only renders then); default `false` keeps every EXISTING call site's construction
+  /// unchanged.
+  final bool muted;
+
+  /// Tap on the乾淨模式-only mute-toggle button → host-wired mute forwarder
+  /// (rb-flutter-gesture-clean-mode-v2 — the SAME `PlayerShellView.onToggleMute` seam the retired
+  /// tap-to-mute video-area gesture used to call, just re-triggered from this header button
+  /// instead). `null` (DEFAULT — every EXISTING call site) → the button MUST NOT render at all
+  /// (not just inert): `PlayerShellView` only passes a non-null value while `_cleanMode == true`.
+  final VoidCallback? onToggleMute;
+
   const PlayerHeaderBarView({
     super.key,
     required this.theme,
@@ -229,6 +242,8 @@ class PlayerHeaderBarView extends StatelessWidget {
     this.showSubscribe = true,
     this.titleScroll,
     this.hideHostPill = false,
+    this.muted = false,
+    this.onToggleMute,
   });
 
   @override
@@ -269,6 +284,13 @@ class PlayerHeaderBarView extends StatelessWidget {
                     ),
             ),
             const SizedBox(width: 8),
+            // 乾淨模式限定靜音鈕（rb-flutter-gesture-clean-mode-v2）：`onToggleMute != null` 時
+            // （即 `_cleanMode == true` 期間）在 minimize 鈕左側多渲染一顆；`onToggleMute == null`
+            // 時整顆 MUST NOT 渲染、MUST NOT 佔位（既有非乾淨模式 baseline byte-identical）。
+            if (onToggleMute != null) ...[
+              _muteButton(),
+              const SizedBox(width: 8),
+            ],
             _minimizeButton(),
           ],
         ),
@@ -797,12 +819,14 @@ class PlayerHeaderBarView extends StatelessWidget {
     );
   }
 
-  // MARK: - Trailing — single minimize button (LBPTopBar pip affordance)
+  // MARK: - Trailing — minimize button (LBPTopBar pip affordance) + clean-mode-only mute button
   //
-  // The top-right contains ONLY a minimize control (design `LBPTopBar` pip; user
+  // The top-right normally contains ONLY a minimize control (design `LBPTopBar` pip; user
   // requirement「右上角只有縮小的元件」). Tapping it collapses the player into the
-  // bottom-right floating preview (host-owned). info / share live in the side rail;
-  // mute is the tap-to-mute gesture on the video area.
+  // bottom-right floating preview (host-owned). info / share live in the side rail. Mute WAS the
+  // tap-to-mute gesture on the video area (R23) — rb-flutter-gesture-clean-mode-v2 (R29) retired
+  // that gesture (a short tap now toggles clean mode instead) and moved the mute operation here,
+  // gated to only appear while [onToggleMute] is non-null (i.e. clean mode is active).
 
   Widget _minimizeButton() {
     // picture_in_picture_alt = the Material PiP-enter glyph (parity to the iOS SF
@@ -812,6 +836,18 @@ class PlayerHeaderBarView extends StatelessWidget {
     return KeyedSubtree(
       key: LbTestKeys.playerMinimize,
       child: _glassIconButton(Icons.picture_in_picture_alt, onMinimize),
+    );
+  }
+
+  /// The clean-mode-only mute-toggle button (rb-flutter-gesture-clean-mode-v2). Only ever
+  /// composed by [build] while [onToggleMute] is non-null. Icon follows [muted] — parity
+  /// `GestureMuteToastView` / `PlaybackPausedOverlayView`'s own `Icons.volume_off` /
+  /// `Icons.volume_up` convention.
+  Widget _muteButton() {
+    return KeyedSubtree(
+      key: LbTestKeys.playerHeaderMuteButton,
+      child: _glassIconButton(
+          muted ? Icons.volume_off : Icons.volume_up, onToggleMute),
     );
   }
 
@@ -828,7 +864,7 @@ class PlayerHeaderBarView extends StatelessWidget {
           color: _iconGlass,
           shape: BoxShape.circle,
         ),
-        child: Icon(icon, size: 18 * theme.fontScale, color: _onGlass),
+        child: Icon(icon, size: 20 * theme.fontScale, color: _onGlass),
       ),
     );
   }

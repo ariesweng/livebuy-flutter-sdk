@@ -10,6 +10,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart';
 
 import '../reference_ui_theme.dart';
 import 'chat_composer_bar.dart';
+import 'live_now_poll_controller.dart';
 import 'reference_ui_design.dart';
 
 // MARK: - LivebuyPlayer — turnkey drop-in player container (Flutter)
@@ -651,6 +652,22 @@ class LivebuyPlayerConfig {
   /// gate already guarantees the interaction only ever fires while non-live — see design.md).
   final void Function(double seconds, {double? duration})? onSeek;
 
+  // -- rb-flutter-live-now-pill --------------------------------------------------------
+
+  /// Shop ID whose ongoing OTHER live is polled to drive the「現正直播」提示鈕
+  /// (`LiveNowPillView`, rb-flutter-live-now-pill). DEFAULT `null` — mirrors
+  /// `LivebuyLiveEntry(shopId:)`'s existing precedent (the SDK has no getter to read back the
+  /// `configure(shopId:)` value, the host must pass it again). `null` → the container builds NO
+  /// `LiveNowPollController` at all (zero extra API calls, the pill never appears), aligning
+  /// with the headless "no opt-in, no extra side effect" convention.
+  final String? shopId;
+
+  /// Tap on `LiveNowPillView`. DEFAULT: switch in place to the currently-detected other live
+  /// (`_switchVideo(live.id)`, the SAME default `onPickHot` uses) — mirrors Android/RN's
+  /// simpler shape (no extra player-controller parameter; the container closure already
+  /// captures `_switchVideo`).
+  final ValueChanged<LBVideoItem>? onGoLive;
+
   const LivebuyPlayerConfig({
     this.eventListener,
     this.onMinimize,
@@ -687,6 +704,8 @@ class LivebuyPlayerConfig {
     this.design = const MinimalDesign(),
     this.onTogglePlayPause,
     this.onSeek,
+    this.shopId,
+    this.onGoLive,
   });
 
   /// Returns a copy with `onMinimize` / `onDismiss` overridden (all other seams passed through).
@@ -746,6 +765,10 @@ class LivebuyPlayerConfig {
       // presenter's re-composition (see the ⚠️ note above).
       onTogglePlayPause: onTogglePlayPause,
       onSeek: onSeek,
+      // rb-flutter-live-now-pill — must likewise survive the collapsible presenter's
+      // re-composition (see the ⚠️ note above).
+      shopId: shopId,
+      onGoLive: onGoLive,
     );
   }
 }
@@ -827,6 +850,12 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// observer installed) ONLY on iOS; null on Android (N/A — no AVKit re-parent, ExoPlayer pauses
   /// honestly). When null every resume path below is an inert no-op.
   ForegroundResumeController? _resumeController;
+
+  /// 「現正直播」poller (rb-flutter-live-now-pill). `null` when `config.shopId == null` — the
+  /// caller (this State) decides whether to build it at all, mirroring [_resumeController]'s
+  /// own "nullable field, built conditionally inside `initState`" convention (design.md
+  /// Decision 1). Every use site short-circuits on `null` via `_liveNowController?.`.
+  LiveNowPollController? _liveNowController;
 
   /// Latest player state seen via `VIDEO_STATE_CHANGE` (through the wrapping SDK listener). Feeds
   /// the controller's `isPlaying` seam (was-playing latch). Note IVS live stays stale `.playing`
@@ -947,6 +976,23 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       return await hostListener?.call(event) ?? LBEventReply.passthrough;
     });
     _loadCoreTheme();
+    // rb-flutter-live-now-pill: `config.shopId == null` → build NO controller at all (zero
+    // extra API calls, the pill never appears) — see design.md Decision 1 for why this is a
+    // caller-decides shape (mirrors [_resumeController] above), not iOS/RN's
+    // nullable-ctor-internal-no-op.
+    final shopId = widget.config.shopId;
+    if (shopId != null) {
+      _liveNowController = LiveNowPollController(shopId: shopId)
+        ..addListener(_onLiveNowChanged)
+        ..start();
+    }
+  }
+
+  /// Bridges [LiveNowPollController] state changes into a rebuild (a `ChangeNotifier`, unlike
+  /// iOS `@Published` / Android `mutableStateOf`, does not auto-trigger one) — mirrors
+  /// `PlayerShellView`'s own `template?.subtitle.addListener(...)` bridge (design.md Decision 2).
+  void _onLiveNowChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -955,6 +1001,10 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     if (_resumeController != null) {
       WidgetsBinding.instance.removeObserver(this);
     }
+    _liveNowController
+      ?..removeListener(_onLiveNowChanged)
+      ..stop()
+      ..dispose();
     _composer.dispose();
     _nickname.dispose();
     _login.dispose();
@@ -1179,6 +1229,22 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // chatEnabled==false）→ 點暱稱也比照留言先呈現「請先登入」modal（與 onComment 共用同一純函式
       // liveCommentRequiresLogin），MUST NOT 開暱稱 modal。
       onNickname: _gatedNickname,
+      // 「現正直播」提示鈕（rb-flutter-live-now-pill）：`hasLiveNow` 讀輪詢結果是否非空；
+      // `onGoLive` 讀出目前偵測到的 `LBVideoItem` → host override 或預設 `_switchVideo`
+      // （比照 `onPickHot` 預設換片）。`_liveNowController == null`（`config.shopId == null`）
+      // 時 `hasLiveNow` 恆 false、`onGoLive` 恆 no-op（鈕本就不會被組出，這裡的空值防禦僅為
+      // 保守起見）。
+      hasLiveNow: _liveNowController?.liveNow != null,
+      onGoLive: () {
+        final live = _liveNowController?.liveNow;
+        if (live == null) return;
+        final override = c.onGoLive;
+        if (override != null) {
+          override(live);
+        } else {
+          _switchVideo(live.id);
+        }
+      },
       onSwipeUp: onSwipeUp,
       onSwipeDown: onSwipeDown,
       // 滑向「無影片」方向（無 next / prev）→ 關閉播放器（swipe-nav-close-on-empty）：host

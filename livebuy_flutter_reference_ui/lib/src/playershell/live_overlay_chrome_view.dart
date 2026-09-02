@@ -418,16 +418,21 @@ class LiveOverlayChromeView extends StatelessWidget {
 
   // ── LBPGestureHint — centered static gesture hints ───────────────────────
 
-  /// Three centered dark hint pills (`LBPGestureHint`): tap-to-mute,
-  /// long-press-pause, swipe-to-switch. Pure static localized copy.
+  /// Two centered dark hint pills (`LBPGestureHint`): tap-to-toggle-clean-mode,
+  /// swipe-to-switch (rb-flutter-gesture-clean-mode-v2 — the long-press hint pill this widget
+  /// used to show a THIRD row for is REMOVED: this widget is only ever composed while
+  /// `PlayerShellModel.isLive == true`, i.e. a genuinely-live broadcast in progress — see
+  /// `PlayerShellView._buildContent`'s `if (m.isLive) LiveOverlayChromeView else ...`
+  /// branch, which VOD and a finished-live replay never reach — and under R29 a long-press has NO
+  /// action at all for that state (see the「Flutter player-shell 播放器手勢二度重寫...」
+  /// Requirement's structural no-op), so there is no correct long-press copy left to show here).
+  /// Pure static localized copy.
   Widget _gestureHints() {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         _gestureHintPill(Icons.touch_app, _hintTap),
-        const SizedBox(height: 8),
-        _gestureHintPill(Icons.pan_tool, _hintHold),
         const SizedBox(height: 8),
         _gestureHintPill(Icons.swap_vert, _hintSwipe),
       ],
@@ -528,9 +533,13 @@ const String _hostCaptionLabel = '主持人';
 /// Narrate-tag copy shown on the pinned card ("介紹中").
 const String _narrateTagText = '介紹中';
 
-/// Gesture-hint copy (static localized presentation strings).
-const String _hintTap = '點擊畫面 = 切換靜音';
-const String _hintHold = '長按畫面 = 切換乾淨模式';
+/// Gesture-hint copy (static localized presentation strings). `_hintTap` updated by
+/// rb-flutter-gesture-clean-mode-v2 (was '點擊畫面 = 切換靜音' — R23's tap-to-mute gesture is
+/// retired, replaced by tap-to-toggle-clean-mode). The former `_hintHold` constant ('長按畫面 =
+/// 切換乾淨模式') has NO remaining call site — this widget is only ever composed while genuinely
+/// live, and R29 gives long-press no action at all there — so it is removed rather than kept
+/// unused (see `_gestureHints()`'s own doc comment).
+const String _hintTap = '點擊畫面 = 切換乾淨模式';
 const String _hintSwipe = '上下滑動 = 切換影片';
 
 // ── LBLivePinnedCard carousel — single card OR multi-product carousel + 分頁點 ──

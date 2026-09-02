@@ -77,6 +77,38 @@ abstract final class LbTestKeys {
   static const Key playbackProgressTimestamp =
       ValueKey('lb_playback_progress_timestamp');
 
+  /// 「現正直播」右緣提示鈕 (rb-flutter-live-now-pill). String value 1:1 identical to iOS
+  /// `LBAccessibilityID.liveNowPill` / Android `LBTestTags.LIVE_NOW_PILL` / RN
+  /// `LBTestIDs.liveNowPill`.
+  static const Key liveNowPill = ValueKey('lb_live_now_pill');
+
+  /// 暫停覆蓋層靜音切換鈕 (rb-flutter port of `player-gesture-feedback-overlays-flutter`). String
+  /// value 1:1 identical to iOS `LBAccessibilityID.pausedOverlayMuteButton` / Android
+  /// `LBTestTags.PAUSED_OVERLAY_MUTE_BUTTON`.
+  ///
+  /// RETIRED — `rb-flutter-gesture-clean-mode-v2` 起不再被 `PlayerShellView` 組合
+  /// （`PlaybackPausedOverlayView` 仍是可獨立建構/測試的 widget，只是不再出現在
+  /// `PlayerShellView` 的渲染子樹中）。id 本身保留、不刪除。
+  static const Key pausedOverlayMuteButton =
+      ValueKey('lb_paused_overlay_mute_button');
+
+  /// 暫停覆蓋層播放恢復鈕. String value 1:1 identical to iOS
+  /// `LBAccessibilityID.pausedOverlayResumeButton` / Android
+  /// `LBTestTags.PAUSED_OVERLAY_RESUME_BUTTON`.
+  ///
+  /// RETIRED — `rb-flutter-gesture-clean-mode-v2` 起不再被 `PlayerShellView` 組合，理由同上。
+  static const Key pausedOverlayResumeButton =
+      ValueKey('lb_paused_overlay_resume_button');
+
+  /// 播放器頂列乾淨模式限定靜音切換鈕 (rb-flutter-gesture-clean-mode-v2). String value 1:1
+  /// identical to iOS `LBAccessibilityID.playerHeaderMuteButton`.
+  static const Key playerHeaderMuteButton =
+      ValueKey('lb_player_header_mute_button');
+
+  /// 「退出乾淨模式」小圓鈕 (rb-flutter-gesture-clean-mode-v2). String value 1:1 identical to
+  /// iOS `LBAccessibilityID.cleanModeExitButton`.
+  static const Key cleanModeExitButton = ValueKey('lb_clean_mode_exit_button');
+
   // ── Family 2 — feed + win ─────────────────────────────────────────────────
   static const Key chatFeed = ValueKey('lb_chat_feed');
   static const Key eventJoinCta = ValueKey('lb_event_join_cta');

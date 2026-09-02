@@ -130,6 +130,19 @@ class PlayerOverlayContext {
   /// LIVE 底部 bar 暱稱按鈕 → 容器本地呈現 設定暱稱 modal（`nickname.present(false)`；parity）。
   final VoidCallback onNickname;
 
+  /// Whether another live broadcast is CURRENTLY detected (rb-flutter-live-now-pill), carried
+  /// verbatim from the container's `LiveNowPollController.liveNow != null` to
+  /// `PlayerShellView.hasLiveNow`. Default `false` — same reasoning as [showSubscribe] /
+  /// [showStock]: this DTO's own default keeps every existing `PlayerOverlayContext(...)` call
+  /// site unaffected; the turnkey container resolves the real value.
+  final bool hasLiveNow;
+
+  /// Host-wired tap on `LiveNowPillView` (rb-flutter-live-now-pill), resolved by the container
+  /// (reads `LiveNowPollController.liveNow` → host `LivebuyPlayerConfig.onGoLive` override or
+  /// the default in-place switch). Default `null` → `PlayerShellView`'s own inert default, same
+  /// reasoning as [onTogglePlayPause] / [onSwipeUp].
+  final VoidCallback? onGoLive;
+
   /// Whether the info panel (VideoInfoPanel bottom sheet) is currently open — mirrored from
   /// `PlayerShellView` via [onInfoPanelOpenChange] so the higher-layer chat feed can be hidden
   /// while the panel is up (parity iOS rb-ios-info-panel-not-covered-by-chat). Default false.
@@ -286,6 +299,8 @@ class PlayerOverlayContext {
     required this.onTapPinnedProduct,
     required this.onComment,
     required this.onNickname,
+    this.hasLiveNow = false,
+    this.onGoLive,
     this.onSwipeUp,
     this.onSwipeDown,
     this.onCloseRequest,
@@ -455,6 +470,10 @@ class MinimalDesign extends ReferenceUIDesign {
             onComment: c.onComment,
             // 暱稱鈕 → 容器本地呈現 設定暱稱 modal（parity iOS / Android / RN）。
             onNickname: c.onNickname,
+            // 「現正直播」提示鈕（rb-flutter-live-now-pill）：原樣轉發容器已解析好的
+            // hasLiveNow / onGoLive。
+            hasLiveNow: c.hasLiveNow,
+            onGoLive: c.onGoLive,
             // Swipe overrides — turnkey container always passes null (host-feed swipeFeed
             // removed; swipe uses the shell's built-in channel-adjacency + close-on-empty).
             onSwipeUp: c.onSwipeUp,
