@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart' show Colors, Icons;
+import 'package:flutter/material.dart' show Colors;
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBProduct;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
@@ -12,6 +12,7 @@ import 'now_introducing_carousel.dart';
 import '../reference_ui_theme.dart';
 import 'caption_overlay_view.dart';
 import 'contact_merchant_modal.dart';
+import 'detail_glyph.dart';
 import 'heart_burst.dart';
 import 'live_bottom_bar_view.dart';
 import 'live_now_pill_view.dart';
@@ -1215,16 +1216,19 @@ class _PlayerShellViewState extends State<PlayerShellView> {
             ),
           ),
 
-        // 「退出乾淨模式」小圓鈕（rb-flutter-gesture-clean-mode-v2）：`_cleanMode == true` 時可見，
-        // 點擊即退出。VOD/回放（`!m.isLive`）疊在 transport 列展開態上方（`bottom: 44`，粗估清開
-        // 展開態進度條的高度）；LIVE（`m.isLive`）疊在畫面底部左側（`bottom: 16`）。兩者共用同一顆
-        // widget / 同一個 `LbTestKeys.cleanModeExitButton`（`m.isLive` 互斥，永遠只有一顆存在於
-        // 渲染子樹）。不要求逐位元組對齊設計稿座標，只要求「乾淨模式時可見、退出乾淨模式時消失、
-        // 點擊即退出」語意正確。
+        // 「退出乾淨模式」小圓鈕（rb-flutter-gesture-clean-mode-v2，位置對齊設計稿由
+        // rb-flutter-clean-mode-exit-icon-fix 補齊）：`_cleanMode == true` 時可見，點擊即退出。
+        // `left: 14` 兩側共用，對齊 `design/templates/minimal/screens.jsx` VOD/LIVE 兩分支皆用的
+        // 同一水平位移。`bottom` 依 `m.isLive` 分流：VOD/回放（`!m.isLive`）`bottom: 52`（設計稿
+        // `16 + 36`，疊在 transport 列展開態上方，清開展開態進度條的高度）；LIVE（`m.isLive`）
+        // `bottom: 16`（設計稿本就是這個值，不變）。兩者共用同一顆 widget / 同一個
+        // `LbTestKeys.cleanModeExitButton`（`m.isLive` 互斥，永遠只有一顆存在於渲染子樹）。這個檔案
+        // 本身沒有既有 safe-area（`MediaQuery.of(context).padding`）存取慣例，設計稿公式雖含
+        // `+ safeArea.bottom`，這裡刻意不新增（見本 change design.md 的 Non-Goals）。
         if (_cleanMode)
           Positioned(
             left: 14,
-            bottom: m.isLive ? 16 : 44,
+            bottom: m.isLive ? 16 : 52,
             child: _CleanModeExitButton(onTap: () => setState(() => _cleanMode = false)),
           ),
 
@@ -1737,9 +1741,14 @@ class _RestrictionMask extends StatelessWidget {
 //
 // A small 36×36 dark-glass round button, shown only while `_cleanMode == true`, that exits clean
 // mode on tap — the reference-ui-side operation channel that supersedes the retired long-press
-// toggle (short tap now enters/defers into clean mode; this button is the dedicated exit). Exact
-// coordinates / icon are NOT required to align pixel-for-pixel with the design — only the
-// semantics (visible in clean mode, gone otherwise, tap exits) matter.
+// toggle (short tap now enters/defers into clean mode; this button is the dedicated exit).
+//
+// `rb-flutter-gesture-clean-mode-v2`'s own design.md deferred pixel-for-pixel alignment (exact
+// coordinates / icon) as a Non-Goal — semantics only (visible in clean mode, gone otherwise, tap
+// exits). `rb-flutter-clean-mode-exit-icon-fix` supersedes that Non-Goal: the icon now IS
+// `DetailGlyph` (design `Icons.detail` — a list/detail glyph, not fullscreen-exit), and the
+// caller's position (see below) is aligned to the design. The prior "exact coordinates / icon are
+// NOT required" description no longer holds — see this change's design.md.
 
 class _CleanModeExitButton extends StatelessWidget {
   final VoidCallback? onTap;
@@ -1759,7 +1768,7 @@ class _CleanModeExitButton extends StatelessWidget {
           color: Colors.black.withValues(alpha: 0.45),
           shape: BoxShape.circle,
         ),
-        child: const Icon(Icons.fullscreen_exit, size: 18, color: Colors.white),
+        child: const DetailGlyph(color: Colors.white, size: 18),
       ),
     );
   }

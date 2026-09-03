@@ -57,9 +57,24 @@ bool presenterWidgetCovered({required bool hasVideo, required bool isMinimized})
 /// Whether a change of the bound video's id should auto-restore the full-screen player: true
 /// ONLY when a new (non-null) video arrives while minimized (the host swapped in another video).
 /// Restoring from the floating card keeps the SAME id (only flips minimized) → returns false.
-/// Pure (parity iOS `shouldReopenOnVideoChange`).
+/// Pure (parity iOS / Android `shouldReopenOnVideoChange`).
 bool shouldReopenOnVideoChange({required String? newVideoId, required bool isMinimized}) {
   return newVideoId != null && isMinimized;
+}
+
+/// Whether an incoming `video.id` seen in `didUpdateWidget` is merely an ECHO of an in-place
+/// switch this presenter already self-reported via `onVideoSwitchedItem` → `onVideoChanged`
+/// (rb-flutter-collapsible-player-switch-sync-and-reopen-signal), as opposed to a genuine
+/// externally-initiated swap (e.g. tapping a different carousel card). `onVideoSwitchedItem`
+/// advances `_shownVideo` to the switched item's id BEFORE calling `onVideoChanged`, whose
+/// notification then round-trips through the host and arrives back here as a new `video` prop —
+/// so by the time `didUpdateWidget` runs, `newVideoId` already equals what this presenter itself
+/// knows it is showing ([shownVideoId]). A genuine host-initiated swap never pre-advances
+/// `_shownVideo`, so its incoming id differs. Only a non-echo (or an `openSignal`-driven re-tap of
+/// the same video) is eligible to trigger [shouldReopenOnVideoChange] — an echo MUST NOT, or
+/// minimizing during an in-place switch would unexpectedly snap back to full-screen. Pure.
+bool isVideoChangeSwitchEcho({required String? newVideoId, required String? shownVideoId}) {
+  return newVideoId != null && newVideoId == shownVideoId;
 }
 
 /// Clamp the floating card's committed-plus-live drag offset so it can be dragged to reposition
@@ -118,12 +133,22 @@ class CollapsibleLivebuyPlayer extends StatefulWidget {
   /// Resolved reference-ui theme for the floating card.
   final ReferenceUITheme theme;
 
+  /// Open-intent token (`rb-flutter-collapsible-player-switch-sync-and-reopen-signal`, DEFAULT
+  /// `0`, parity Android `openSignal`). `didUpdateWidget`'s reopen re-evaluation SHALL trigger on
+  /// EITHER `video.id` changing OR this value changing, so the host can force a reopen
+  /// re-evaluation even when `video.id` is unchanged (e.g. the user re-taps the SAME video from a
+  /// carousel while minimized) by incrementing a local counter at every "open the player" entry
+  /// point. Left at the DEFAULT (never incremented) → behavior is byte-identical to before this
+  /// parameter existed.
+  final int openSignal;
+
   const CollapsibleLivebuyPlayer({
     super.key,
     required this.video,
     required this.onVideoChanged,
     required this.theme,
     this.config = const LivebuyPlayerConfig(),
+    this.openSignal = 0,
   });
 
   @override
@@ -162,26 +187,49 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
   @override
   void didUpdateWidget(CollapsibleLivebuyPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // A HOST swap (different id) re-seeds the floating card's shown video to the new host video (an
-    // in-place switch never changes `widget.video.id`, so this only fires for genuine host swaps).
-    if (oldWidget.video?.id != widget.video?.id) {
-      _shownVideo = widget.video;
-      // A newly-bound video while minimized → close the floating preview and re-present full-screen
-      // for the new video (e.g. tapping another carousel card). Tapping the card to RESTORE keeps
-      // the same id, so it never trips this. Reset the drag offset.
-      if (shouldReopenOnVideoChange(newVideoId: widget.video?.id, isMinimized: _isMinimized)) {
-        setState(() {
-          _isMinimized = false;
-          _committedOffset = Offset.zero;
-          _dragTranslation = Offset.zero;
-        });
-      }
-      // Sync the cover bridge AFTER any auto-restore has updated `_isMinimized` (parity iOS
-      // onChange(video?.id) end). Covers open (null→id → covered), close (id→null → uncovered),
-      // host swap (idA→idB → covered), and auto-restore (floating→full → covered). Reads the fresh
-      // `widget.video` (already the new prop here) + the post-setState `_isMinimized`.
-      _syncWidgetCover();
+    final idChanged = oldWidget.video?.id != widget.video?.id;
+    // openSignal (rb-flutter-collapsible-player-switch-sync-and-reopen-signal, parity Android
+    // `LaunchedEffect(v.id, openSignal)`): re-evaluate reopen on EITHER `video.id` changing OR
+    // `openSignal` changing, so the host can force a reopen re-evaluation even when `video.id` is
+    // unchanged (e.g. re-tapping the SAME minimized video from a carousel). Left at the DEFAULT `0`
+    // (never incremented) → this never changes on its own, byte-identical to before it existed.
+    final openSignalChanged = oldWidget.openSignal != widget.openSignal;
+    if (!idChanged && !openSignalChanged) return;
+
+    // Whether the incoming id is merely an ECHO of an in-place switch this presenter already
+    // self-reported via `onVideoSwitchedItem` → `onVideoChanged` (see `isVideoChangeSwitchEcho`),
+    // NOT a genuine externally-initiated swap (e.g. tapping a different carousel card). Snapshot
+    // BEFORE reassigning `_shownVideo` below. NOTE: forwarding in-place switches to the REQUIRED
+    // `onVideoChanged` (see `_composedConfig` below) means a changed `widget.video.id` is no longer
+    // exclusively a "genuine host swap" signal — this guard is what keeps that distinction correct.
+    // Only meaningful when the id actually changed: an `openSignal`-only change concerns the SAME id
+    // already shown, which is never an echo (there is nothing to echo).
+    final isSwitchEcho = idChanged &&
+        isVideoChangeSwitchEcho(newVideoId: widget.video?.id, shownVideoId: _shownVideo?.id);
+
+    // A HOST swap (different id, not an echo of our own switch notification) re-seeds the floating
+    // card's shown video to the new host video.
+    if (idChanged) _shownVideo = widget.video;
+
+    // A newly-bound video while minimized (genuine swap) — or an `openSignal`-driven re-tap of the
+    // SAME minimized video — → close the floating preview and re-present full-screen. Tapping the
+    // card to RESTORE keeps the same id AND leaves `openSignal` untouched, so it never trips this.
+    // An ECHOED in-place switch is excluded: minimizing during an in-place switch MUST NOT
+    // unexpectedly snap back to full-screen. Reset the drag offset.
+    if (!isSwitchEcho &&
+        shouldReopenOnVideoChange(newVideoId: widget.video?.id, isMinimized: _isMinimized)) {
+      setState(() {
+        _isMinimized = false;
+        _committedOffset = Offset.zero;
+        _dragTranslation = Offset.zero;
+      });
     }
+    // Sync the cover bridge AFTER any auto-restore has updated `_isMinimized` (parity iOS
+    // onChange(video?.id) end). Covers open (null→id → covered), close (id→null → uncovered), host
+    // swap (idA→idB → covered), and auto-restore (floating→full → covered). Reads the fresh
+    // `widget.video` (already the new prop here) + the post-setState `_isMinimized`. Edge-triggered
+    // (same value = no-op), so calling it for an `openSignal`-only no-reopen pass is safe.
+    _syncWidgetCover();
   }
 
   LivebuyPlayerConfig get _composedConfig => widget.config.copyWith(
@@ -212,9 +260,20 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
         // one (rb-flutter-collapsible-player-track-switch). Guard same-id so a no-op switch neither
         // re-binds nor churns. Does NOT touch the keep-alive prop (`v.id`) → no redundant reload +
         // no auto-restore misfire. Any host-supplied `onVideoSwitchedItem` is preserved by chaining.
+        //
+        // ALSO forwards to the REQUIRED `onVideoChanged` (rb-flutter-collapsible-player-switch-sync-
+        // and-reopen-signal, parity Android/RN): `onVideoChanged` previously fired only on close, so
+        // a host that relies solely on it (the required, harder-to-miss seam) never learned about
+        // in-place switches. Shares the SAME same-id guard as `_shownVideo` so a no-op switch neither
+        // notifies nor churns. `didUpdateWidget`'s `isVideoChangeSwitchEcho` guard is what stops this
+        // notification from being mistaken for a genuine host swap and snapping back to full-screen
+        // while minimized.
         onVideoSwitchedItem: (item) {
           widget.config.onVideoSwitchedItem?.call(item);
-          if (item.id != _shownVideo?.id) setState(() => _shownVideo = item);
+          if (item.id != _shownVideo?.id) {
+            setState(() => _shownVideo = item);
+            widget.onVideoChanged(item);
+          }
         },
       );
 

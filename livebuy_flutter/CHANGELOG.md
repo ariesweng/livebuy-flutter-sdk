@@ -6,7 +6,33 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
-（目前無待發項目——`2.0.0` 已於下方發布，涵蓋自上一個未 tag 的 `1.3.0` 以來累積的所有內容。）
+（目前無待發項目——`2.0.1` 已於下方發布，三套件共用版號 lockstep。）
+
+## 2.0.1 - 2026-09-03
+
+> **Patch，僅 `livebuy_flutter_reference_ui` 有實際內容變動；其餘兩套件（`livebuy_flutter` /
+> `livebuy_flutter_ui`）純版號 lockstep bump，本輪零改動。** 含 1 項新增 optional 建構參數
+> （additive、非 BREAKING）。兩項獨立修正：① 補齊 `2.0.0`（R29 播放器手勢三度改版）design.md
+> 當時刻意記錄的 Non-Goals 延後項——乾淨模式退出鈕像素對齊設計稿；② `CollapsibleLivebuyPlayer`
+> in-place 換片同步必填 `onVideoChanged` 回呼＋新增 `openSignal` 機制，parity Android/iOS/RN。
+
+### Added
+
+- **`CollapsibleLivebuyPlayer` 新增選填 `openSignal` 建構參數**（`int`，additive，預設 `0`）——
+  縮小播放器後，在浮動小卡狀態下換片再點回同一支影片時，可遞增此值觸發正確重新展開，對齊
+  Android/iOS 既有機制。
+
+### Fixed
+
+- **`livebuy_flutter_reference_ui`** — 乾淨模式退出鈕 icon 改為自繪 `DetailGlyph`（`CustomPainter`
+  手繪，對齊設計稿 `Icons.detail`：帶邊框圓角矩形＋3 排 dot+line 清單造型），取代先前的 Material
+  `Icons.fullscreen_exit`。VOD/已結束直播回放 `bottom` 由 `44` 修正為 `52`，對齊設計稿座標；LIVE
+  `bottom: 16` 不變。
+- **`CollapsibleLivebuyPlayer` in-place 換片原本只更新內部 `shownVideo`，不會通知必填的
+  `onVideoChanged`**，host 若沒接選填的 `config.onVideoSwitchedItem` 會導致 session 狀態卡住
+  （真實案例：WooCommerce Android app 輪播點回換片前影片沒反應）——換片時額外呼叫
+  `onVideoChanged`（same-id guard 防重複），並新增 `isVideoChangeSwitchEcho` 純函式防止這個
+  轉發誤觸浮動小卡狀態下的自動還原。
 
 ## 2.0.0 - 2026-09-03
 
