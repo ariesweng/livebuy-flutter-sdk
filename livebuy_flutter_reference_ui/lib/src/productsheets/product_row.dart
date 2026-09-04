@@ -189,11 +189,14 @@ class ProductRow extends StatelessWidget {
                             url: product.photos.isEmpty
                                 ? null
                                 : product.photos.first,
-                            borderRadius: BorderRadius.circular(12),
+                            // 4 (was 12, R34 `design/contract/claude-design-sync.md`) — see
+                            // this thumb's outer bordered `Container` below for the matching
+                            // clip radius + the new 1px `#D2D2D2` border.
+                            borderRadius: BorderRadius.circular(4),
                             placeholder: DecoratedBox(
                               decoration: BoxDecoration(
                                 color: _bgSunken,
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(4),
                               ),
                             ),
                           ),
@@ -242,7 +245,12 @@ class ProductRow extends StatelessWidget {
                             right: 0,
                             bottom: 0,
                             child: Container(
-                              color: theme.accent,
+                              // Fixed coral fill (rb-flutter-vod-live-product-card-restyle,
+                              // 2026-09-03) — was `theme.accent` (varied with the merchant
+                              // theme). Unifies the「介紹中」vocabulary with
+                              // `LiveOverlayChromeView._pinnedCard`'s narrate banner and the
+                              // design's `LBPProductRow` introBadge.
+                              color: _introducingBadgeFill,
                               padding: const EdgeInsets.symmetric(
                                   vertical: 3, horizontal: 4),
                               child: Row(
@@ -258,7 +266,9 @@ class ProductRow extends StatelessWidget {
                                     overflow: TextOverflow.clip,
                                     style: TextStyle(
                                       color: const Color(0xFFFFFFFF),
-                                      fontSize: 10 * theme.fontScale,
+                                      // 10 → 12 (rb-flutter-vod-live-product-card-restyle),
+                                      // parity with the design's introBadge (`fontSize: 12`).
+                                      fontSize: 12 * theme.fontScale,
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
@@ -269,10 +279,21 @@ class ProductRow extends StatelessWidget {
                       ],
                     ),
                   );
-                  return (isIntroducing && !soldOut)
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(12), child: thumb)
-                      : thumb;
+                  // R34 (`design/contract/claude-design-sync.md`): the `.row` thumbnail now
+                  // ALWAYS carries a 1px `#D2D2D2` border + a 4px clip (was: only clipped when
+                  // `isIntroducing` needed its bottom-edge banner corners rounded, and had no
+                  // border at all) — matches the design's outer `div` (`borderRadius:
+                  // '0.25rem', border: '1px solid #D2D2D2', overflow: 'hidden'`), so an
+                  // unconditional bordered + clipped `Container` replaces the prior
+                  // introducing-only `ClipRRect`.
+                  return Container(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: const Color(0xFFD2D2D2), width: 1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: thumb,
+                  );
                 }),
               ),
               const SizedBox(width: 12),
@@ -763,6 +784,13 @@ final Color _bgSunken = colorFromHex('#F4F4F6') ?? const Color(0xFFF4F4F6);
 final Color _saleColor = colorFromHex('#E0334B') ?? const Color(0xFFE0334B);
 final Color _soldOutColor = colorFromHex('#9A96A3') ?? const Color(0xFF9A96A3);
 final Color _outSoonColor = colorFromHex('#F5A623') ?? const Color(0xFFF5A623);
+
+/// The「介紹中」badge fill — fixed coral `rgba(240,50,70,.7)` = `#F03246` @ alpha 0.7
+/// (rb-flutter-vod-live-product-card-restyle, 2026-09-03 — was `theme.accent`). Kept as
+/// its own file-local constant (not shared with `live_overlay_chrome_view.dart`'s
+/// equivalent) per `design.md` Decisions — same value, independent per-file token.
+final Color _introducingBadgeFill =
+    (colorFromHex('#F03246') ?? const Color(0xFFF03246)).withValues(alpha: 0.7);
 
 const String _soldOutLabel = '已售完';
 const String _introducingLabel = '介紹中';

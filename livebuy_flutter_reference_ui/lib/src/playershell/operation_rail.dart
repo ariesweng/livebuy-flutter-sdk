@@ -5,6 +5,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 import '../reference_ui_theme.dart';
 import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
+import 'cc_glyph.dart';
 
 // OperationRailView — family-1 player-shell surface 2 (side rail).
 //
@@ -33,6 +34,14 @@ import '../testing/lb_test_keys.dart';
 // `simulate*`. Taps surface a single `onTapItem` intent (each kind), which the
 // shell / host wires to the matching core exit.
 //
+// CLOSED-CHAT FINISHED REPLAY (rb-flutter-live-replay-more-menu-and-video-info-live-copy,
+// design R32): this is the surface Flutter ACTUALLY renders for a closed-chat finished live
+// replay (`PlayerShellModel.isFinishedLiveReplay`) — `LiveBottomBarView` never composes for
+// that state (see `player_shell_view.dart`'s `_buildContent`). `isFinishedLiveReplay == true`
+// collapses `share` + `serviceLink` into one 更多 pill (`onTapMore`, host-opened sheet);
+// `subtitle` (CC) is unaffected. Default `false` keeps every existing (VOD) call site
+// byte-identical.
+//
 // RENDERING CONSTRAINTS (inherited from iOS / Android — CRITICAL): NO scrollable
 // (`ListView` / `GridView` / `SingleChildScrollView`) — a fixed small `Column`
 // so the rail renders deterministically in the golden. NO network image. Glyphs
@@ -54,8 +63,9 @@ const double _pillSize = 40; // 40×40 round pill
 const double _pillGlyphSize = 18; // Icons size 18
 const double _bagSize = 40; // 40×40 floating bag (rb-flutter-gesture-clean-mode-v2, design
     // `LBPBagButton` R29 — was 48×48)
-const double _bagGlyphSize = 22; // Icons.bag size 22 (rb-flutter-gesture-clean-mode-v2, design
-    // `LBPBagButton`: 22/40 ≈ 55% of the button — was 34/48 ≈ 70%)
+const double _bagGlyphSize = 28; // Icons.bag size 28 (rb-flutter-vod-bag-icon-ratio-restore,
+    // design `LBPBagButton`: 28/40 = 70% of the button — restores the rb-flutter-bag-icon-enlarge
+    // ~70% convention after rb-flutter-gesture-clean-mode-v2 mistakenly dropped it to 22/40 ≈ 55%)
 const double _badgeMinSize = 20; // count chip minWidth / height
 const double _badgeFontSize = 11; // fontSize 11, weight 800
 const double _badgeBorderWidth = 2; // 2px solid #fff border
@@ -89,6 +99,31 @@ class OperationRailView extends StatelessWidget {
   /// no-op so demo / golden instances construct action-free.
   final ValueChanged<LBSideRailKind>? onTapItem;
 
+  /// Closed-chat finished-live-replay flag (rb-flutter-live-replay-more-menu-and-
+  /// video-info-live-copy, design `claude-design-sync.md` R32). Default `false` keeps
+  /// every existing (VOD) call site's rail byte-identical.
+  ///
+  /// `true` collapses `share` + `serviceLink` into a single 更多 (more) pill (tapped via
+  /// [onTapMore]) — `subtitle` (CC) is UNAFFECTED, it keeps its normal `enabled`-gated pill
+  /// in the SAME position. This mirrors the design's `LBLiveBottomBar` replay branch
+  /// ("更多" swaps in where CC used to sit, 分享 collapses into the menu) onto the surface
+  /// Flutter ACTUALLY renders for a closed-chat finished replay — this VOD-family side rail,
+  /// NOT `LiveBottomBarView` (which never composes for that state; see this change's
+  /// `design.md` "架構落差查證"). The caller feeds `PlayerShellModel.isFinishedLiveReplay`
+  /// — NOT the narrower core DVR `isReplay` (a stream STILL live, scrubbed behind the edge,
+  /// same call-site discipline as `showsPlaybackProgressBar`'s own `isReplay` parameter).
+  final bool isFinishedLiveReplay;
+
+  /// Host-wired「更多」pill tap (only reachable when [isFinishedLiveReplay] is true).
+  /// Deliberately NOT routed through [onTapItem] / `LBSideRailKind` — the existing
+  /// `LBSideRailKind.more` kind already carries a DIFFERENT, unrelated semantic
+  /// (`PlayerShellView._handleRailTap` toggles the info panel for it, a vestigial rail-`more`
+  /// pill from before the rail dropped that affordance) and is currently unused
+  /// (`enabled: false` in every seed, absent from [_presentationOrder]) — reusing it here
+  /// would silently repurpose a different, already-tested meaning. `null` → inert (demo /
+  /// golden / preview construct action-free).
+  final VoidCallback? onTapMore;
+
   const OperationRailView({
     super.key,
     required this.theme,
@@ -97,6 +132,8 @@ class OperationRailView extends StatelessWidget {
     required this.heartBurstTick,
     required this.muted,
     this.onTapItem,
+    this.isFinishedLiveReplay = false,
+    this.onTapMore,
   });
 
   /// Fixed side-rail presentation order (design `LBPSideRail`: CC / share / contact). Each kind is
@@ -117,21 +154,80 @@ class OperationRailView extends StatelessWidget {
         .where((k) => items.any((it) => it.kind == k && it.enabled))
         .toList(growable: false);
 
+    final pills = isFinishedLiveReplay ? _replayPills(visible) : _standardPills(visible);
+
     return Column(
       key: LbTestKeys.operationRail,
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        for (var i = 0; i < visible.length; i++) ...[
+        for (var i = 0; i < pills.length; i++) ...[
           if (i > 0) const SizedBox(height: _railGap),
-          _PillButton(
-            key: railKeyFor(visible[i]),
-            theme: theme,
-            kind: visible[i],
-            onTap: () => onTapItem?.call(visible[i]),
-          ),
+          pills[i],
         ],
       ],
+    );
+  }
+
+  /// The existing (VOD) rail: one `_PillButton` per visible kind, in order. Identical to the
+  /// tree this `build()` produced before [isFinishedLiveReplay] existed — every existing call
+  /// site (which omits the flag, default `false`) renders byte-identically.
+  List<Widget> _standardPills(List<LBSideRailKind> visible) => [
+        for (final k in visible)
+          _PillButton(
+            key: railKeyFor(k),
+            theme: theme,
+            kind: k,
+            onTap: () => onTapItem?.call(k),
+          ),
+      ];
+
+  /// The closed-chat finished-replay rail: CC stays in place (still `enabled`-gated), `share` /
+  /// `serviceLink` collapse into one unconditional 更多 pill (mirrors the design's `LBLiveBottomBar`
+  /// replay branch always showing its more button, regardless of what else is visible).
+  List<Widget> _replayPills(List<LBSideRailKind> visible) => [
+        if (visible.contains(LBSideRailKind.subtitle))
+          _PillButton(
+            key: railKeyFor(LBSideRailKind.subtitle),
+            theme: theme,
+            kind: LBSideRailKind.subtitle,
+            onTap: () => onTapItem?.call(LBSideRailKind.subtitle),
+          ),
+        _MorePillButton(key: LbTestKeys.railMore, theme: theme, onTap: onTapMore),
+      ];
+}
+
+// MARK: - More pill (rb-flutter-live-replay-more-menu-and-video-info-live-copy)
+
+/// The collapsed「更多」pill shown by the replay rail — same 40×40 translucent-dark
+/// circle chrome as [_PillButton], reusing [railIconFor]'s existing `more` → `Icons.more_horiz`
+/// mapping for the glyph WITHOUT adopting `LBSideRailKind.more`'s existing (different, unrelated)
+/// tap semantics — this pill's tap is a plain [VoidCallback], not routed through `onTapItem`.
+class _MorePillButton extends StatelessWidget {
+  final ReferenceUITheme theme;
+  final VoidCallback? onTap;
+
+  const _MorePillButton({super.key, required this.theme, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        width: _pillSize,
+        height: _pillSize,
+        alignment: Alignment.center,
+        decoration: const BoxDecoration(
+          color: _railPillBackground,
+          shape: BoxShape.circle,
+        ),
+        child: Icon(
+          railIconFor(LBSideRailKind.more),
+          size: _pillGlyphSize * theme.fontScale,
+          color: Colors.white,
+        ),
+      ),
     );
   }
 }
@@ -190,17 +286,23 @@ class _PillButton extends StatelessWidget {
           shape: BoxShape.circle,
         ),
         // 分享 改設計稿自繪三節點 ShareGlyph（rb-flutter-share-icon-design-align，問題 8）；
-        // 其餘 kind 維持 Material glyph。
-        child: kind == LBSideRailKind.share
-            ? ShareGlyph(
+        // CC/字幕 改設計稿自繪雙 C 曲線 CcGlyph（rb-flutter-cc-icon-design-align，取代 Material
+        // Icons.closed_caption 方塊造型）；其餘 kind 維持 Material glyph。
+        child: kind == LBSideRailKind.subtitle
+            ? CcGlyph(
                 color: Colors.white,
                 size: _pillGlyphSize * theme.fontScale,
               )
-            : Icon(
-                railIconFor(kind),
-                size: _pillGlyphSize * theme.fontScale,
-                color: Colors.white,
-              ),
+            : kind == LBSideRailKind.share
+                ? ShareGlyph(
+                    color: Colors.white,
+                    size: _pillGlyphSize * theme.fontScale,
+                  )
+                : Icon(
+                    railIconFor(kind),
+                    size: _pillGlyphSize * theme.fontScale,
+                    color: Colors.white,
+                  ),
       ),
     );
   }
@@ -315,7 +417,10 @@ IconData railIconFor(LBSideRailKind kind) {
     case LBSideRailKind.share:
       return Icons.ios_share; // square.and.arrow.up
     case LBSideRailKind.subtitle:
-      return Icons.closed_caption; // captions.bubble / CC
+      // captions.bubble / CC — actual rail rendering now draws self-drawn `CcGlyph`
+      // (rb-flutter-cc-icon-design-align, `_PillButton` special-case); this Material
+      // fallback value is kept for doc/back-compat purposes only.
+      return Icons.closed_caption;
     case LBSideRailKind.serviceLink:
       return Icons.chat_bubble; // bubble.left.fill / chat bubble (contact)
     case LBSideRailKind.guestNameEdit:

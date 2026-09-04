@@ -997,12 +997,27 @@ class DefaultPlayerTemplate {
     _lastState = state;
     errorState.handleStateChange(state);
     startScreen.handleStateChange(state, hasStart: _hasStart);
+    _syncProductOverlayIntroGate();
     // end-screen-no-countdown — the end screen is visible ⟺ the player is in the
     // `endScreenShown` sub-state (the native core enters it on live end REGARDLESS of
     // next/hot, #3). Flutter does NOT bridge momentState, so endScreenVisible is derived
     // from the bridged player-state string (equivalent to iOS deriving it from
     // momentState.endScreenShown). ORTHOGONAL to the auto-next countdown.
     endScreen.setVisible(state == 'endScreenShown');
+  }
+
+  /// suppress-product-overlay-during-intro-flutter-template — the intro MP4
+  /// preroll shares the SAME canonical-state inputs (`_lastState` + `_hasStart`)
+  /// as `startScreen.phase == splash` (D2); products/activeProduct MUST NOT
+  /// surface over the intro (使用者回報「開場影片不要出現商品卡」). Flutter does NOT
+  /// bridge `LBPlayerMomentState.startScreenActive` (no momentState bridge — see
+  /// [handlePlayerStateChange]'s `endScreenVisible` note for the same pattern),
+  /// so `startScreen.phase` — already derived from the same inputs — is reused as
+  /// the equivalent signal instead of duplicating the condition. Re-applied
+  /// wherever `_lastState` / `_hasStart` change so the gate never lags the
+  /// StartScreen splash it mirrors.
+  void _syncProductOverlayIntroGate() {
+    productOverlay.setIntroPlaying(startScreen.phase == LBPStartPhase.splash);
   }
 
   /// Host supplies `channel.start` (the opening MP4 URL) so the StartScreen
@@ -1043,6 +1058,7 @@ class DefaultPlayerTemplate {
     _hasStart = start.trim().isNotEmpty;
     // Re-apply the StartScreen splash with the fresh channel.start (parity 4788fae).
     startScreen.handleStateChange(_lastState, hasStart: _hasStart);
+    _syncProductOverlayIntroGate();
     final upcomingChannel = isUpcomingChannel(liveStatus, type);
     upcoming.apply(
       active: _lastState == 'awaitingLive',
@@ -1061,6 +1077,12 @@ class DefaultPlayerTemplate {
   void resetUpcomingForSession() {
     _lastState = 'loading';
     _hasStart = false;
+    // Note: this method does NOT recompute `startScreen.phase` (pre-existing —
+    // unlike handlePlayerStateChange / handleUpcoming, it never calls
+    // `startScreen.handleStateChange`), so this reads the phase as it stood
+    // BEFORE the reset above; kept for defensive consistency with the other two
+    // `_lastState`/`_hasStart`-mutating call sites (see design.md D2).
+    _syncProductOverlayIntroGate();
     upcoming.apply(
       active: false,
       introPlaying: false,

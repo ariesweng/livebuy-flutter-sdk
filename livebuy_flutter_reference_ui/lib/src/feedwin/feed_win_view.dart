@@ -296,9 +296,9 @@ class FeedWinOverlayView extends StatefulWidget {
   final bool infoPanelOpen;
 
   /// Right-edge clearance (pt) reserved for the chat feed so it stays in the design's LEFT column
-  /// (`live-chrome.jsx` `LBLiveChatOverlay` `right:152`) and does NOT extend under the side rail /
+  /// (`live-chrome.jsx` `LBLiveChatOverlay` `right:120`) and does NOT extend under the side rail /
   /// floating bag / win entry on the right (parity iOS FeedWinOverlayView `chatTrailingInset` =
-  /// MinimalDesign `liveChatTrailingClearance` 152). Default 0 (demo / golden keep the full width).
+  /// MinimalDesign `liveChatTrailingClearance` 120). Default 0 (demo / golden keep the full width).
   final double chatTrailingInset;
 
   /// 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：`PlayerShellView`'s `_cleanMode`
@@ -308,6 +308,15 @@ class FeedWinOverlayView extends StatefulWidget {
   /// [infoPanelOpen] 已建立的隱藏粒度，非本欄位新開更細的機制). Default `false` — every
   /// EXISTING call site keeps rendering unchanged.
   final bool cleanMode;
+
+  /// Whether the closed-chat finished-replay rail's「更多」sheet (`PlayerShellView`'s
+  /// `_moreMenuOpen` / `_RailMoreMenuSheet`) is currently open — bubbled through the container
+  /// (`onMoreMenuOpenChange` → `PlayerOverlayContext.moreMenuOpen` → `MinimalDesign.playerOverlay`
+  /// forward), 比照既有 [cleanMode] 冒泡管線 (rb-flutter-live-more-sheet-above-chat). `true` →
+  /// hides this WHOLE widget (聊天 feed + 中獎 toast / 入口一起隱藏 —— 沿用 [infoPanelOpen] /
+  /// [cleanMode] 已建立的隱藏粒度, 非本欄位新開更細的機制). Default `false` — every EXISTING call
+  /// site keeps rendering unchanged.
+  final bool moreMenuOpen;
 
   const FeedWinOverlayView({
     super.key,
@@ -321,6 +330,7 @@ class FeedWinOverlayView extends StatefulWidget {
     this.joinGate,
     this.onSubmitClaim,
     this.cleanMode = false,
+    this.moreMenuOpen = false,
   });
 
   @override
@@ -408,9 +418,12 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
     // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）追加 `&& !widget.cleanMode` —— 冒泡自
     // `PlayerShellView._cleanMode`（design.md D5），比照既有 infoPanelOpen 的同一個判斷式、同一個
     // 隱藏粒度（ActivityToastView + ChatFeedView 一起隱藏；WinEntryView / WinClaimSheetView 不受影響）。
+    // 「更多」選單開合（rb-flutter-live-more-sheet-above-chat）追加 `&& !widget.moreMenuOpen` ——
+    // 冒泡自 `PlayerShellView._moreMenuOpen`，同一個隱藏粒度，避免其被聊天列遮蓋/吃點擊。
     final chatVisible = (widget.template?.header.isLive ?? false) &&
         !widget.infoPanelOpen &&
-        !widget.cleanMode;
+        !widget.cleanMode &&
+        !widget.moreMenuOpen;
 
     // rb-flutter-win-claim-pagination — re-derive Surface 3's presentation state every
     // render from `_openClaimWinner` (the captured identity, see its doc comment for why
@@ -448,7 +461,7 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
             alignment: Alignment.bottomLeft,
             child: Padding(
               // Right inset keeps the chat in the design's LEFT column (LBLiveChatOverlay
-              // right:152) so it clears the side rail / floating bag / win entry (parity iOS).
+              // right:120) so it clears the side rail / floating bag / win entry (parity iOS).
               // bottom: 動態避讓 — 有公告（m.hasAnnounce）時往上讓出 LBLiveAnnounce 橫幅高度（96→140,
               // rb-flutter-live-announce-chat-clearance 問題4）；無公告 → 96（既有 baseline）。
               // left: 10 — 對齊 LIVE 底部 bar 購物袋鈕左側邊距（LiveBottomBarView._barHPadding = 10，
@@ -584,7 +597,10 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
             child: ActivitySheetView(
               theme: theme,
               event: m.currentActiveEvent!,
-              joined: m.activeEventJoined,
+              // 🔴 rb-flutter-activity-sheet-cta-repeatable — no `joined:` param any
+              // more: the CTA is now repeatable regardless of
+              // `DefaultActiveEvent.joined` (`ActivitySheetView` dropped that
+              // constructor parameter entirely; see activity_sheet.dart header).
               // rb-flutter-activity-sheet-pagination — pageCount/pageIndex read
               // straight off the bound template (`DefaultActiveEvent.activities` /
               // `.currentActivityPageIndex`); `onPage` forwards to
@@ -686,9 +702,11 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
   /// [widget.joinGate] seam, consulted BEFORE any side effect):
   ///   0. No current event, or its `keyword` empty/absent → return early. The
   ///      real CTA is only wired to this handler when
-  ///      `activitySheetCtaKind(keyword, joined) == .join` (keyword non-empty,
-  ///      not yet joined — see `activity_sheet.dart`), so this is defensive,
-  ///      same posture as [_handleJoin]'s own `keyword.isEmpty` guard.
+  ///      `activitySheetCtaKind(keyword) == .join` (keyword non-empty — CTA is
+  ///      always repeatable regardless of prior joins, see
+  ///      `rb-flutter-activity-sheet-cta-repeatable` / `activity_sheet.dart`),
+  ///      so this is defensive, same posture as [_handleJoin]'s own
+  ///      `keyword.isEmpty` guard.
   ///   1. [widget.joinGate] (rb-flutter-event-join-gate three-tier gate: 登入 →
   ///      暱稱 → 放行) consulted with the open event's `(id, keyword)`. `true` →
   ///      the gate INTERCEPTED (raised a 登入 / 暱稱 modal) → return: MUST NOT

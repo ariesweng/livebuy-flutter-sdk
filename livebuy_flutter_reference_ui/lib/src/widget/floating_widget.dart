@@ -22,8 +22,9 @@ import 'widget_model.dart' show WidgetGoods;
 //   (a) PLAIN coordinates (`sdk-components.jsx N-M`) address the CANONICAL component
 //       on disk today. Everything about the top-right CLOSE BUTTON is of this kind
 //       since 2026-08-11: its placement, size, fill, border-less-ness and glyph size
-//       were re-aligned to `sdk-components.jsx` `LBPFloatingWidget` 694-702 (framed
-//       top-right at `top: 4, right: 4`, 20×20, `rgba(0,0,0,0.55)`, `border: 'none'`).
+//       were re-aligned to `sdk-components.jsx` `LBPFloatingWidget` 709-716 (framed
+//       top-right at `top: 4, right: 4`, 28×28 (rb-flutter-live-replay-more-menu-and-
+//       video-info-live-copy, design R32 — was 20×20), `rgba(0,0,0,0.55)`, `border: 'none'`).
 //
 //   (b) `[HISTORICAL widgets.jsx@e98ac146^ N-M]` coordinates address a DIFFERENT,
 //       now-deleted component — the carousel-card version of `LBPFloatingWidget`, which
@@ -195,7 +196,7 @@ class FloatingWidgetView extends StatelessWidget {
   // ([HISTORICAL widgets.jsx@e98ac146^ 381-417] — see the file header, kind (b)): a
   // `position: relative` box of the reused `LBPCarouselCard` (whole-window tap →
   // videoTap). The CLOSE BUTTON on top of it follows the CANONICAL component instead
-  // (`sdk-components.jsx` 694-702, framed top-right at `top: 4, right: 4`).
+  // (`sdk-components.jsx` 709-716, framed top-right at `top: 4, right: 4`).
   //
   // NO drop-shadow is drawn — neither here nor by the reused `CarouselCardView`. The
   // canonical component has one (`0 8px 24px rgba(0,0,0,0.35)` plus a
@@ -254,26 +255,27 @@ class FloatingWidgetView extends StatelessWidget {
     );
   }
 
-  /// Top-right round close button (`sdk-components.jsx` `LBPFloatingWidget` 694-702 —
-  /// the CANONICAL component): a 20×20 `rgba(0,0,0,0.55)` circle with a white ✕ glyph,
-  /// NO border (the design writes `border: 'none'`, 700) and NO shadow of its own.
+  /// Top-right round close button (`sdk-components.jsx` `LBPFloatingWidget` 709-716 —
+  /// the CANONICAL component): a 28×28 (rb-flutter-live-replay-more-menu-and-video-info-
+  /// live-copy, design R32 — was 20×20) `rgba(0,0,0,0.55)` circle with a white ✕ glyph,
+  /// NO border (the design writes `border: 'none'`) and NO shadow of its own.
   /// Byte-identical to `MinimizedWidgetView._closeButton` — the same design element.
   /// Forwards `onClose` only.
   ///
-  /// Glyph size 11 is the design's own `<Icons.close size={11} />` (702) taken at face
-  /// value: `Icon(size:)` is the em-box edge of a 24-unit MaterialIcons glyph, the same
-  /// quantity as the design icon's `viewBox="0 0 24 24"` edge, so the ink spans match
-  /// (both ≈ 11 × 14/24). iOS's `9` is an SF-Symbol conversion and does NOT transfer.
+  /// Glyph size 14 is the design's own `<Icons.close size={14} />` (R32 — was 11) taken at
+  /// face value: `Icon(size:)` is the em-box edge of a 24-unit MaterialIcons glyph, the same
+  /// quantity as the design icon's `viewBox="0 0 24 24"` edge, so the ink spans match. iOS's
+  /// SF-Symbol conversion does NOT transfer.
   Widget _closeButton() {
     final button = Container(
-      width: 20,
-      height: 20,
+      width: 28,
+      height: 28,
       decoration: BoxDecoration(
         color: _closeGlass,
         shape: BoxShape.circle,
       ),
       alignment: Alignment.center,
-      child: const Icon(closeGlyph, size: 11, color: Color(0xFFFFFFFF)),
+      child: const Icon(closeGlyph, size: 14, color: Color(0xFFFFFFFF)),
     );
     // Host-wired (no-op when null). Opaque hit-testing so the close tap is isolated to
     // this front-most widget and never falls through to the card behind it.

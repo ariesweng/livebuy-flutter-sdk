@@ -20,13 +20,13 @@ import 'win_glyph.dart';
 // (scrim + `ClipRRect(radius 20)` + `FractionallySizedBox(widthFactor: 0.84)` +
 // `ConstrainedBox(maxWidth: 320)` + a badge floating out the card's top edge) but is
 // MUCH simpler: no stage machine, no email input, no confetti — a single static
-// presentation of one [LBActiveEvent] snapshot. Every piece of rendered state
-// (`event`, `joined`) is a by-value snapshot the container re-supplies on each
-// rebuild (via `ListenableBuilder(listenable: DefaultActiveEvent)`), so there is no
+// presentation of one [LBActiveEvent] snapshot. The rendered `event` is a
+// by-value snapshot the container re-supplies on each rebuild (via
+// `ListenableBuilder(listenable: DefaultActiveEvent)`), so there is no
 // interaction-PHASE local state to own — unlike `WinClaimSheetView`'s multi-stage
 // claim/confirm/submit/done/fail machine, this widget never needs a
 // `didUpdateWidget` reset when the container pages to a different event (paging
-// simply supplies a fresh `event`/`joined` snapshot, which IS a new render).
+// simply supplies a fresh `event` snapshot, which IS a new render).
 //
 // 🔴 rb-flutter-activity-sheet-pagination — `StatelessWidget` → `StatefulWidget`:
 // the ONLY local state this change adds is the horizontal-drag distance
@@ -35,6 +35,21 @@ import 'win_glyph.dart';
 // `onHorizontalDragEnd` — see `_ActivitySheetViewState`). See design.md D-1 for why
 // this does NOT need a `WinClaimSheetView`-style `didUpdateWidget` reset.
 //
+// 🔴 rb-flutter-activity-sheet-cta-repeatable — the CTA is now REPEATABLE: the
+// widget no longer accepts a `joined` snapshot and [activitySheetCtaKind] no
+// longer has a disabled/「已參加」branch (the `joined` case is REMOVED, not just
+// unreachable — a bound-but-dead enum case/branch was judged worse than a
+// smaller two-way enum, see design.md). A keyword-present event's CTA now
+// ALWAYS renders as clickable「立即參加」and forwards [ActivitySheetView.onJoin]
+// on every tap, no matter how many times it has already been tapped — reported
+// bug: the sheet used to lock into a disabled「已參加」state after one join,
+// which read as "you can no longer respond" even though repeat participation
+// should stay possible. The container (`feed_win_view.dart`) correspondingly no
+// longer reads `DefaultActiveEvent.joined` when constructing this widget — that
+// view-model getter (`FeedWinModel.activeEventJoined`, now removed as dead code)
+// stays owned by `flutter-ui`/`DefaultActiveEvent` untouched; this is a pure
+// reference-ui rendering change, not a template-layer behavior change.
+//
 // ─────────────────────────────────────────────────────────────────────────────
 // SUB-VIEW INPUT PATTERN (mirrors the rest of this family)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,11 +57,12 @@ import 'win_glyph.dart';
 //   2. bound SNAPSHOT VALUES (read-only, BY VALUE):
 //        `event` (`DefaultActiveEvent.current`, non-null — the container MUST NOT
 //        mount this widget when `current == null`, mirroring `WinClaimSheetView`
-//        only mounting when a `winner` is selected) / `joined`
-//        (`DefaultActiveEvent.joined`) / `pageCount` (`int`, default `1`,
-//        `DefaultActiveEvent.activities.length` — rb-flutter-activity-sheet-pagination)
-//        / `pageIndex` (`int`, default `0`, `DefaultActiveEvent.currentActivityPageIndex`
-//        — same change).
+//        only mounting when a `winner` is selected) / `pageCount` (`int`,
+//        default `1`, `DefaultActiveEvent.activities.length` —
+//        rb-flutter-activity-sheet-pagination) / `pageIndex` (`int`, default `0`,
+//        `DefaultActiveEvent.currentActivityPageIndex` — same change). 🔴 There is
+//        no `joined` snapshot — rb-flutter-activity-sheet-cta-repeatable removed
+//        it (the CTA no longer reads any "already joined" signal).
 //   3. action callbacks (LAST, each defaulting to a no-op):
 //        `onJoin: VoidCallback?`      — funnels to `DefaultActiveEvent.join()`.
 //        `onClose: VoidCallback?`     — funnels to closing the container's local
@@ -74,7 +90,10 @@ import 'win_glyph.dart';
 // main CTA's semantics change from「立即參加」to a plain dismiss/acknowledge
 // (「知道了」，tapping it forwards `onClose`, NOT `onJoin` — joining a keyword-less
 // activity is not a meaningful action). See [activitySheetCtaKind] (a pure
-// function, per `docs/unit-test-discipline.md`) for the exhaustive 3-way branch.
+// function, per `docs/unit-test-discipline.md`) for the exhaustive 2-way branch
+// (🔴 rb-flutter-activity-sheet-cta-repeatable collapsed the prior 3-way branch
+// — `join` / `joined` / `acknowledge` — down to 2: `join` / `acknowledge`. The
+// keyword-present CTA is now a single always-clickable「立即參加」presentation).
 //
 // D4 — the badge glyph reuses `win_glyph.dart`'s `WinTrophyGlyphPainter` (the SAME
 // ported SVG Path `WinEntryView` uses) rather than re-porting the coordinate data a
@@ -89,16 +108,19 @@ import 'win_glyph.dart';
 // `Image.network` / `NetworkImage`, NO animation / randomness — so the golden
 // baseline is deterministic.
 
-/// The 3 mutually-exclusive CTA presentations `ActivitySheetView` can show
-/// (design.md D3). A pure function ([activitySheetCtaKind]) derives which one
-/// applies from `event.keyword` + `joined` — extracted so the branch is unit-
-/// testable without pumping a widget tree.
+/// The 2 mutually-exclusive CTA presentations `ActivitySheetView` can show
+/// (design.md D3; 🔴 rb-flutter-activity-sheet-cta-repeatable removed the prior
+/// 3rd "already joined" presentation entirely — see that change's design.md for
+/// why the dead branch was deleted rather than kept-but-unreachable). A pure
+/// function ([activitySheetCtaKind]) derives which one applies from
+/// `event.keyword` alone — extracted so the branch is unit-testable without
+/// pumping a widget tree.
 enum ActivitySheetCtaKind {
-  /// `keyword` present, not yet joined — clickable「立即參加」, forwards [onJoin].
+  /// `keyword` present — ALWAYS clickable「立即參加」, forwards [onJoin] on every
+  /// tap. 🔴 rb-flutter-activity-sheet-cta-repeatable: this is now the CTA's ONLY
+  /// keyword-present presentation — it MUST NOT ever lock into a disabled state
+  /// after a join, so the same activity stays repeatably joinable.
   join,
-
-  /// `keyword` present, already joined — disabled「已參加」(gray), inert.
-  joined,
 
   /// `keyword` empty/absent (純活動公告, no participatable keyword) — plain
   /// dismiss/acknowledge「知道了」, forwards [onClose] (NOT [onJoin] — joining a
@@ -107,11 +129,14 @@ enum ActivitySheetCtaKind {
 }
 
 /// Pure function (design.md D3): derives the CTA presentation from the bound
-/// [keyword] (`null` / `''` → keyword-less) and [joined]. Exhaustive — every
-/// `(keyword, joined)` combination maps to exactly one [ActivitySheetCtaKind].
-ActivitySheetCtaKind activitySheetCtaKind(String? keyword, bool joined) {
+/// [keyword] (`null` / `''` → keyword-less). Exhaustive — every `keyword` value
+/// maps to exactly one [ActivitySheetCtaKind]. 🔴 rb-flutter-activity-sheet-cta-repeatable
+/// removed the `joined` parameter this function used to take — the CTA no
+/// longer reads any "already joined" signal, so a keyword-present event always
+/// resolves to [ActivitySheetCtaKind.join] (repeatable, never disabled).
+ActivitySheetCtaKind activitySheetCtaKind(String? keyword) {
   if (keyword == null || keyword.isEmpty) return ActivitySheetCtaKind.acknowledge;
-  return joined ? ActivitySheetCtaKind.joined : ActivitySheetCtaKind.join;
+  return ActivitySheetCtaKind.join;
 }
 
 /// Pure function (rb-flutter-activity-sheet-pagination, design.md D-2): given the
@@ -147,16 +172,14 @@ int? activitySheetSwipeTargetPage({
 // FILE-level (library) private, not class-private — `win_claim_sheet.dart`'s own
 // copies of these tokens are NOT visible here, so each decorative color this file
 // needs is independently re-declared, matching the pattern already used for
-// `_textDim` / `_joinedBackground` / `_scrimColor` below (this file never imports
-// `win_claim_sheet.dart`'s copies).
+// `_textDim` / `_scrimColor` below (this file never imports
+// `win_claim_sheet.dart`'s copies). 🔴 rb-flutter-activity-sheet-cta-repeatable
+// REMOVED the former `_joinedBackground` token (`#C9CDD3`, the disabled/「已參加」
+// CTA background) — the CTA no longer has a disabled state to color.
 
 /// `theme.surface.textDim` (secondary / caption text) — same hex as
 /// `win_claim_sheet.dart`'s `_textDim`.
 final Color _textDim = colorFromHex('#6B6775') ?? const Color(0xFF6B6775);
-
-/// Disabled/「已參加」CTA background (`LBActivitySheet`'s literal
-/// `background: joined ? '#C9CDD3' : accent`).
-final Color _joinedBackground = colorFromHex('#C9CDD3') ?? const Color(0xFFC9CDD3);
 
 /// Modal scrim (`LBActivitySheet` / `WinClaimSheetView` shared `rgba(0,0,0,0.6)`).
 final Color _scrimColor = Colors.black.withValues(alpha: 0.6);
@@ -172,7 +195,6 @@ final Color _pageDotInactive = colorFromHex('#D8DBE0') ?? const Color(0xFFD8DBE0
 // rest of this family; this layer全層寫死中文常數, 不使用任何 i18n API)
 
 const String _ctaJoin = '立即參加';
-const String _ctaJoined = '已參加';
 const String _ctaAcknowledge = '知道了';
 const String _footerTerms = '使用條款';
 const String _footerSeparator = ' | ';
@@ -184,9 +206,12 @@ const double _badgeGlyphSize = 30;
 
 /// The family-2 抽獎活動彈窗 (one [LBActiveEvent] at a time). Presents the
 /// activity's title, prize name, an optional「留言關鍵字」CTA hint, a main CTA
-/// whose text/enabled-state/tap-target follow [activitySheetCtaKind], an optional
-/// pagination dot row (`pageCount > 1`, rb-flutter-activity-sheet-pagination), and
-/// a footer「使用條款 | 隱私政策」mirroring `WinClaimSheetView`.
+/// whose text/tap-target follow [activitySheetCtaKind], an optional pagination
+/// dot row (`pageCount > 1`, rb-flutter-activity-sheet-pagination), and a
+/// footer「使用條款 | 隱私政策」mirroring `WinClaimSheetView`. 🔴
+/// rb-flutter-activity-sheet-cta-repeatable: the keyword-present CTA is ALWAYS
+/// clickable「立即參加」— there is no "already joined" disabled state, so a host
+/// can join the same activity again on a repeat tap.
 ///
 /// Renders correctly with all callbacks omitted (golden / preview safe).
 class ActivitySheetView extends StatefulWidget {
@@ -198,12 +223,6 @@ class ActivitySheetView extends StatefulWidget {
   /// (mirrors `WinClaimSheetView` only mounting when a `winner` is selected).
   final LBActiveEvent event;
 
-  /// Whether [event] has already been joined (`DefaultActiveEvent.joined`), by
-  /// value. Drives [activitySheetCtaKind]'s disabled「已參加」branch. This
-  /// widget MUST NOT hold a second copy of this state — the container re-reads
-  /// the view-model getter on every rebuild.
-  final bool joined;
-
   /// 分頁能力（rb-flutter-activity-sheet-pagination）：目前同時進行中的活動總數。容器
   /// 傳入 `DefaultActiveEvent.activities.length`。`<= 1` 時分頁圓點不畫、滑動手勢為安全
   /// no-op。預設 `1`（既有 golden / demo 單頁行為 byte-identical）。
@@ -212,11 +231,13 @@ class ActivitySheetView extends StatefulWidget {
   /// 目前顯示的頁碼（`DefaultActiveEvent.activities` 的索引，即
   /// `DefaultActiveEvent.currentActivityPageIndex`）。容器持有的呈現層開啟狀態 by value
   /// 傳入 —— 這個 widget 不因此持有第二份「目前顯示哪一筆」的狀態：每次換頁，容器的
-  /// `event`/`joined` 快照本身就已經是新的一次渲染（design.md D-1）。預設 `0`。
+  /// `event` 快照本身就已經是新的一次渲染（design.md D-1）。預設 `0`。
   final int pageIndex;
 
   /// 「立即參加」CTA 被點擊（只在 [activitySheetCtaKind] 為 [ActivitySheetCtaKind.join]
-  /// 時可達）。容器轉發 `DefaultPlayerTemplate.activeEvent.join()` — the view-model
+  /// 時可達）。🔴 rb-flutter-activity-sheet-cta-repeatable：這個 CTA 是**可重複**點擊
+  /// 的——每次點擊都轉發本 callback，widget 本身 MUST NOT 因為之前點過就把它鎖成
+  /// disabled。容器轉發 `DefaultPlayerTemplate.activeEvent.join()` — the view-model
   /// handles dedupe, this layer does not repeat that check. Default no-op so demo /
   /// golden instances construct action-free.
   final VoidCallback? onJoin;
@@ -245,7 +266,6 @@ class ActivitySheetView extends StatefulWidget {
     super.key,
     required this.theme,
     required this.event,
-    required this.joined,
     this.pageCount = 1,
     this.pageIndex = 0,
     this.onJoin,
@@ -462,11 +482,14 @@ class _ActivitySheetViewState extends State<ActivitySheetView> {
     );
   }
 
-  /// The main CTA — text/enabled-state/tap-target follow [activitySheetCtaKind]
-  /// (a pure function of `event.keyword` + `joined`).
+  /// The main CTA — text/tap-target follow [activitySheetCtaKind] (a pure
+  /// function of `event.keyword` alone). 🔴 rb-flutter-activity-sheet-cta-repeatable:
+  /// there is no disabled state any more — [ActivitySheetCtaKind.join] is always
+  /// clickable and always forwards [ActivitySheetView.onJoin], repeat taps
+  /// included.
   Widget _ctaButton(String? keyword) {
     final theme = widget.theme;
-    final kind = activitySheetCtaKind(keyword, widget.joined);
+    final kind = activitySheetCtaKind(keyword);
     final String label;
     final VoidCallback? tap;
     final Color background;
@@ -476,13 +499,6 @@ class _ActivitySheetViewState extends State<ActivitySheetView> {
         label = _ctaJoin;
         tap = widget.onJoin;
         background = theme.accent;
-        foreground = Colors.white;
-      case ActivitySheetCtaKind.joined:
-        label = _ctaJoined;
-        tap = null;
-        background = _joinedBackground;
-        // `LBActivitySheet` keeps the CTA text WHITE regardless of the
-        // joined/disabled state — only the background swaps to the neutral gray.
         foreground = Colors.white;
       case ActivitySheetCtaKind.acknowledge:
         label = _ctaAcknowledge;

@@ -129,6 +129,13 @@ class FeedWinModel {
   // -- Surface: WinEntryView(variant: activity) / ActivitySheetView ----------
   // (rb-flutter-live-activity-sheet, binds `live-activity-entry-flutter-template`'s
   // `DefaultActiveEvent`.)
+  //
+  // 🔴 rb-flutter-activity-sheet-cta-repeatable REMOVED the `activeEventJoined`
+  // getter that used to live here (`template?.activeEvent.joined ?? false`) —
+  // `ActivitySheetView`'s CTA no longer reads any "already joined" signal (the
+  // reported bug: the CTA used to lock into a disabled「已參加」state after one
+  // join). `DefaultActiveEvent.joined` itself is untouched in `flutter-ui` — this
+  // reference-ui layer simply stopped being one of its consumers.
 
   /// Whether there is a currently active live event
   /// (`DefaultActiveEvent.hasActiveEvent`). `WinEntryView(variant: activity)` is
@@ -142,12 +149,6 @@ class FeedWinModel {
   /// demo instances returns [FeedWinSeeds.activeEvent].
   LBActiveEvent? get currentActiveEvent =>
       template?.activeEvent.current ?? FeedWinSeeds.activeEvent;
-
-  /// Whether [currentActiveEvent] has already been joined
-  /// (`DefaultActiveEvent.joined`). Drives `ActivitySheetView`'s CTA
-  /// disabled/「已參加」state — this layer holds NO second copy of this flag.
-  /// For demo instances always `false` (the pre-join prompt).
-  bool get activeEventJoined => template?.activeEvent.joined ?? false;
 
   /// Full list of currently-active events (`DefaultActiveEvent.activities`,
   /// rb-flutter-activity-sheet-pagination) — `ActivitySheetView`'s pagination reads

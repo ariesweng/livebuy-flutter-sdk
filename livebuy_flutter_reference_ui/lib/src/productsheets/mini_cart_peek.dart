@@ -3,7 +3,6 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show LBMiniCartPeek;
 
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
-import 'equalizer_glyph.dart';
 import 'sheet_scaffold.dart' show liveProductImage;
 
 // MiniCartPeek — family-3 product sheet-stack surface 3 (mini-cart peek).
@@ -42,14 +41,17 @@ import 'sheet_scaffold.dart' show liveProductImage;
 // null / omitted (so demo / golden / preview construct it action-free).
 //
 // PHOTO-LED (rb-align-flutter-product-sheets — four-platform parity with iOS #8 /
-// Android #9): aligned to the design's `LBPMiniCart`, the peek LEADS with a 52×52
-// product thumbnail. `photos` are remote URLs and reference-ui keeps goldens
-// deterministic (NO network image), so — like `ProductDetailSheet`'s media — it draws
-// a 52×52 rounded gradient placeholder with a monogram (host can swap in a real
-// image). The rest mirrors `LBPMiniCart`: the dark glass card surface, the single-
+// Android #9): aligned to the design's `LBPMiniCart`, the peek LEADS with a 60-wide
+// product thumbnail (rb-flutter-vod-live-product-card-restyle, 2026-09-03: 52→60,
+// square→left-corners-only, fixed→stretch height). `photos` are remote URLs and
+// reference-ui keeps goldens deterministic (NO network image), so — like
+// `ProductDetailSheet`'s media — it draws a rounded gradient placeholder with a
+// monogram (host can swap in a real image). The rest mirrors `LBPMiniCart`: the WHITE
+// card surface (rb-flutter-vod-live-product-card-restyle: was dark glass), the single-
 // line name, the price line (`已售完` when `soldOut == 1`, else `priceShow`), and the
-// trailing circular close button. NO「已加入購物車」confirmation line (the design's
-// `LBPMiniCart` has none — the peek's mere appearance is the "added" signal).
+// top-right absolute close button (was trailing circular). NO「已加入購物車」confirmation
+// line (the design's `LBPMiniCart` has none — the peek's mere appearance is the
+// "added" signal).
 //
 // SNAPSHOT-DETERMINISM (iOS / Android lessons baked in): plain Row / Column /
 // Container only — NO scrollable container (`ListView` / `GridView` /
@@ -63,45 +65,52 @@ import 'sheet_scaffold.dart' show liveProductImage;
 /// stretching (parity with iOS 260pt / Android 260dp).
 const double _cardWidth = 260;
 
-/// Card padding (`padding: 8`) + corner radius (`borderRadius: 16`).
-const double _cardPadding = 8;
-const double _cardRadius = 16;
+/// Card padding (`padding: '0 8px 0 0'` — content padding is right-only now that the
+/// thumbnail is flush against the card's left/top/bottom edges, rb-flutter-vod-live-
+/// product-card-restyle). Corner radius (`borderRadius: '0.25rem'` ≈ 4 logical px —
+/// this file keeps the existing px-literal convention rather than introducing a rem
+/// unit).
+const double _cardRadius = 4;
 
 /// Gap between the chip / info / close (`gap: 10`).
 const double _hGap = 10;
 
-/// Product thumbnail box (design's 52×52 photo — deterministic placeholder).
-const double _chipSize = 52;
-const double _chipRadius = 10;
+/// Product thumbnail box — a fixed SQUARE, width AND height (design `width: '3.5rem',
+/// height: '3.5rem'` = 56px, R34, `design/contract/claude-design-sync.md`). Was `60` (no
+/// explicit height, implicitly stretched to the info column's height via the enclosing
+/// `Row`'s `CrossAxisAlignment.stretch` — see `build()`'s doc comment for the R34 change to
+/// that).
+const double _chipWidth = 56;
 
 /// Trailing close-circle diameter (`width/height: 22`).
 const double _closeSize = 22;
 
+/// Close button inset from the card's top-right corner (`top:3, right:3`).
+const double _closeInset = 3;
+
 // MARK: - Decorative design tokens (literal hex from sdk-components.jsx LBPMiniCart)
 //
-// FIXED decorative colors lifted verbatim from the design's dark-glass overlay —
-// these are NOT the theme accent / text / background (parity with iOS
-// `MiniCartView` statics + Android `MiniCartPeek` private vals). Parsed via
-// `colorFromHex` (falls back only if a literal is ever malformed — constants).
+// rb-flutter-vod-live-product-card-restyle (2026-09-03): the card surface flipped
+// from a dark glass pill to a white card — `_glassFill` / `_glassStroke` / `_closeFill`
+// are RETIRED (no longer referenced); text/price colors now resolve from [theme]
+// (`theme.text`) or the merchant `accent` rather than fixed on-glass literals.
 
-/// `rgba(20,20,24,0.78)` — the dark glass card fill (`LBPMiniCart`).
-final Color _glassFill =
-    (colorFromHex('#141418') ?? const Color(0xFF000000)).withValues(alpha: 0.78);
+/// The white card fill (`background:#fff`).
+const Color _cardFill = Color(0xFFFFFFFF);
 
-/// `rgba(255,255,255,0.10)` — the 0.5px hairline border on the glass.
-const Color _glassStroke = Color(0x1AFFFFFF);
+/// The card's drop shadow (`boxShadow: 0 6px 18px rgba(0,0,0,0.15)`).
+const List<BoxShadow> _cardShadow = [
+  BoxShadow(
+    color: Color(0x26000000),
+    blurRadius: 18,
+    offset: Offset(0, 6),
+  ),
+];
 
-/// On-glass primary text — white (`#fff` in the design).
-const Color _onGlassText = Color(0xFFFFFFFF);
-
-/// In-stock price accent `#FF7B8A` (the design's price-pink on the glass).
-final Color _priceColor = colorFromHex('#FF7B8A') ?? const Color(0xFFFF7B8A);
-
-/// Sold-out copy color `#9A96A3` (the design's muted sold-out tint).
+/// Sold-out copy color `#9A96A3` (the design's muted sold-out tint — unchanged by
+/// this restyle; `theme.surface.textDim` has no Flutter `ReferenceUITheme` field, so
+/// this literal is kept as-is, mirroring `product_row.dart`'s own `_soldOutColor`).
 final Color _soldOutColor = colorFromHex('#9A96A3') ?? const Color(0xFF9A96A3);
-
-/// The trailing close-circle fill `rgba(255,255,255,0.18)`.
-const Color _closeFill = Color(0x2EFFFFFF);
 
 /// Product-photo placeholder gradient stops (mirrors `ProductDetailSheet` — the
 /// design's warm media chip; deterministic, NO network image).
@@ -122,8 +131,8 @@ String _monogram(String name) {
 }
 
 /// The family-3 floating mini-cart peek for one [LBMiniCartPeek]. Paints a compact
-/// PHOTO-LED dark-glass card — a 52×52 product thumbnail + the product name + a price
-/// / sold-out line — with a tap-to-open-detail body and a trailing close button
+/// PHOTO-LED white card — a product thumbnail + the product name + a price / sold-out
+/// line — with a tap-to-open-detail body and a top-right absolute close button
 /// (aligned to the design's `LBPMiniCart`). The container draws it only when a peek
 /// exists.
 ///
@@ -147,13 +156,16 @@ class MiniCartPeek extends StatelessWidget {
   /// `LBProduct`). Default no-op so demo / golden / preview construct action-free.
   final void Function()? onOpenDetail;
 
-  /// VOD 介紹輪播三參數（rb-flutter-now-introducing，問題 9/10；皆預設保 peek 不變）：
+  /// VOD 介紹輪播兩參數（rb-flutter-now-introducing，問題 9/10；皆預設保 peek 不變）：
   ///  • live    — `live && peek.pic` 非空時於漸層 placeholder 上疊真實商品圖（liveProductImage）。
   ///  • fullWidth — body 由固定 260 改為填滿（輪播卡用滿寬）。
-  ///  • tag     — 非 null 時 info 欄名稱上方畫小 accent 標籤（「介紹中」）。
+  ///
+  /// （rb-flutter-minicart-remove-introducing-tag，2026-09-04）先前的第三個參數 `tag`
+  /// （info 欄名稱上方的「介紹中」accent 小標）已整段移除——`design/templates/minimal/
+  /// sdk-components.jsx` 的 `LBPMiniCart` 沒有任何 tag / 介紹中 / 描述文案節點，只有縮圖 +
+  /// 名稱 + 價格行 + 關閉鈕。
   final bool live;
   final bool fullWidth;
-  final String? tag;
 
   /// E2E key on the card root (INERT — wrapped in a `KeyedSubtree`, paints nothing).
   /// Defaults to [LbTestKeys.minicartPeek]; the now-introducing carousel call site
@@ -168,7 +180,6 @@ class MiniCartPeek extends StatelessWidget {
     this.onOpenDetail,
     this.live = false,
     this.fullWidth = false,
-    this.tag,
     this.rootKey = LbTestKeys.minicartPeek,
   });
 
@@ -192,56 +203,74 @@ class MiniCartPeek extends StatelessWidget {
     return KeyedSubtree(
       key: rootKey,
       child: GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => onOpenDetail?.call(),
-      child: Container(
-        // 輪播卡滿寬（fullWidth）；浮動 mini-cart peek 維持固定 260。
-        width: fullWidth ? double.infinity : _cardWidth,
-        padding: const EdgeInsets.all(_cardPadding),
-        decoration: BoxDecoration(
-          color: _glassFill,
-          borderRadius: BorderRadius.circular(_cardRadius),
-          border: Border.all(color: _glassStroke, width: 0.5),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x40000000),
-              blurRadius: 12,
-              offset: Offset(0, 6),
-            ),
-          ],
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onOpenDetail?.call(),
+        child: Container(
+          // 輪播卡滿寬（fullWidth）；浮動 mini-cart peek 維持固定 260。
+          width: fullWidth ? double.infinity : _cardWidth,
+          decoration: const BoxDecoration(
+            color: _cardFill,
+            borderRadius: BorderRadius.all(Radius.circular(_cardRadius)),
+            boxShadow: _cardShadow,
+          ),
+          // Close button is `position: absolute` in the design (positioned against the
+          // card's own border box, NOT the content row's padded box) — a `Stack` sibling
+          // to the content row, not a trailing Row child.
+          child: Stack(
+            children: [
+              // Content row — thumbnail flush at the card's left/top/bottom edges, right-
+              // padded 8 (design `padding: '0 8px 0 0'`). R34 (`design/contract/
+              // claude-design-sync.md`): the thumbnail is now a fixed 56×56 SQUARE (see
+              // `_chipWidth`'s doc comment) instead of stretching to match the info column's
+              // height, so the `IntrinsicHeight` + `CrossAxisAlignment.stretch` this row used
+              // to need are GONE — `CrossAxisAlignment.center` (Row's default) is enough: the
+              // row's own cross-axis extent is simply the taller of the two children's natural
+              // heights, and each child is vertically centered within it.
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    _productThumb(p),
+                    const SizedBox(width: _hGap),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: _infoColumn(p),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                top: _closeInset,
+                right: _closeInset,
+                child: _closeButton(),
+              ),
+            ],
+          ),
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            _productThumb(p),
-            const SizedBox(width: _hGap),
-            Expanded(child: _infoColumn(p)),
-            const SizedBox(width: _hGap),
-            _closeButton(),
-          ],
-        ),
-      ),
       ),
     );
   }
 
-  // MARK: - Product thumbnail (LBPMiniCart 52×52 photo — deterministic placeholder)
+  // MARK: - Product thumbnail (LBPMiniCart 60-wide photo — deterministic placeholder)
   //
-  // Photo-led peek: a 52×52 rounded gradient placeholder with a monogram (NO network
-  // image), mirroring `ProductDetailSheet`'s photo placeholder. Host can swap in a
-  // real image.
+  // Photo-led peek: a rounded gradient placeholder with a monogram (NO network image),
+  // mirroring `ProductDetailSheet`'s photo placeholder. Host can swap in a real image.
+  // Only the LEFT two corners are rounded (design `borderRadius: '0.25rem 0 0
+  // 0.25rem'`) — the thumbnail sits flush against the card's left/top/bottom edges, so
+  // its outer corners match the card's own radius while the inner (right) edge stays
+  // square.
 
   Widget _productThumb(LBMiniCartPeek p) {
     final placeholder = Container(
-      width: _chipSize,
-      height: _chipSize,
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [_photoStart, _photoEnd],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(_chipRadius),
       ),
       alignment: Alignment.center,
       child: Text(
@@ -255,14 +284,22 @@ class MiniCartPeek extends StatelessWidget {
     );
     // Real product image OVER the gradient placeholder at host runtime (`live` + non-blank pic);
     // `live == false` / blank → placeholder only (golden byte-stable). rb-flutter-now-introducing 真實圖.
-    return SizedBox(
-      width: _chipSize,
-      height: _chipSize,
+    // Height is EXPLICIT (R34) — a fixed 56×56 square (`_chipWidth` both ways), no longer
+    // implicitly stretched to match the info column's height via the enclosing Row.
+    return Container(
+      width: _chipWidth,
+      height: _chipWidth,
+      decoration: const BoxDecoration(
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(_cardRadius),
+          bottomLeft: Radius.circular(_cardRadius),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: liveProductImage(
         live: live,
         url: p.pic,
         placeholder: placeholder,
-        borderRadius: BorderRadius.circular(_chipRadius),
       ),
     );
   }
@@ -273,47 +310,42 @@ class MiniCartPeek extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        // Optional accent tag above the name (carousel「介紹中」). null → not drawn (peek unchanged).
-        // The tag leads with an accent equalizer glyph (size 11, gap 3) — parity iOS/Android/RN,
-        // 共用 `EqualizerGlyph`（與商品列底部橫幅同一 vocabulary）.
-        if (tag != null)
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              EqualizerGlyph(size: 11, color: theme.accent),
-              const SizedBox(width: 3),
-              Text(
-                tag!,
-                style: TextStyle(
-                  color: theme.accent,
-                  fontSize: 11 * theme.fontScale,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        // Product name — single-line, ellipsis-truncated (design 13/600).
-        Text(
-          p.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: _onGlassText,
-            fontSize: 13 * theme.fontScale,
-            fontWeight: FontWeight.w600,
-            height: 1.25,
+        // （rb-flutter-minicart-remove-introducing-tag，2026-09-04）先前這裡有一個「介紹中」
+        // accent 標籤 Row（carousel 呼叫端傳入 `tag: '介紹中'` 時畫出，`EqualizerGlyph` + 文字）
+        // ——已整段移除：`LBPMiniCart` 沒有任何 tag / 介紹中 / 描述文案節點，只有名稱 + 價格行。
+        // Product name — single-line, ellipsis-truncated (design 13/600). `theme.text`
+        // (was fixed white on the retired dark-glass fill). `paddingRight: 26` (design
+        // literal) reserves clearance under the absolutely-positioned close button —
+        // combined with the card's own `right: 8` content padding, this totals the
+        // design's 34px clearance (button spans `right: 3..25`).
+        Padding(
+          padding: const EdgeInsets.only(right: 26),
+          child: Text(
+            p.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: theme.text,
+              fontSize: 13 * theme.fontScale,
+              fontWeight: FontWeight.w600,
+              height: 1.25,
+            ),
           ),
         ),
         const SizedBox(height: 2),
 
-        // Price line — sold-out → 已售完; else the priceShow (design dim).
+        // Price line — sold-out → 已售完 (unchanged `_soldOutColor` literal; Flutter's
+        // `ReferenceUITheme` has no `surface.textDim` field to source it from); else the
+        // priceShow, now colored with the merchant `accent` (was the fixed on-glass pink
+        // `#FF7B8A`).
         Text(
           _isSoldOut ? miniCartSoldOutLabel : p.priceShow,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: _isSoldOut ? _soldOutColor : _priceColor,
+            color: _isSoldOut ? _soldOutColor : theme.accent,
             fontSize: 12 * theme.fontScale,
             fontWeight: _isSoldOut ? FontWeight.w600 : FontWeight.w700,
           ),
@@ -322,29 +354,28 @@ class MiniCartPeek extends StatelessWidget {
     );
   }
 
-  // MARK: - Close button (LBPMiniCart trailing close — 22×22 glass circle)
+  // MARK: - Close button (LBPMiniCart top-right absolute close, design `top:3,right:3`)
   //
   // Tapping it dismisses WITHOUT opening the detail: its own GestureDetector
   // intercepts the tap so the outer open-detail action does not also fire (design
-  // `e.stopPropagation()` on `onClose`). A no-op when `onDismiss` is null.
+  // `e.stopPropagation()` on `onClose`). A no-op when `onDismiss` is null. Transparent
+  // background (was a translucent white circle on the retired dark-glass fill); icon
+  // color now `theme.text` (was fixed white).
 
   Widget _closeButton() {
     return GestureDetector(
       key: LbTestKeys.minicartPeekClose,
       behavior: HitTestBehavior.opaque,
       onTap: () => onDismiss?.call(),
-      child: Container(
+      child: SizedBox(
         width: _closeSize,
         height: _closeSize,
-        decoration: BoxDecoration(
-          color: _closeFill,
-          shape: BoxShape.circle,
-        ),
-        alignment: Alignment.center,
-        child: Icon(
-          Icons.close,
-          color: _onGlassText,
-          size: 12 * theme.fontScale,
+        child: Center(
+          child: Icon(
+            Icons.close,
+            color: theme.text,
+            size: 14 * theme.fontScale,
+          ),
         ),
       ),
     );

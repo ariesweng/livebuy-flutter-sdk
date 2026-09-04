@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart' show Colors;
+import 'package:flutter/material.dart' show Colors, Icons;
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBProduct;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
@@ -21,6 +21,7 @@ import 'operation_rail_view.dart';
 import 'playback_progress_bar_view.dart';
 import 'player_header_bar_view.dart';
 import 'player_shell_model.dart';
+import 'share_fill_glyph.dart';
 import 'subtitle_vtt_pipeline.dart';
 import 'upcoming_countdown_view.dart';
 import 'video_info_panel_view.dart';
@@ -379,6 +380,18 @@ class PlayerShellView extends StatefulWidget {
   /// (matching the backend's own "unset ⇒ `1`"). NOT a visibility switch.
   final Object? titleScroll;
 
+  /// Whether the header's top-right button shows a "close" (✕) glyph instead of the
+  /// default "minimize" (pip) glyph — a pure BY-VALUE presentation flag
+  /// (rb-flutter-player-direct-close-button, parity iOS / Android). Forwarded verbatim
+  /// to BOTH `PlayerHeaderBarView` call sites below (LIVE/VOD main branch AND the
+  /// upcoming/直播預告 branch), same forwarding discipline as [titleScroll] /
+  /// [showSubscribe] — omitting either would let that branch silently fall back to the
+  /// header's own default. Default `false` — every EXISTING call site / golden baseline
+  /// is unaffected; the collapsible presenter (`CollapsibleLivebuyPlayer`, via
+  /// `LivebuyPlayer._overlayContext()` → `PlayerOverlayContext.showCloseIcon` →
+  /// `MinimalDesign.playerOverlay`) is what resolves the real value.
+  final bool showCloseIcon;
+
   /// Host-wired side-rail item tap, by kind (share / chat / like / … → core
   /// `simulate*`).
   final ValueChanged<LBSideRailKind>? onTapRailItem;
@@ -461,6 +474,14 @@ class PlayerShellView extends StatefulWidget {
   /// → no report (demo / golden / a custom `ReferenceUIDesign` not wiring it).
   final ValueChanged<bool>? onCleanModeChange;
 
+  /// Reports the closed-chat finished-replay rail's「更多」sheet (`_moreMenuOpen`) open/closed
+  /// state to the container so it can hide the higher-layer LIVE合流聊天 feed
+  /// (`FeedWinOverlayView`) while it is up (rb-flutter-live-more-sheet-above-chat, bubble pattern
+  /// copied verbatim from [onCleanModeChange] / rb-flutter-gesture-clean-mode-rewrite). Fires on
+  /// EVERY open/close. null → no report (demo / golden / a custom `ReferenceUIDesign` not wiring
+  /// it). The sheet's own content / two actions / `BottomSheetPresenter` presentation are unchanged.
+  final ValueChanged<bool>? onMoreMenuOpenChange;
+
   /// Whether the on-demand 留言 composer bar is currently presented over the shell. When true the
   /// LIVE bottom bar is hidden so the opaque composer does not overlap it (parity iOS
   /// rb-ios-chat-composer-opaque-hide-bottom-bar — `PlayerShellView(composerPresented:)`). Default
@@ -527,6 +548,7 @@ class PlayerShellView extends StatefulWidget {
     this.onToggleSubscribe,
     this.showSubscribe = true,
     this.titleScroll,
+    this.showCloseIcon = false,
     this.onTapRailItem,
     this.onTapPinnedProduct,
     this.onShare,
@@ -541,6 +563,7 @@ class PlayerShellView extends StatefulWidget {
     this.onDidSwitchVideo,
     this.onInfoPanelOpenChange,
     this.onCleanModeChange,
+    this.onMoreMenuOpenChange,
     this.composerPresented = false,
     this.hasLiveNow = false,
     this.onGoLive,
@@ -814,6 +837,25 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// FIRST; only its「確定」proceeds to the existing serviceLink host exit. Default false →
   /// modal not drawn → existing goldens unchanged.
   bool _contactMerchantPresented = false;
+
+  /// Whether the closed-chat finished-replay rail's「更多」sheet is presented
+  /// (rb-flutter-live-replay-more-menu-and-video-info-live-copy, design R32). Opened by
+  /// `OperationRailView.onTapMore` (only reachable when `m.isFinishedLiveReplay`); its two
+  /// actions each close this THEN forward to the existing `_handleRailTap(share / serviceLink)`
+  /// — same pattern as [_contactMerchantPresented] / [_infoPanelOpen]. Default `false` → sheet
+  /// not drawn → existing goldens unchanged.
+  bool _moreMenuOpen = false;
+
+  /// Set the「更多」sheet open state AND report it up via
+  /// [PlayerShellView.onMoreMenuOpenChange] (rb-flutter-live-more-sheet-above-chat, bubble
+  /// pattern copied verbatim from [_setInfoPanel] / [_toggleCleanMode]) so the container can
+  /// hide the higher-layer合流聊天 feed while the sheet is up. All open/close paths (rail「更多」
+  /// tap / scrim dismiss / 分享 / 客服) funnel through here.
+  void _setMoreMenuOpen(bool open) {
+    if (open == _moreMenuOpen) return;
+    setState(() => _moreMenuOpen = open);
+    widget.onMoreMenuOpenChange?.call(open);
+  }
 
   /// Accumulated vertical drag distance for the swipe-to-switch-video gesture
   /// (rb-player-shell-swipe). Reset on drag start; on drag end a magnitude past
@@ -1151,6 +1193,9 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               // 原位（design.md D3）。upcoming 分支（下方 `_buildUpcoming`）維持不傳（預設 false）——
               // `_cleanMode` 在該分支結構上不可達。
               hideHostPill: _cleanMode,
+              // 右上角按鈕圖示 minimize ↔ close（rb-flutter-player-direct-close-button），純呈現
+              // by-value 旗標轉發，比照 titleScroll / showSubscribe 的既有轉發慣例。
+              showCloseIcon: widget.showCloseIcon,
               // 乾淨模式限定靜音鈕（rb-flutter-gesture-clean-mode-v2）：補回單擊切靜音手勢退役後
               // 的操作管道，沿用既有 `widget.onToggleMute` host-wired seam，只是觸發手勢從「影片
               // 區單擊」改成「點頂列這顆鈕」。`_cleanMode == false` 時 `onToggleMute` 傳 null →
@@ -1190,6 +1235,12 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                       heartBurstTick: m.heartBurstTick,
                       muted: m.muted,
                       onTapItem: _handleRailTap,
+                      // rb-flutter-live-replay-more-menu-and-video-info-live-copy: this rail
+                      // is what actually renders for a closed-chat finished replay (`!m.isLive`
+                      // covers `isFinishedLiveReplay` too — `LiveBottomBarView` never composes
+                      // for it). Collapse share/serviceLink into the「更多」sheet only then.
+                      isFinishedLiveReplay: m.isFinishedLiveReplay,
+                      onTapMore: () => _setMoreMenuOpen(true),
                     ),
                   ),
                 ],
@@ -1387,6 +1438,11 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                   // `widget.live`。兩個 surface 畫的是同一顆 shopLogo，gate 若各自推導遲早
                   // 分岔（header 已顯真 logo、面板還停在字母漸層）。
                   live: widget.live,
+                  // isLive 文案分流（rb-flutter-live-replay-more-menu-and-video-info-live-copy，
+                  // design R32）：直播中標題/tab/日期列改版。刻意複用 `PlayerHeaderBarView` 同一個
+                  // `m.isLive`（`channel.liveStatus == 1`）——與這個面板既有的 `live`（image gate）
+                  // 語意不同，不衝突（見 `VideoInfoPanelView.isLiveBroadcast` 自身 dartdoc）。
+                  isLiveBroadcast: m.isLive,
                   // Template-owned navigation intent (NOT a core simulate*): only
                   // flips presentation state. `notice` is honoured by the template
                   // only when `noticeCanOpen`.
@@ -1402,9 +1458,34 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                   // 與 header 頭像徽章共用同一個 `showSubscribe` 旗標——這不是獨立元件，是同一個
                   // 訂閱功能在 shop row 的第二個渲染點。
                   showSubscribe: widget.showSubscribe,
-                  // 前往商城首頁 deliberately left unwired: no core storefront open-intent
-                  // exit yet, so the primary CTA renders for design fidelity but stays
-                  // inert (cross-layer follow-up, mirrors iOS / Android / RN).
+                ),
+        ),
+
+        // 「更多」選單 sheet（rb-flutter-live-replay-more-menu-and-video-info-live-copy，design
+        // R32）：`OperationRailView.onTapMore` 開（僅 `m.isFinishedLiveReplay` 時可達）。內容為
+        // 分享 + 客服兩個可互動格（各自轉發到既有 `_handleRailTap` chokepoint）+ 2 個逐字對齊設計稿
+        // 的隱藏佔位格（見 `_RailMoreMenuSheet`）。用既有 [BottomSheetPresenter]，不需要
+        // `LBSheetScaffold` 的拖曳縮放/關閉（內容固定小尺寸）。
+        BottomSheetPresenter(
+          open: _moreMenuOpen,
+          sheetKey: const ValueKey('rail-more-open'),
+          onDismiss: () => _setMoreMenuOpen(false),
+          child: !_moreMenuOpen
+              ? null
+              : _RailMoreMenuSheet(
+                  theme: theme,
+                  showShare: m.railItems.any(
+                      (it) => it.kind == LBSideRailKind.share && it.enabled),
+                  showContact: m.railItems.any(
+                      (it) => it.kind == LBSideRailKind.serviceLink && it.enabled),
+                  onShare: () {
+                    _setMoreMenuOpen(false);
+                    _handleRailTap(LBSideRailKind.share);
+                  },
+                  onContact: () {
+                    _setMoreMenuOpen(false);
+                    _handleRailTap(LBSideRailKind.serviceLink);
+                  },
                 ),
         ),
 
@@ -1555,6 +1636,11 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               // branch, so this MUST be forwarded here too — omitting it would let the header
               // fall back to its own default and silently ignore the merchant setting.
               titleScroll: widget.titleScroll,
+              // 右上角按鈕圖示 minimize ↔ close (rb-flutter-player-direct-close-button) — same
+              // forwarding discipline as titleScroll above: the upcoming header draws the
+              // SAME button, so omitting this here would silently drop the resolved icon on
+              // 直播預告 videos.
+              showCloseIcon: widget.showCloseIcon,
             ),
           ],
         ),
@@ -1769,6 +1855,151 @@ class _CleanModeExitButton extends StatelessWidget {
           shape: BoxShape.circle,
         ),
         child: const DetailGlyph(color: Colors.white, size: 18),
+      ),
+    );
+  }
+}
+
+// MARK: - 更多選單 sheet (rb-flutter-live-replay-more-menu-and-video-info-live-copy)
+//
+// Design source: `design/templates/minimal/screens.jsx` `LBPPlayerScreen`'s `live_more` state
+// block (699-720) — a 4-slot row (分享 / 客服 / 2 hidden placeholders). Opened by
+// `OperationRailView.onTapMore` (only reachable when `PlayerShellModel.isFinishedLiveReplay`,
+// see `design.md` "架構落差查證" for why this lives on the side-rail's more pill and not
+// `LiveBottomBarView`). Presented via the shared [BottomSheetPresenter] — small fixed content,
+// no drag-resize / drag-dismiss needed (unlike `VideoInfoPanelView`'s `LBSheetScaffold`).
+
+/// One slot in the「更多」sheet: a 40×40 circular icon chip (`rgba(204,204,204,0.8)`) + a 12px
+/// label below (design `sdk-components.jsx`-style action-list token, gap 8). `null` [onTap] AND
+/// `null` [icon] together render an inert, invisible-but-space-reserving placeholder (design's
+/// own `visibility:hidden` — a deliberately unwired upstream slot, verbatim, not a bug this
+/// change introduces). [icon] is a pre-built glyph `Widget` (NOT an `IconData`) so a caller may
+/// pass either a Material `Icon(...)` or a self-drawn glyph (`ShareGlyph`, matching this file's
+/// existing convention of self-drawn glyphs over Material `Icons.*` where one already exists) —
+/// the caller is responsible for tinting that glyph with [theme].text (see [_RailMoreMenuSheet]).
+///
+/// The label text color is [theme].text — design `screens.jsx:710`'s `color: theme.surface.text`
+/// (dark, NOT white). This sheet sits on its own OPAQUE [theme].background card (see
+/// [_RailMoreMenuSheet]'s `ColoredBox`), unlike the rail pills / bottom-bar icons elsewhere in
+/// this file that float directly over video and so use a fixed white — a hardcoded white here
+/// would be illegible against the light `minimal` theme's white background (caught by
+/// independent verification; fixed, not a design decision).
+class _RailMoreMenuSlot extends StatelessWidget {
+  final Key? slotKey;
+  final ReferenceUITheme theme;
+  final Widget? icon;
+  final String? label;
+  final VoidCallback? onTap;
+
+  const _RailMoreMenuSlot({
+    this.slotKey,
+    required this.theme,
+    this.icon,
+    this.label,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (icon == null || label == null) {
+      // Hidden placeholder — reserves the same 64-wide column, paints nothing, hit-tests nothing.
+      return const SizedBox(width: 64, height: 76);
+    }
+    return GestureDetector(
+      key: slotKey,
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox(
+        width: 64,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: const Color(0xFFCCCCCC).withValues(alpha: 0.8),
+                shape: BoxShape.circle,
+              ),
+              child: icon,
+            ),
+            const SizedBox(height: 8),
+            Text(label!, style: TextStyle(fontSize: 12, color: theme.text)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The「更多」sheet body: rounded-top card + a 4-slot row (分享 / 客服 / 2 hidden placeholders,
+/// design `screens.jsx:699-720`). [showShare] / [showContact] gate whether that slot is the
+/// interactive icon+label form or the hidden placeholder form — mirrors
+/// `OperationRailView._presentationOrder`'s own `enabled`-gated visibility discipline, applied to
+/// the SAME two `LBSideRailKind`s this sheet collapsed off the rail.
+class _RailMoreMenuSheet extends StatelessWidget {
+  final ReferenceUITheme theme;
+  final bool showShare;
+  final bool showContact;
+  final VoidCallback? onShare;
+  final VoidCallback? onContact;
+
+  const _RailMoreMenuSheet({
+    required this.theme,
+    required this.showShare,
+    required this.showContact,
+    this.onShare,
+    this.onContact,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      key: LbTestKeys.railMoreSheet,
+      borderRadius: const BorderRadius.only(
+        topLeft: Radius.circular(20),
+        topRight: Radius.circular(20),
+      ),
+      child: ColoredBox(
+        color: theme.background,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _RailMoreMenuSlot(
+                slotKey: LbTestKeys.railMoreShare,
+                theme: theme,
+                // 分享 icon 改設計稿自繪實心三節點 ShareFillGlyph（rb-flutter-live-more-sheet-
+                // share-fill-icon，對齊 `Icons.shareFill`）——這顆「更多」sheet 的分享格子與既有
+                // rail pill（`operation_rail.dart`）/ LiveBottomBarView 用的外框（stroked）版
+                // `ShareGlyph`（對齊 `Icons.share`）是不同的設計 token，不可混用；那兩處維持不變。
+                // 顏色 `theme.text`（design `screens.jsx:710` `theme.surface.text`，深色）——這顆
+                // sheet 坐在自己不透明的 `theme.background` 卡片上，不是疊在影片上，MUST NOT 套用
+                // 其他 rail pill 的固定白字慣例（那是「疊在影片上」的配色，這裡誤套過一次，已由獨立
+                // 驗證抓到並修正）。
+                icon: showShare ? ShareFillGlyph(color: theme.text, size: 20) : null,
+                label: showShare ? '分享' : null,
+                onTap: onShare,
+              ),
+              const SizedBox(width: 20),
+              _RailMoreMenuSlot(
+                slotKey: LbTestKeys.railMoreContact,
+                theme: theme,
+                icon: showContact
+                    ? Icon(Icons.chat_bubble, size: 20, color: theme.text)
+                    : null,
+                label: showContact ? '客服' : null,
+                onTap: onContact,
+              ),
+              const SizedBox(width: 20),
+              _RailMoreMenuSlot(theme: theme),
+              const SizedBox(width: 20),
+              _RailMoreMenuSlot(theme: theme),
+            ],
+          ),
+        ),
       ),
     );
   }

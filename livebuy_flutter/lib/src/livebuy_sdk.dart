@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'event_listener.dart';
 import 'models.dart';
@@ -16,6 +17,11 @@ class LivebuySDK {
   static LBEventListener? _listener;
   static bool _handlerInstalled = false;
 
+  /// Dart-only backing store for [enableDirectCloseButton]
+  /// (`player-direct-close-button`). Deliberately NEVER sent over the
+  /// `tv.livebuy/sdk` method channel — see the getter doc for why.
+  static bool _enableDirectCloseButton = false;
+
   // MARK: - Configure
 
   /// Initialize the SDK. Must be called once at App launch.
@@ -26,6 +32,12 @@ class LivebuySDK {
   /// failures emit `SDK_CONFIG_LOAD_FAILED` and resolve successfully with
   /// SDK fallback default.
   static Future<void> configure(LBConfigOptions options) async {
+    // player-direct-close-button: pure Dart-side default, captured
+    // synchronously (before the network round-trip below) so it is available
+    // even if `invokeMethod` throws `NOT_CONFIGURED` on an HMAC failure — it
+    // is a host UI preference, not part of "is the SDK configured" state, and
+    // is NEVER forwarded to native (see [enableDirectCloseButton] doc).
+    _enableDirectCloseButton = options.enableDirectCloseButton;
     await _channel.invokeMethod('configure', {
       'apiKey': options.apiKey,
       'secret': options.secret,
@@ -42,6 +54,24 @@ class LivebuySDK {
       'enableStatReporting': options.enableStatReporting,
       'environment': options.environment.wireName,
     });
+  }
+
+  // MARK: - Direct close button (player-direct-close-button, Dart-only)
+
+  /// Current value of [LBConfigOptions.enableDirectCloseButton]
+  /// (`player-direct-close-button`). A pure Dart-side read — this does NOT
+  /// round-trip through the `tv.livebuy/sdk` method channel, because the
+  /// value has no native iOS/Android SDK consumer: it only governs whether
+  /// the `flutter-reference-ui` package's `LivebuyPlayer` collapse button
+  /// closes directly instead of the two-step collapse → floating card → X
+  /// flow. Defaults to `false` before [configure] has ever been called.
+  static bool get enableDirectCloseButton => _enableDirectCloseButton;
+
+  /// Test-only. Resets [enableDirectCloseButton] back to its `false` default.
+  /// Production code never calls this.
+  @visibleForTesting
+  static void resetEnableDirectCloseButtonForTesting() {
+    _enableDirectCloseButton = false;
   }
 
   // MARK: - Conversion attribution (opt-in, conversion-attribution-context)

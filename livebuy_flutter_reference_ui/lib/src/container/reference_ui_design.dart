@@ -119,6 +119,15 @@ class PlayerOverlayContext {
   /// `null` (default) = "the backend sent nothing" → the title scrolls when it overflows.
   final Object? titleScroll;
 
+  /// Whether the header's top-right button shows a "close" (✕) glyph instead of the
+  /// default "minimize" (pip) glyph (rb-flutter-player-direct-close-button), carried
+  /// verbatim from `_LivebuyPlayerState._overlayContext()`'s resolved
+  /// `resolvedEnableDirectCloseButton(...)` value to `PlayerShellView.showCloseIcon`.
+  /// Default `false` — same reasoning as [showSubscribe] / [showStock]: this DTO's own
+  /// default keeps every existing `PlayerOverlayContext(...)` call site unaffected; the
+  /// turnkey container resolves the real value.
+  final bool showCloseIcon;
+
   // Shell seams.
   final VoidCallback onMinimize;
   final VoidCallback onToggleMute;
@@ -161,6 +170,17 @@ class PlayerOverlayContext {
   /// Reports the「乾淨模式」open/closed state from `PlayerShellView` up to the container (which
   /// mirrors it into [cleanMode] to hide the chat feed). null → no report.
   final ValueChanged<bool>? onCleanModeChange;
+
+  /// Whether the closed-chat finished-replay rail's「更多」sheet is currently open — mirrored
+  /// from `PlayerShellView` via [onMoreMenuOpenChange] so the higher-layer合流聊天 feed
+  /// (`FeedWinOverlayView`) can be hidden while it is up (rb-flutter-live-more-sheet-above-chat,
+  /// bubble pattern copied verbatim from [cleanMode] / rb-flutter-gesture-clean-mode-rewrite).
+  /// Default `false`.
+  final bool moreMenuOpen;
+
+  /// Reports the「更多」sheet open/closed state from `PlayerShellView` up to the container (which
+  /// mirrors it into [moreMenuOpen] to hide the chat feed). null → no report.
+  final ValueChanged<bool>? onMoreMenuOpenChange;
 
   /// Whether the product LIST drawer is open. Container-owned single source (default false); the
   /// GOODS rail/bag tap opens it, the scrim/close dismisses it. Parity iOS `listPresented`.
@@ -286,10 +306,13 @@ class PlayerOverlayContext {
     this.showSubscribe = true,
     this.showFavorite = true,
     this.titleScroll,
+    this.showCloseIcon = false,
     this.infoPanelOpen = false,
     this.onInfoPanelOpenChange,
     this.cleanMode = false,
     this.onCleanModeChange,
+    this.moreMenuOpen = false,
+    this.onMoreMenuOpenChange,
     this.productListPresented = false,
     this.onDismissProductList,
     required this.onMinimize,
@@ -451,6 +474,10 @@ class MinimalDesign extends ReferenceUIDesign {
             // raw `extensions.video_title_scroll`，design seam **不**正規化、**不**讀 sdkConfig
             // （由 `PlayerHeaderBarView` 的 `normalizeTitleScroll` 單一入口負責）。
             titleScroll: c.titleScroll,
+            // 右上角按鈕圖示 minimize ↔ close（rb-flutter-player-direct-close-button）：design
+            // seam **不**正規化、**不**讀 LivebuySDK（由容器 `_overlayContext()` 的
+            // `resolvedEnableDirectCloseButton(...)` 單一入口負責解析）。
+            showCloseIcon: c.showCloseIcon,
             onTapRailItem: c.onTapRailItem,
             onTapPinnedProduct: c.onTapPinnedProduct,
             // 頻道分享（rb-flutter-player-share-default-sheet）：LIVE / 回放底部 bar + 純 VOD 側欄 rail
@@ -486,6 +513,8 @@ class MinimalDesign extends ReferenceUIDesign {
             onInfoPanelOpenChange: c.onInfoPanelOpenChange,
             // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：把翻轉冒泡給容器（design.md D5）。
             onCleanModeChange: c.onCleanModeChange,
+            // 「更多」選單開合冒泡給容器，用來隱藏合流聊天 feed（rb-flutter-live-more-sheet-above-chat）。
+            onMoreMenuOpenChange: c.onMoreMenuOpenChange,
             // Hide the LIVE bottom bar while the opaque 留言 composer is up (avoid overlap).
             composerPresented: c.composerController.isPresented,
             // Playback-progress-bar control plane (rb-flutter-vod-playback-progress-bar) —
@@ -503,11 +532,14 @@ class MinimalDesign extends ReferenceUIDesign {
           // Hide the chat feed while the info panel is up (parity rb-ios-info-panel-not-covered-
           // by-chat); FeedWinOverlayView also drops it entirely in VOD (LIVE-only).
           infoPanelOpen: c.infoPanelOpen,
-          // Keep the chat in the design's LEFT column (LBLiveChatOverlay right:152) so it clears
+          // Keep the chat in the design's LEFT column (LBLiveChatOverlay right:120) so it clears
           // the side rail / floating bag / win entry on the right (parity iOS liveChatTrailingClearance).
-          chatTrailingInset: 152,
+          chatTrailingInset: 120,
           // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：轉發自容器（design.md D5）。
           cleanMode: c.cleanMode,
+          // 「更多」選單開合（rb-flutter-live-more-sheet-above-chat）：轉發自容器，開啟時隱藏合流
+          // 聊天 feed，避免其被聊天列遮蓋/吃點擊。
+          moreMenuOpen: c.moreMenuOpen,
           onJoinEvent: c.onJoinEvent,
           // rb-flutter-event-join-reaches-core — the keyword-carrying default that
           // actually reaches core `requestEventJoin` (the container's only join send).

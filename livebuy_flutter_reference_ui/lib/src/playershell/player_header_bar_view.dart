@@ -212,6 +212,25 @@ class PlayerHeaderBarView extends StatelessWidget {
   /// 單一布林，語意上仍精確覆蓋「minimize 鈕留、其餘 header 內容走」。
   final bool hideHostPill;
 
+  /// Whether the top-right button shows a "close" (✕) glyph instead of the default
+  /// "minimize" (pip) glyph — a pure BY-VALUE presentation flag
+  /// (rb-flutter-player-direct-close-button, parity iOS `PlayerHeaderBarView.showCloseIcon`).
+  ///
+  /// This widget holds NO concept of "mode": it never reads
+  /// `LivebuySDK.enableDirectCloseButton` / `LivebuyPlayerConfig.enableDirectCloseButton`
+  /// itself — the caller (`CollapsibleLivebuyPlayer` / `LivebuyPlayer._overlayContext()`)
+  /// resolves that elsewhere (via the shared pure function
+  /// `resolvedEnableDirectCloseButton`) and hands down this single bool.
+  ///
+  /// `false` (DEFAULT — every EXISTING call site / golden baseline) → draws the existing
+  /// `Icons.picture_in_picture_alt` glyph, semantics label `'最小化'`. `true` → draws
+  /// `Icons.close` (the same codepoint `FloatingWidgetView` / `MinimizedWidgetView` already
+  /// use for their own close buttons — no new glyph invented), semantics label `'關閉'`
+  /// (see [minimizeButtonSemanticsLabel]). `onMinimize`'s trigger timing is COMPLETELY
+  /// UNCHANGED by this flag — only the icon + semantics label change; what tapping actually
+  /// DOES is decided entirely by the caller.
+  final bool showCloseIcon;
+
   /// The CURRENT mute state (`PlayerShellModel.muted`) — selects the mute button's glyph
   /// (rb-flutter-gesture-clean-mode-v2). Only meaningful when [onToggleMute] is non-null (the
   /// button only renders then); default `false` keeps every EXISTING call site's construction
@@ -242,6 +261,7 @@ class PlayerHeaderBarView extends StatelessWidget {
     this.showSubscribe = true,
     this.titleScroll,
     this.hideHostPill = false,
+    this.showCloseIcon = false,
     this.muted = false,
     this.onToggleMute,
   });
@@ -263,10 +283,13 @@ class PlayerHeaderBarView extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Leading slot flexes up to the icon cluster; the glass pill inside
-            // hugs its (width-bounded) content and the host name truncates so the
-            // fixed LIVE pill + viewer badge + the trailing icon cluster stay fully
-            // visible at the fixed golden width (parity to iOS / Android).
+            // Leading slot flexes up to the icon cluster; the title/host-name Column
+            // inside stretches to fill it (Expanded, rb-flutter-player-header-title-flex-width
+            // — parity to design `LBPHostBadge`'s `flex: '1 1 auto'`, NOT "parity to iOS /
+            // Android" as an earlier comment here claimed: Android's own PlayerHeaderBar.kt
+            // never hugged content either, that line was simply wrong). The host name still
+            // truncates so the fixed LIVE pill + viewer badge + the trailing icon cluster stay
+            // fully visible at the fixed golden width — that part of the intent is unchanged.
             // Whole host pill is tappable → open the info panel (parity iOS host badge). The
             // subscribe badge inside keeps its own gesture (hit-tested first).
             //
@@ -318,7 +341,23 @@ class PlayerHeaderBarView extends StatelessWidget {
         children: [
           _avatar(),
           const SizedBox(width: 8),
-          Flexible(
+          // rb-flutter-player-header-title-flex-width: `Expanded` (FlexFit.tight), not
+          // `Flexible` (FlexFit.loose) — the title/host-name Column MUST stretch to fill its
+          // allocated share of this Row, matching design `LBPHostBadge`'s `flex: '1 1 auto'`.
+          //
+          // ⚠️ Empirically verified to be a NO-OP on today's rendered pixels / hit-testing
+          // (see `design.md` of the change above): the outer `Expanded` in `build()` already
+          // gives this whole `_hostPill()` subtree a TIGHT width constraint, which Flutter's
+          // `BoxConstraints.constrain()` propagates through the `Container`(padding) / outer
+          // `Row(mainAxisSize.min)` chain regardless of what this inner flex fit is — so the
+          // `GestureDetector` hit-test area, the `LayoutBuilder` width `_titleSlot()` measures
+          // for the marquee decision, and the title/host-name `Text` draw position are all
+          // UNCHANGED by this line. The only thing that actually changes is this `Column`
+          // node's OWN reported size (content-hugging → stretched) — a structural fact with no
+          // downstream reader today. This is a latent-defect-prevention fix (align the internal
+          // contract to the design's literal semantics), not a visible bug fix — do NOT read
+          // the git history here as "this used to look broken."
+          Expanded(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -833,11 +872,30 @@ class PlayerHeaderBarView extends StatelessWidget {
     // Symbol `pip.enter`): collapse into the bottom-right floating preview.
     // `_glassIconButton` is a shared helper → wrap (not key) so the minimize key is
     // specific to this button (KeyedSubtree → no RenderObject, golden byte-identical).
+    //
+    // rb-flutter-player-direct-close-button: [showCloseIcon] swaps the glyph for
+    // `Icons.close` (same codepoint `FloatingWidgetView` / `MinimizedWidgetView` already
+    // use) and the `Semantics.label` accordingly — a pure by-value presentation switch,
+    // `onMinimize`'s trigger timing is unaffected. DEFAULT `false` keeps every EXISTING
+    // call site / golden baseline byte-identical.
     return KeyedSubtree(
       key: LbTestKeys.playerMinimize,
-      child: _glassIconButton(Icons.picture_in_picture_alt, onMinimize),
+      child: Semantics(
+        label: minimizeButtonSemanticsLabel(showCloseIcon),
+        button: true,
+        child: _glassIconButton(
+          showCloseIcon ? Icons.close : Icons.picture_in_picture_alt,
+          onMinimize,
+        ),
+      ),
     );
   }
+
+  /// The top-right button's semantics label, driven purely by [showCloseIcon]
+  /// (rb-flutter-player-direct-close-button, parity iOS
+  /// `minimizeButtonAccessibilityLabel`). Pure / deterministic — no widget dependency.
+  static String minimizeButtonSemanticsLabel(bool showCloseIcon) =>
+      showCloseIcon ? '關閉' : '最小化';
 
   /// The clean-mode-only mute-toggle button (rb-flutter-gesture-clean-mode-v2). Only ever
   /// composed by [build] while [onToggleMute] is non-null. Icon follows [muted] — parity

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBProduct;
 
+import '../productsheets/equalizer_glyph.dart';
 import '../productsheets/sheet_scaffold.dart' show liveProductImage;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
@@ -23,7 +24,7 @@ const double _pinnedSwipeVelocity = 80;
 // owned by their own widgets). This surface renders ONLY the overlay affordances
 // the design's `live-chrome.jsx` paints over the stream:
 //
-//   • LBLiveAnnounce    — announcement banner (bottom-left, yellow).
+//   • LBLiveAnnounce    — announcement banner (bottom-left, translucent dark glass).
 //   • LBLivePinnedCard  — pinned narrating-product card (bottom-right, white).
 //   • LBLiveHostCaption — centered host caption overlay (~46% height).
 //   • LBPGestureHint    — centered static gesture-hint pills (tap / hold / swipe).
@@ -155,11 +156,12 @@ class LiveOverlayChromeView extends StatelessWidget {
           IgnorePointer(child: Center(child: _gestureHints())),
 
         // Bottom row: announce banner (left) + pinned card (right).
-        // `live-chrome.jsx`: announce `left:8 right:152 bottom:70`,
-        // pinned card `right:8 bottom:64 width:132`. Pinned card `right` is now 10 (not 8) —
+        // `live-chrome.jsx`: announce `left:8 right:120 bottom:70`,
+        // pinned card `right:8 bottom:64 width:100` (was `width:132` — see `_pinnedCard`,
+        // rb-flutter-vod-live-product-card-restyle). Pinned card `right` is now 10 (not 8) —
         // aligned to the LIVE bottom bar's heart-icon right edge (LiveBottomBarView._barHPadding
         // = 10, rb-flutter-live-chat-card-edge-align, parity iOS rb-ios-live-chat-card-edge-align).
-        // Announce banner `left` stays 8 (unaffected; its maxWidth: 233 calc is independent of
+        // Announce banner `left` stays 8 (unaffected; its maxWidth: 265 calc is independent of
         // this `right` value).
         Align(
           alignment: Alignment.bottomCenter,
@@ -195,15 +197,17 @@ class LiveOverlayChromeView extends StatelessWidget {
 
   // ── LBLiveAnnounce — announcement banner ─────────────────────────────────
 
-  /// Bottom-left yellow announcement banner with a red icon badge and single-line
-  /// truncated copy. Mirrors `LBLiveAnnounce` (`#FFE08A` bg, `#F03246` icon badge,
-  /// `#15131A` dark text). The iOS `MarqueeText` first frame is offset 0 — the
-  /// static truncated line is the deterministic baseline (no animation here).
+  /// Bottom-left translucent-dark-glass announcement banner with a red icon badge
+  /// and single-line truncated copy. Mirrors `LBLiveAnnounce` (`rgba(0,0,0,0.42)`
+  /// bg, `#F03246` icon badge, white text — 2026-09-03 design recolor,
+  /// `design/contract/claude-design-sync.md` R30; was yellow `#FFE08A` bg / dark
+  /// `#15131A` text). The iOS `MarqueeText` first frame is offset 0 — the static
+  /// truncated line is the deterministic baseline (no animation here).
   Widget _announceBanner() {
     return Container(
-      // design LBLiveAnnounce left:8 right:152 on the 393 frame = 393 − 8 − 152 = 233
+      // design LBLiveAnnounce left:8 right:120 on the 393 frame = 393 − 8 − 120 = 265
       // (iOS / Android parity). The left:8 inset comes from the overlay bottom Align padding.
-      constraints: const BoxConstraints(maxWidth: 233),
+      constraints: const BoxConstraints(maxWidth: 265),
       decoration: BoxDecoration(
         color: _announceBgColor,
         borderRadius: BorderRadius.circular(8),
@@ -252,11 +256,22 @@ class LiveOverlayChromeView extends StatelessWidget {
   /// to [onTapPinnedProduct] (host-wired core exit `simulateProductTap`); the close chip forwards to
   /// [onDismissPinnedProduct] and consumes its own tap so it does NOT open the detail.
   Widget _pinnedCard(LBProduct product) {
+    // rb-flutter-vod-live-product-card-restyle (2026-09-03): 132×92 → 100×88. Current
+    // values (132 container width / 92 thumbnail height) were verified to match the
+    // design's assumed prior baseline exactly (see `design.md` Context), so the new
+    // design literals apply directly — no ratio re-derivation needed (unlike the
+    // `rb-*-vod-bag-icon-ratio-restore` case where the live values had drifted).
+    //
+    // rb-flutter-product-detail-image-gallery (R34, `design/contract/claude-design-sync.md`):
+    // the thumbnail area's height goes 88 → 100 (below), matching the unchanged `width: 100` —
+    // a non-equal-aspect rectangle becomes a square. This is a SECOND adjustment layered on
+    // top of the restyle above (only the aspect ratio changes; it does NOT revert the R31
+    // shrink from 132×92 down to 100×wide).
     return GestureDetector(
       key: LbTestKeys.pinnedCard,
       onTap: onTapPinnedProduct,
       child: Container(
-        width: 132,
+        width: 100,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(10),
@@ -266,12 +281,13 @@ class LiveOverlayChromeView extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Image area (design height 92). Themed placeholder so the golden
-            // baseline is deterministic without a network image; the REAL product photo
-            // loads OVER it at runtime (`live` + a non-blank URL) via `liveProductImage`
-            // (live-pinned-card-image-radius). live == false / blank → placeholder only.
+            // Image area (design height 100, R34 — square with the 100-wide card; was 88).
+            // Themed placeholder so the golden baseline is deterministic without a network
+            // image; the REAL product photo loads OVER it at runtime (`live` + a non-blank
+            // URL) via `liveProductImage` (live-pinned-card-image-radius). live == false /
+            // blank → placeholder only.
             SizedBox(
-              height: 92,
+              height: 100,
               child: Stack(
                 children: [
                   Positioned.fill(
@@ -290,6 +306,40 @@ class LiveOverlayChromeView extends StatelessWidget {
                       ),
                     ),
                   ),
+                  // Narrate ("介紹中") banner — MOVED from the content-padding text row below
+                  // the thumbnail to a full-width strip overlaid on the thumbnail's bottom edge
+                  // (rb-flutter-vod-live-product-card-restyle; was `theme.accent` icon+text under
+                  // the image). Fixed coral fill (design `rgba(240,50,70,.7)`), unifying the
+                  // vocabulary with `ProductRow`'s「介紹中」badge. Render condition unchanged
+                  // (`_isNarrating(product)`).
+                  if (_isNarrating(product))
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        color: _introducingBadgeFill,
+                        padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 4),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.max,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const EqualizerGlyph(size: 9, color: Color(0xFFFFFFFF)),
+                            const SizedBox(width: 3),
+                            Text(
+                              _narrateTagText,
+                              maxLines: 1,
+                              overflow: TextOverflow.clip,
+                              style: TextStyle(
+                                color: const Color(0xFFFFFFFF),
+                                fontSize: 12 * theme.fontScale,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   // Close affordance chip — a tappable per-product dismiss. Its OWN nested
                   // GestureDetector (behavior: opaque) intercepts / consumes the tap so it does
                   // NOT bubble to the outer card GestureDetector (onTapPinnedProduct / open-detail)
@@ -325,34 +375,17 @@ class LiveOverlayChromeView extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Narrate tag (accent) — shown for the narrating product.
-                  if (_isNarrating(product))
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 3),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.bar_chart, size: 11, color: theme.accent),
-                          const SizedBox(width: 3),
-                          Text(
-                            _narrateTagText,
-                            style: TextStyle(
-                              color: theme.accent,
-                              fontSize: 11 * theme.fontScale,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  // Product name (1-line clamp, design dark text).
+                  // Product name (design fontSize 10, up to 2 lines — was fontSize 11 / 1
+                  // line; rb-flutter-vod-live-product-card-restyle). The narrate tag row
+                  // that used to live here (accent icon+text) is REMOVED — see the coral
+                  // banner overlaid on the thumbnail above.
                   Text(
                     product.name,
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: theme.text,
-                      fontSize: 11 * theme.fontScale,
+                      fontSize: 10 * theme.fontScale,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -507,17 +540,22 @@ List<LBProduct> visiblePinnedProducts(
         : products.where((p) => !dismissedIds.contains(p.id)).toList();
 
 // ── Fixed decorative design hexes lifted from `live-chrome.jsx` (parity with
-//    iOS / Android). These are DECORATIVE (yellow announce banner) — NOT the
-//    resolved theme accent — so they stay constant across themes. ─────────────
+//    iOS / Android). These are DECORATIVE (announce banner / icon badge) — NOT
+//    the resolved theme accent — so they stay constant across themes. ─────────
 
-/// Announce banner background (`#FFE08A`).
-final Color _announceBgColor = colorFromHex('#FFE08A') ?? const Color(0xFFFFE08A);
+/// Announce banner background — translucent black `rgba(0,0,0,0.42)` (2026-09-03
+/// design recolor, `design/contract/claude-design-sync.md` R30 — was yellow
+/// `#FFE08A`). The design pairs this with `backdropFilter: blur(6px)`; per this
+/// package's whole-file convention (see `floating_widget.dart`'s `_closeGlass`),
+/// backdrop blur is NOT implemented — drawn as a flat translucent solid instead.
+final Color _announceBgColor = const Color(0xFF000000).withValues(alpha: 0.42);
 
 /// Announce icon badge (`#F03246` — brand red used decoratively here).
 final Color _announceBadgeColor = colorFromHex('#F03246') ?? const Color(0xFFF03246);
 
-/// Announce text color (`#15131A` — fixed design dark text on yellow).
-final Color _announceTextColor = colorFromHex('#15131A') ?? const Color(0xFF15131A);
+/// Announce text color — white (2026-09-03 design recolor, R30 — was dark
+/// `#15131A` on the old yellow background).
+final Color _announceTextColor = Colors.white;
 
 /// Pinned-card image placeholder fill (`#EFEFF2`).
 final Color _pinnedImagePlaceholder =
@@ -525,6 +563,14 @@ final Color _pinnedImagePlaceholder =
 
 /// Pinned-card image glyph color (`#C7C7CC`).
 final Color _pinnedImageGlyph = colorFromHex('#C7C7CC') ?? const Color(0xFFC7C7CC);
+
+/// The narrate ("介紹中") banner fill — fixed coral `rgba(240,50,70,.7)` = `#F03246` @
+/// alpha 0.7 (rb-flutter-vod-live-product-card-restyle, 2026-09-03). Literally the same
+/// hex as [_announceBadgeColor] but kept as an INDEPENDENT constant — that one is a
+/// fully-opaque decorative icon-badge red, this one a 0.7-alpha banner fill; the two
+/// uses are unrelated despite sharing a hex (see `design.md` Decisions).
+final Color _introducingBadgeFill =
+    (colorFromHex('#F03246') ?? const Color(0xFFF03246)).withValues(alpha: 0.7);
 
 // Static localized copy (matching iOS `LiveOverlayChromeView` + `LBPGestureHint`).
 /// Host caption label ("主持人").

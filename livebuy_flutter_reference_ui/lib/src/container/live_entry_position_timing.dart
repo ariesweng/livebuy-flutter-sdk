@@ -179,12 +179,12 @@ Duration lbLiveEntryAppearDelay(LBFloatingEntryTiming timing, int delaySeconds) 
   return Duration(seconds: delaySeconds);
 }
 
-/// 容器出現時機閘的**初值**：`immediate` → `true`(入口一可顯示就畫，與本設定落地前逐字相同)、
-/// `delay` → `false`(由排程翻起)。
+/// 容器出現時機閘的**每個 timing 的基準初值**：`immediate` → `true`(入口一可顯示就畫，與本設定
+/// 落地前逐字相同)、`delay` → `false`(由排程翻起)。
 ///
-/// ⚠️ 這個函式是該初值的**唯一**來源，呼叫點 MUST NOT 自己寫死布林。它**真的載有行為**——消費鏈
-/// 是對 `live_buy_live_entry.dart` 下 `grep -n "_appeared"` **機器列舉**後逐點追的(design D5)，
-/// 不是照抄別端的宣稱：
+/// ⚠️ 這個函式是「一個 timing enum 該起始成什麼布林」的**唯一**來源，呼叫點 MUST NOT 自己把這個
+/// 基準寫死。它**真的載有行為**——消費鏈是對 `live_buy_live_entry.dart` 下 `grep -n "_appeared"`
+/// **機器列舉**後逐點追的(design D5)，不是照抄別端的宣稱：
 ///
 /// ```text
 /// 讀取點共 2 處(grep 列舉，非「唯一一處」)：
@@ -193,20 +193,38 @@ Duration lbLiveEntryAppearDelay(LBFloatingEntryTiming timing, int delaySeconds) 
 ///   _reconcileAppearance   if (_appeared || _appearTimer != null) return;
 ///                            → 去重判斷：已顯示 / 已在倒數就不重排程
 ///
-/// 寫入點共 4 處(grep 列舉，非「唯一一處」)，以及各自在 immediate 路徑上的命運：
+/// 寫入點共 5 處(grep 列舉，非「唯一一處」；rb-flutter-live-entry-close-grace-period 前是 4 處)：
 ///   initState                      _appeared = lbLiveEntryInitialAppeared(_timing)
-///                                    → 兩個模式都執行；immediate 由此得到 true
-///   _applyFloatingSettingUpdate    _appeared = lbLiveEntryInitialAppeared(_timing)
-///                                    → 只在 host 熱抽換且 timing 真的改變時執行；同樣走本函式
-///   _reconcileAppearance           _appeared = false
-///                                    → 被該方法第一行 `if (_timing != delay) return;` 擋住
+///                                    && _closeGraceRemainingMs() <= 0
+///                                    → 兩個模式都執行；本函式的回傳值再 AND 一個獨立的 close-grace
+///                                      條件(rb-flutter-live-entry-close-grace-period)
+///   _applyFloatingSettingUpdate    同上一式
+///                                    → 只在 host 熱抽換且 timing 真的改變時執行
+///   _reconcileAppearance           _appeared = false（`!_eligible` 分支）
+///                                    → rb-flutter-live-entry-close-grace-period 前被該方法第一行
+///                                      `if (_timing != delay) return;` 擋住、immediate 路徑不可達；
+///                                      該 early-return 已移除，兩個 timing 現在都會執行到
+///   _reconcileAppearance           _appeared = true（`immediate` 分支、close-grace 已為 0 時的同步早返回）
+///                                    → **新增寫入點**(rb-flutter-live-entry-close-grace-period)：
+///                                      immediate 路徑本來完全不會進入 `_reconcileAppearance`，現在
+///                                      會，且這個分支直接寫死 `true`——但這是「已知沒有 grace 要等」
+///                                      的收斂結果，不是繞過本函式的基準值，兩者回答不同問題(見下)
 ///   _onAppearTimerFired            setState(() => _appeared = true)
-///                                    → 只由 _reconcileAppearance 建立的排程觸發，同樣被上面那行擋住
+///                                    → 由 _reconcileAppearance 排的 `Timer` 觸發；
+///                                      rb-flutter-live-entry-close-grace-period 前只有 `delay` 會走到
+///                                      這裡，之後 `immediate` 在有 close-grace 要等時也會走到
 /// ```
 ///
-/// 也就是說 `immediate`(＝預設)路徑上會執行到的寫入點**全部**走本函式、**沒有一處寫死布林**，
-/// 把這裡改成恆 `false`，每一個預設 host 的入口就永遠不會出現。這條性質在 Flutter 有**執行期**
-/// 證據(`container timing > immediate …` widget 測試)，不是只有原始碼釘樁。
+/// 也就是說：**本函式**仍是「某個 timing 的基準初值」唯一權威，那條「呼叫點 MUST NOT 自己寫死布林」
+/// 的規範，指的是這個基準值本身——`initState` / `_applyFloatingSettingUpdate` 這兩個真正做「初始化」
+/// 的寫入點，繼續、只、透過本函式取得基準，再 AND 上一個完全獨立的 close-grace 條件（後者是一個不同的
+/// 純函式 `liveEntryCloseGraceRemainingMs` 決定的，不是把本函式的基準值繞過）。`_reconcileAppearance`
+/// 的兩個寫入點做的是「執行期的資格 / 等待時間收斂」，不是「timing 基準」，本來就不透過本函式（連
+/// rb-flutter-live-entry-close-grace-period 之前，`delay` 的排程觸發寫入點 `_onAppearTimerFired` 也一
+/// 樣不透過本函式）——把這裡改成恆 `false`，唯一的直接後果是每一個預設 host 的入口在「冷開、沒有
+/// close-grace 要等」時永遠不會同步出現(仍可能在 grace 收斂後由 `_reconcileAppearance` 的新分支救回，
+/// 但那已不是本函式的責任範圍)。這條性質在 Flutter 有**執行期**證據(`container timing > immediate …`
+/// widget 測試)，不是只有原始碼釘樁。
 bool lbLiveEntryInitialAppeared(LBFloatingEntryTiming timing) =>
     timing != LBFloatingEntryTiming.delay;
 

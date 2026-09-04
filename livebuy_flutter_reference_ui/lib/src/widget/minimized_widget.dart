@@ -248,8 +248,9 @@ class MinimizedWidgetView extends StatelessWidget {
 
   // MARK: - Close affordance (top-right → onClose)
 
-  /// Top-right round close button (`LBPFloatingWidget` 694-702): a 20×20
-  /// translucent-dark circle (`rgba(0,0,0,0.55)`) + a close (×) glyph. Tap →
+  /// Top-right round close button (`LBPFloatingWidget` 709-716): a 28×28
+  /// (rb-flutter-live-replay-more-menu-and-video-info-live-copy, design R32 — was 20×20)
+  /// translucent-dark circle (`rgba(0,0,0,0.55)`) + a close (×) glyph (size 14 — was 11). Tap →
   /// host-wired `onClose`. Its own `GestureDetector` swallows the tap so the body
   /// `onExpand` does not also fire.
   Widget _closeButton() {
@@ -258,8 +259,8 @@ class MinimizedWidgetView extends StatelessWidget {
       onTap: onClose,
       behavior: HitTestBehavior.opaque,
       child: Container(
-        width: 20,
-        height: 20,
+        width: 28,
+        height: 28,
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: const Color(0xFF000000).withValues(alpha: 0.55),
@@ -267,7 +268,7 @@ class MinimizedWidgetView extends StatelessWidget {
         ),
         child: const Icon(
           _closeGlyph,
-          size: 11,
+          size: 14,
           color: Color(0xFFFFFFFF),
         ),
       ),

@@ -494,7 +494,15 @@ class ProductDetailSheet extends StatelessWidget {
   /// Host-wired zoom badge tap → container opens the full-frame [ProductImageZoomOverlay]
   /// (rb-flutter-product-image-zoom-lightbox). `null` for demo / golden instances (the badge
   /// renders byte-identical to the prior decorative badge; tap is inert).
-  final VoidCallback? onZoomImage;
+  ///
+  /// SIGNATURE CHANGE (rb-flutter-product-detail-image-gallery): was `VoidCallback?`, now
+  /// carries the photo URL the badge should open the lightbox on. `.detail`'s main-photo
+  /// gallery (see `_ProductPhotoGallery`) calls this with its CURRENTLY SELECTED page's URL
+  /// (may be `null`); `.addToCart`'s 96×96 compact-card badge (no gallery concept) always
+  /// calls it with `null`. The container forwards the value straight through to
+  /// `ProductImageZoomOverlay.overridePhotoURL`, so the lightbox shows the same photo the
+  /// gallery was on instead of unconditionally re-deriving `primaryPhoto`.
+  final void Function(String? photoUrl)? onZoomImage;
 
   /// Whether the「商品介紹」text section CAN be drawn at all (rb-flutter-product-detail-
   /// recommendations §2). Default `false` — **baseline protection**, NOT the production
@@ -1033,7 +1041,11 @@ class ProductDetailSheet extends StatelessWidget {
                       diameter: 24,
                       discColor: const Color(0x8C000000), // black @ 0.55
                       glyphColor: const Color(0xFFFFFFFF),
-                      onTap: onZoomImage,
+                      // .addToCart has no gallery concept (rb-flutter-product-detail-image-gallery
+                      // scopes the multi-image gallery to `.detail`'s main photo only) — always
+                      // forwards `null`, so the lightbox falls back to the existing resolver, same
+                      // as before this change.
+                      onTap: onZoomImage == null ? null : () => onZoomImage!(null),
                     ),
                   ),
                 ],
@@ -1082,64 +1094,26 @@ class ProductDetailSheet extends StatelessWidget {
   // back to the placeholder on load / error (rb-product-real-images). Mirrors the design's
   // rounded media.
   //
-  // PHOTO SOURCE (flutter-product-sheet-spec-photo-reference-ui, parity iOS): the url is
-  // `_resolvedPhoto.primaryPhoto`, NOT `detail.photos.first` — the photo follows the
-  // selected variant, and "which photo" is decided in ONE place shared with the `.addToCart`
-  // thumbnail and the zoom lightbox. `primaryPhoto == null` (no drawable photo in the
-  // winning source) → `liveProductImage(url: null)` → the placeholder path below, exactly as
-  // the prior `photos.isEmpty` check did. The placeholder itself is UNCHANGED.
+  // PHOTO SOURCE (flutter-product-sheet-spec-photo-reference-ui, parity iOS): the underlying
+  // source is `_resolvedPhoto.photos` (the FULL array of the winning source — spec-aware, NOT
+  // `detail.photos.first`), the same single resolution point shared with the `.addToCart`
+  // thumbnail and the zoom lightbox.
+  //
+  // MULTI-IMAGE GALLERY (rb-flutter-product-detail-image-gallery, design R34): delegates to
+  // [_ProductPhotoGallery] — see that widget's own header comment for the gallery / thumbnail
+  // / zoom-badge-override behavior. `_resolvedPhoto.photos.length <= 1` (every existing
+  // `ProductSheetsSeeds` fixture, whose `photos` is always `const []`) renders the SAME single
+  // 168-tall image + zoom badge this method drew before this change — byte-identical.
 
   Widget _productPhoto() {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: SizedBox(
-        height: 168,
-        width: double.infinity,
-        child: Stack(
-          children: [
-            // The 4:3 gradient placeholder + monogram, with the gated live image
-            // overlaid on top at runtime (rb-product-real-images). `live == false`
-            // (golden / demo) draws ONLY the gradient placeholder (byte-stable).
-            Positioned.fill(
-              child: liveProductImage(
-                live: live,
-                url: _resolvedPhoto.primaryPhoto,
-                placeholder: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [_photoStart, _photoEnd],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(
-                      _monogram(detail.name),
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.92),
-                        fontSize: 26 * theme.fontScale,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            // Tappable zoom badge (design screens.jsx ZoomBadge): 32 white@0.85 disc +
-            // magnifier glyph, bottom-trailing inset 10. Tap → onZoomImage opens the lightbox.
-            Positioned(
-              right: 10,
-              bottom: 10,
-              child: ZoomBadge(
-                diameter: 32,
-                discColor: const Color(0xD9FFFFFF), // white @ 0.85
-                glyphColor: const Color(0xFF15131A),
-                onTap: onZoomImage,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return _ProductPhotoGallery(
+      theme: theme,
+      photos: _resolvedPhoto.photos,
+      productId: detail.productId,
+      name: detail.name,
+      live: live,
+      height: 168,
+      onZoomImage: onZoomImage,
     );
   }
 
@@ -1787,6 +1761,269 @@ class ProductDetailSheet extends StatelessWidget {
         height: 1,
         width: double.infinity,
         child: ColoredBox(color: _stroke),
+      ),
+    );
+  }
+}
+
+// MARK: - _ProductPhotoGallery — `.detail` main-photo multi-image gallery
+//         (rb-flutter-product-detail-image-gallery, design R34)
+//
+// Design: `design/templates/minimal/screens.jsx` `ProductDetailSheet`'s `images` gallery
+// (drag + `scrollSnapType: 'x mandatory'` main viewer + a below-fold thumbnail strip, only
+// shown when `images.length > 1`). Parity: iOS / Android / RN each carry their own independent
+// `rb-{platform}-product-detail-image-gallery` change.
+//
+// SOURCE: `resolveProductPhoto(...).photos` (a param here, passed in BY VALUE from
+// `ProductDetailSheet._resolvedPhoto.photos` — this widget MUST NOT re-derive the photo-source
+// degradation ladder itself; `resolveProductPhoto` remains the ONE resolution point, shared
+// with `.addToCart`'s compact thumbnail and the zoom lightbox).
+//
+// `photos.length <= 1` (every existing `ProductSheetsSeeds` fixture — `photos` is always
+// `const []`) renders EXACTLY the pre-existing single 168-tall gradient-placeholder-or-real-
+// photo Stack + 32×32 zoom badge, with NO thumbnail row and NO swipe `GestureDetector` — byte-
+// identical to this file's behavior before this change.
+//
+// `photos.length > 1` adds:
+//   • horizontal swipe on the main image (a `GestureDetector.onHorizontalDragEnd` velocity
+//     threshold flips the page — this package's EXISTING carousel idiom, reused verbatim from
+//     `_LivePinnedCardCarousel` / `NowIntroducingCarousel` in `live_overlay_chrome_view.dart` /
+//     `now_introducing_carousel.dart`. Deliberately NOT a `PageView` — see design.md D1: no
+//     animation-driven scroll keeps every frame golden-deterministic).
+//   • a thumbnail selector row below (48×48 chips, `SingleChildScrollView(scrollDirection:
+//     Axis.horizontal)` + `Row` — this package's existing horizontal-scroll-strip idiom, see
+//     `carousel.dart:320`'s turnkey card row). Tapping a thumbnail jumps the main image to it
+//     immediately (no animation). The NON-selected thumbnails carry a `rgba(0,0,0,0.5)` scrim;
+//     the selected one does not (design's `i !== activeImg` overlay).
+//
+// SELECTED INDEX is presentation-only local `State` (design.md D2) — `ProductDetailSheet`
+// itself stays a `StatelessWidget`; this widget does NOT read or write any view-model. It
+// resets to 0 when [productId] changes (design.md D5, mirrors the design's
+// `useEffect(() => setActiveImg(0), [product.id])`) — NOT when [photos] content changes under
+// the SAME product (e.g. a variant-spec swap that changes which photo array won), so switching
+// specs never yanks the user back to page 1.
+//
+// ZOOM BADGE: tapping it calls [onZoomImage] with the photo CURRENTLY on screen (may be
+// `null` when there is nothing drawable) — the container threads this straight through to
+// `ProductImageZoomOverlay.overridePhotoURL`, so the lightbox opens on the same page the
+// gallery was showing.
+class _ProductPhotoGallery extends StatefulWidget {
+  const _ProductPhotoGallery({
+    required this.theme,
+    required this.photos,
+    required this.productId,
+    required this.name,
+    required this.live,
+    required this.height,
+    this.onZoomImage,
+  });
+
+  /// Resolved reference-ui theme (FIRST, always).
+  final ReferenceUITheme theme;
+
+  /// The winning photo source's photos, VERBATIM — `ProductDetailSheet._resolvedPhoto.photos`.
+  /// This widget MUST NOT re-derive the source itself.
+  final List<String> photos;
+
+  /// The product this gallery belongs to (`detail.productId`) — drives the index-reset rule
+  /// (design.md D5). NOT used for anything else (no re-fetching, no core / view-model calls).
+  final String productId;
+
+  /// The product name, for the monogram placeholder (mirrors `_monogram(detail.name)`).
+  final String name;
+
+  /// `false` (golden / demo) → gradient + monogram placeholder only; `true` → real photo.
+  final bool live;
+
+  /// Main-image height (168, the pre-existing `.detail` value — passed in rather than
+  /// hardcoded so a future call site could reuse this widget at a different size).
+  final double height;
+
+  /// Host-wired zoom badge tap, carrying the CURRENTLY SELECTED photo's URL (may be `null`).
+  /// `null` for demo / golden instances (the badge renders byte-identical to the prior
+  /// decorative-when-inert badge; tap is inert).
+  final void Function(String? photoUrl)? onZoomImage;
+
+  @override
+  State<_ProductPhotoGallery> createState() => _ProductPhotoGalleryState();
+}
+
+/// Swipe velocity (px/s) that commits a main-image page flip — matches this package's existing
+/// carousel threshold (`_LivePinnedCardCarousel._pinnedSwipeVelocity` /
+/// `NowIntroducingCarousel._swipeVelocity`, both `80`).
+const double _gallerySwipeVelocity = 80;
+
+/// Thumbnail chip geometry (design `screens.jsx` `ProductDetailSheet` thumbnail row: `width:
+/// 48, height: 48`, `gap: 8`, `borderRadius: 4`, active border `2px solid accent` / inactive
+/// `2px solid transparent`).
+const double _galleryThumbSize = 48;
+const double _galleryThumbGap = 8;
+const double _galleryThumbRadius = 4.0;
+
+class _ProductPhotoGalleryState extends State<_ProductPhotoGallery> {
+  int _index = 0;
+
+  @override
+  void didUpdateWidget(covariant _ProductPhotoGallery oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Reset to page 1 ONLY when the PRODUCT changed (design.md D5) — a `photos` content change
+    // under the SAME product (e.g. a variant-spec swap) MUST NOT reset the page the user is on.
+    if (oldWidget.productId != widget.productId) {
+      _index = 0;
+    }
+  }
+
+  /// The gradient + monogram placeholder, parameterized by font size (26 on the main image,
+  /// 12 on a thumbnail) — same gradient stops / monogram text as the pre-existing single-photo
+  /// placeholder this replaces.
+  Widget _placeholder(double fontSize) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_photoStart, _photoEnd],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Center(
+        child: Text(
+          _monogram(widget.name),
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.92),
+            fontSize: fontSize * widget.theme.fontScale,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final photos = widget.photos;
+    final hasMultiple = photos.length > 1;
+    final count = photos.isEmpty ? 1 : photos.length;
+    final i = _index.clamp(0, count - 1);
+    final current = photos.isEmpty ? null : photos[i];
+
+    // The main image + zoom badge — structurally IDENTICAL to the pre-existing single-photo
+    // `_productPhoto()` Stack (same 12-radius clip, same 4:3 gradient placeholder, same 32×32
+    // badge position/colors), just reading `current` (the gallery's selected page) instead of
+    // `_resolvedPhoto.primaryPhoto` directly. Wrapped in an INERT `KeyedSubtree` (paints
+    // nothing) so tests can find THIS `Image` specifically, disambiguated from the thumbnail
+    // row's own `Image` widgets.
+    Widget mainImage = KeyedSubtree(
+      key: LbTestKeys.productGalleryMainImage,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          height: widget.height,
+          width: double.infinity,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: liveProductImage(
+                  live: widget.live,
+                  url: current,
+                  placeholder: _placeholder(26),
+                ),
+              ),
+              Positioned(
+                right: 10,
+                bottom: 10,
+                child: ZoomBadge(
+                  diameter: 32,
+                  discColor: const Color(0xD9FFFFFF), // white @ 0.85
+                  glyphColor: const Color(0xFF15131A),
+                  onTap: widget.onZoomImage == null
+                      ? null
+                      : () => widget.onZoomImage!(current),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    // photos.length <= 1 (every existing golden fixture): the bare main image — NO swipe
+    // wrapper, NO thumbnail row. Byte-identical to this file's pre-gallery behavior.
+    //
+    // > 1: wrap the main image in a horizontal-swipe GestureDetector (this package's existing
+    // velocity-threshold carousel idiom — NOT a PageView, see design.md D1) and add the
+    // thumbnail selector row below.
+    //
+    // Either way the result is wrapped in a `KeyedSubtree` (INERT — paints nothing) carrying
+    // `LbTestKeys.productGallery`, so tests can target the swipeable area directly without
+    // depending on this private widget's type.
+    final Widget content = !hasMultiple
+        ? mainImage
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GestureDetector(
+                onHorizontalDragEnd: (details) {
+                  final v = details.primaryVelocity ?? 0;
+                  if (v < -_gallerySwipeVelocity) {
+                    setState(() => _index = (i + 1).clamp(0, count - 1));
+                  } else if (v > _gallerySwipeVelocity) {
+                    setState(() => _index = (i - 1).clamp(0, count - 1));
+                  }
+                },
+                child: mainImage,
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: _galleryThumbSize,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (var idx = 0; idx < photos.length; idx++) ...[
+                        if (idx > 0) const SizedBox(width: _galleryThumbGap),
+                        _thumb(idx, photos[idx], idx == i),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+
+    return KeyedSubtree(key: LbTestKeys.productGallery, child: content);
+  }
+
+  /// One 48×48 thumbnail chip — tap jumps the main image to [idx] immediately (no animation).
+  /// The non-selected scrim (`rgba(0,0,0,0.5)`) mirrors the design's `i !== activeImg` overlay.
+  Widget _thumb(int idx, String url, bool active) {
+    return GestureDetector(
+      key: LbTestKeys.productGalleryThumb(idx),
+      behavior: HitTestBehavior.opaque,
+      onTap: () => setState(() => _index = idx),
+      child: Container(
+        width: _galleryThumbSize,
+        height: _galleryThumbSize,
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: active ? widget.theme.accent : Colors.transparent,
+            width: 2,
+          ),
+          borderRadius: BorderRadius.circular(_galleryThumbRadius),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            liveProductImage(
+              live: widget.live,
+              url: url,
+              placeholder: _placeholder(12),
+            ),
+            if (!active)
+              Container(color: Colors.black.withValues(alpha: 0.5)),
+          ],
+        ),
       ),
     );
   }

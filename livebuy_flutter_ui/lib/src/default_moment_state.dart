@@ -316,21 +316,35 @@ class DefaultEndScreenState extends ChangeNotifier {
 /// `narrate_status==2` in-narration [activeProduct] (nil when none) (D4).
 /// DIFF-then-notify by product-id list + active id — products refresh every 5s,
 /// so an unchanged snapshot MUST NOT notify (Risks / merged-feed discipline).
+///
+/// suppress-product-overlay-during-intro-flutter-template: while the intro MP4
+/// preroll is playing (`DefaultPlayerTemplate.startScreen.phase == splash`),
+/// the EXPOSED [products] / [activeProduct] read as empty / null regardless of
+/// what has been fed via [handleSnapshot] — the raw snapshot is still buffered
+/// internally (never cleared) so it can be restored the instant the intro ends,
+/// with no re-fetch and no wait for the next poll tick. See [setIntroPlaying].
 class DefaultProductOverlayState extends ChangeNotifier {
   List<LBProduct> _products = const [];
   LBProduct? _activeProduct;
+  bool _introPlaying = false;
 
-  /// Latest products snapshot (host binds to draw the sheet / banner).
-  List<LBProduct> get products => List.unmodifiable(_products);
+  /// Latest products snapshot (host binds to draw the sheet / banner). Reads as
+  /// `[]` while the intro is playing (see [setIntroPlaying]) — the underlying
+  /// buffer is untouched.
+  List<LBProduct> get products =>
+      _introPlaying ? const <LBProduct>[] : List.unmodifiable(_products);
 
-  /// The single in-narration product (`narrate_status==2`), or null.
-  LBProduct? get activeProduct => _activeProduct;
+  /// The single in-narration product (`narrate_status==2`), or null. Reads as
+  /// `null` while the intro is playing (see [setIntroPlaying]).
+  LBProduct? get activeProduct => _introPlaying ? null : _activeProduct;
 
   /// The currently-introducing product's id (= `activeProduct?.id`; LIVE
   /// `narrate_status == 2`, null when none). The reference-ui product LIST draws
   /// the「介紹中」banner on the row whose id matches this. Pure computed (no second
-  /// state). Parity iOS / Android / RN `introducingProductId`.
-  String? get introducingProductId => _activeProduct?.id;
+  /// state). Parity iOS / Android / RN `introducingProductId`. Reads off the
+  /// GATED [activeProduct] (null while the intro is playing), so it collapses
+  /// to null over the intro without any extra gating logic here.
+  String? get introducingProductId => activeProduct?.id;
 
   /// `products` with the currently-introducing product (`activeProduct`) moved to
   /// the FRONT, preserving the relative order of the rest. When there is no active
@@ -338,27 +352,64 @@ class DefaultProductOverlayState extends ChangeNotifier {
   /// computed (no second state). The reference-ui product LIST binds THIS so the
   /// introducing item sorts first — ORDERING is a data-layer responsibility;
   /// reference-ui MUST NOT re-sort. Parity iOS / Android / RN `productsIntroducingFirst`.
+  /// Reads off the GATED [products] / [activeProduct] (both empty/null while the
+  /// intro is playing), so it collapses to `[]` over the intro automatically.
   List<LBProduct> get productsIntroducingFirst {
-    final id = _activeProduct?.id;
-    if (id == null) return products;
-    final idx = _products.indexWhere((p) => p.id == id);
-    if (idx < 0) return products;
-    final ordered = List<LBProduct>.of(_products);
+    final source = products;
+    final id = activeProduct?.id;
+    if (id == null) return source;
+    final idx = source.indexWhere((p) => p.id == id);
+    if (idx < 0) return source;
+    final ordered = List<LBProduct>.of(source);
     final item = ordered.removeAt(idx);
     ordered.insert(0, item);
     return List.unmodifiable(ordered);
   }
 
   /// Ingest a core products refresh. Flutter `LBProduct` has no `narrate_status`
-  /// field, so the host passes [active] explicitly (file note 5). Notifies only
-  /// when the product-id list OR the active id actually changes.
+  /// field, so the host passes [active] explicitly (file note 5). The internal
+  /// buffer (`_products` / `_activeProduct`) is updated UNCONDITIONALLY — even
+  /// while the intro is playing (suppress-product-overlay-during-intro-flutter-
+  /// template, never cleared) — so the moment the intro ends, [products] /
+  /// [activeProduct] can restore this exact data with no re-fetch. Notifies only
+  /// when the EXPOSED value actually changes (see [_applyAndNotifyIfExposedChanged]):
+  /// a same-shape refresh received while the intro is playing does not spuriously
+  /// notify, since the exposed value stays empty/null either way.
   @internal
   void handleSnapshot(List<LBProduct> products, {LBProduct? active}) {
-    final sameIds = _sameIds(_products, products);
-    final sameActive = _activeProduct?.id == active?.id;
+    _applyAndNotifyIfExposedChanged(() {
+      _products = List.of(products);
+      _activeProduct = active;
+    });
+  }
+
+  /// Suppress-product-overlay-during-intro-flutter-template — toggle whether the
+  /// opening MP4 preroll is currently playing. Host-driven via
+  /// `DefaultPlayerTemplate` (never called directly by app hosts). While `true`,
+  /// [products] / [activeProduct] expose empty/null regardless of the buffer;
+  /// flipping back to `false` restores the buffer INSTANTLY (no re-fetch, no wait
+  /// for the next products poll). No-op when the value does not actually change.
+  @internal
+  void setIntroPlaying(bool introPlaying) {
+    if (introPlaying == _introPlaying) return;
+    _applyAndNotifyIfExposedChanged(() {
+      _introPlaying = introPlaying;
+    });
+  }
+
+  /// Run [mutate], then `notifyListeners()` iff the EXPOSED [products] /
+  /// [activeProduct] differ before vs. after — diff-then-notify on the exposed
+  /// value (not the raw buffer), which is what makes both [handleSnapshot] and
+  /// [setIntroPlaying] behave correctly during the intro: a buffer-only change
+  /// while suppressed is silent, and un-suppressing with a non-empty buffer
+  /// always notifies exactly once.
+  void _applyAndNotifyIfExposedChanged(void Function() mutate) {
+    final visibleBefore = products;
+    final activeBeforeId = activeProduct?.id;
+    mutate();
+    final sameIds = _sameIds(visibleBefore, products);
+    final sameActive = activeBeforeId == activeProduct?.id;
     if (sameIds && sameActive) return;
-    _products = List.of(products);
-    _activeProduct = active;
     notifyListeners();
   }
 

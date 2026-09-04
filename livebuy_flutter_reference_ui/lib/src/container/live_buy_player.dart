@@ -70,6 +70,17 @@ String? videoSwitchToId(String eventName, Map<String, Object?> params) {
 bool shouldSyncAutoAdvance(String? to, String currentId) =>
     to != null && to != currentId;
 
+/// Host-reply-first / template-reply-fallback priority for the container's wrapper
+/// `setListener` closure (rb-flutter-dropin-container-event-forwarding, matching
+/// design.md D3 of add-flutter-dropin-container-event-forward-template verbatim).
+/// `hostReply` is `null` exactly when the host never installed `config.eventListener`
+/// (a configured host's actual reply — even a `passthrough` one — always wins).
+LBEventReply resolveContainerEventReply(
+  LBEventReply? hostReply,
+  LBEventReply templateReply,
+) =>
+    hostReply ?? templateReply;
+
 /// 組商品分享連結（issue 6）：在 [base]（= `channel.share_url`）後加上商品介紹時間 `t=<beginTime>`（秒）。
 /// Pure（無副作用）所以單元測 + host override 共用一份實作（iOS / Android `productShareURLString`
 /// parity）。Flutter reference-ui 無系統分享 plugin，故此 helper 供 host 自組連結後分享。
@@ -394,6 +405,30 @@ void Function(int eid, String keyword) buildEventJoinSend(
   };
 }
 
+// MARK: - 右上角鈕直接關閉 seam（rb-flutter-player-direct-close-button）
+//
+// Spec: `reference-ui-rendering/spec.md`
+//   § "Flutter LivebuyPlayerConfig.enableDirectCloseButton 旗標切換右上角鈕的直接關閉行為（Flutter）"
+// Parity: iOS `LivebuyPlayerPresenter.resolvedEnableDirectCloseButton` (rb-ios-player-direct-close-button).
+
+/// Resolves the per-instance `LivebuyPlayerConfig.enableDirectCloseButton` override against the
+/// SDK-global `LivebuySDK.enableDirectCloseButton` preference (`configValue ?? globalValue`). Pure
+/// / deterministic — no widget / SDK dependency of its own, so both call sites below hand it their
+/// own already-read values.
+///
+/// **Why this MUST be the ONE decision point.** Two independent things need to agree on the SAME
+/// resolved value or the UI lies about itself: [_LivebuyPlayerState._overlayContext] uses it to
+/// pick the header's icon (`showCloseIcon`), while `CollapsibleLivebuyPlayer`'s `_composedConfig`
+/// (in `collapsible_live_buy_player.dart`, which already imports this file) uses it to pick
+/// `onMinimize`'s actual behavior (collapse-to-floating vs. direct full close). Two independent
+/// copies of `configValue ?? globalValue` could drift the moment either caller changes shape —
+/// sharing this one function makes that structurally impossible.
+bool resolvedEnableDirectCloseButton({
+  required bool? configValue,
+  required bool globalValue,
+}) =>
+    configValue ?? globalValue;
+
 /// Per-instance wiring for [LivebuyPlayer]. Every interaction callback is OPTIONAL with a
 /// documented sensible default — a host that passes nothing still gets a working player
 /// ("不 wire 也能跑"); passing a callback REPLACES that one default. Mirrors iOS
@@ -410,6 +445,27 @@ class LivebuyPlayerConfig {
   /// deferred in-app PiP). The in-app floating-preview collapse is a HOST presentation
   /// concern, so a host that wants it overrides `onMinimize`.
   final VoidCallback? onMinimize;
+
+  /// Per-instance override of `LivebuySDK.enableDirectCloseButton`
+  /// (rb-flutter-player-direct-close-button, parity iOS `LivebuyPlayerConfig
+  /// .enableDirectCloseButton`). DEFAULT `null` — the resolved value falls back to the
+  /// SDK-global preference (`resolvedEnableDirectCloseButton(configValue:
+  /// enableDirectCloseButton, globalValue: LivebuySDK.enableDirectCloseButton)`, the SAME
+  /// pure function both [_LivebuyPlayerState._overlayContext] (renders the header's icon)
+  /// and `CollapsibleLivebuyPlayer._composedConfig` (decides `onMinimize`'s actual
+  /// behavior) call).
+  ///
+  /// Only meaningful when this player is presented through `CollapsibleLivebuyPlayer` (the
+  /// collapse-to-floating vs. direct-close distinction is that presenter's own collapsible
+  /// semantics): `false` (resolved default) → the top-right button shows the minimize
+  /// glyph and collapses to a floating preview, byte-identical to before this flag
+  /// existed; `true` → it shows a close glyph and directly triggers the EXACT SAME close
+  /// path the floating card's own close button uses, skipping the floating step entirely.
+  /// A `LivebuyPlayer` used directly (not wrapped by `CollapsibleLivebuyPlayer`) still
+  /// resolves this for the header's icon, but its `onMinimize` default
+  /// (`config.onMinimize ?? _controller.minimize`) is unaffected — there is no floating
+  /// widget concept to skip there.
+  final bool? enableDirectCloseButton;
 
   /// Tap the video to (un)mute. DEFAULT: `template.toggleMute()` (flips the presentation
   /// `header.muted` / side-rail — the single mute-icon truth, via the public `toggleMute()`
@@ -671,6 +727,7 @@ class LivebuyPlayerConfig {
   const LivebuyPlayerConfig({
     this.eventListener,
     this.onMinimize,
+    this.enableDirectCloseButton,
     this.onToggleMute,
     this.onToggleSubscribe,
     this.onTapRailItem,
@@ -726,6 +783,10 @@ class LivebuyPlayerConfig {
     return LivebuyPlayerConfig(
       eventListener: eventListener,
       onMinimize: onMinimize ?? this.onMinimize,
+      // rb-flutter-player-direct-close-button — must survive the collapsible presenter's
+      // re-composition (see the ⚠️ note above): dropping this would silently reset a
+      // host's per-instance override back to `null` on the `CollapsibleLivebuyPlayer` path.
+      enableDirectCloseButton: enableDirectCloseButton,
       onToggleMute: onToggleMute,
       onToggleSubscribe: onToggleSubscribe,
       onTapRailItem: onTapRailItem,
@@ -906,6 +967,13 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// Wiring copied verbatim from [_infoPanelOpen] above. Default false (off).
   bool _cleanMode = false;
 
+  /// Local mirror of `PlayerShellView`'s closed-chat finished-replay rail「更多」sheet open state
+  /// (rb-flutter-live-more-sheet-above-chat): the shell reports every open/close via
+  /// `onMoreMenuOpenChange`, and we pass this down to `FeedWinOverlayView` (via the design
+  /// context) to hide the chat feed while it is up. Wiring copied verbatim from [_cleanMode]
+  /// above. Default false (off).
+  bool _moreMenuOpen = false;
+
   /// Container-owned product LIST drawer open state (default CLOSED). The GOODS rail / bag tap
   /// opens it; the scrim / close button dismisses it (re-openable). Parity iOS
   /// `ProductSheetsModel.listPresented` (default false) — no longer auto-presents over the video.
@@ -973,7 +1041,9 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
           if (!active) rc.pipDidExit(); // PiP truly ended → deferred resume (iff intent recorded)
         }
       }
-      return await hostListener?.call(event) ?? LBEventReply.passthrough;
+      final hostReply = await hostListener?.call(event);
+      final templateReply = await LivebuyUI.forwardToTemplate(event);
+      return resolveContainerEventReply(hostReply, templateReply);
     });
     _loadCoreTheme();
     // rb-flutter-live-now-pill: `config.shopId == null` → build NO controller at all (zero
@@ -1191,6 +1261,13 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // `PlayerHeaderBarView` 的 `normalizeTitleScroll` 單一入口負責）。null（預設）→ 溢出即捲，
       // 既有 host 零改動。
       titleScroll: c.titleScroll,
+      // 右上角按鈕圖示 minimize ↔ close（rb-flutter-player-direct-close-button）：由這裡單一入口
+      // 解析（config 覆寫 ?? SDK-global 偏好），供 PlayerHeaderBarView 純呈現使用；`onMinimize`
+      // 的實際行為切換發生在 `CollapsibleLivebuyPlayer._composedConfig`（同一個純函式，永不分歧）。
+      showCloseIcon: resolvedEnableDirectCloseButton(
+        configValue: c.enableDirectCloseButton,
+        globalValue: LivebuySDK.enableDirectCloseButton,
+      ),
       // Mirror the shell's info-panel open state so the chat feed hides while it's up (parity
       // iOS rb-ios-info-panel-not-covered-by-chat).
       infoPanelOpen: _infoPanelOpen,
@@ -1201,6 +1278,11 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       cleanMode: _cleanMode,
       onCleanModeChange: (v) {
         if (v != _cleanMode) setState(() => _cleanMode = v);
+      },
+      // 「更多」選單開合（rb-flutter-live-more-sheet-above-chat）：接線比照上面既有 _cleanMode。
+      moreMenuOpen: _moreMenuOpen,
+      onMoreMenuOpenChange: (v) {
+        if (v != _moreMenuOpen) setState(() => _moreMenuOpen = v);
       },
       // Container-owned product LIST drawer open state (default closed; GOODS rail/bag tap opens
       // it via _routeRailItem; scrim/close dismisses) — parity iOS, no auto-present.

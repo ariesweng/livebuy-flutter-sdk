@@ -37,6 +37,22 @@ abstract final class LbTestKeys {
   static const Key railService = ValueKey('lb_rail_service');
   static const Key railGoods = ValueKey('lb_rail_goods');
 
+  /// 「更多」收合 pill (rb-flutter-live-replay-more-menu-and-video-info-live-copy):
+  /// shown by [OperationRailView] INSTEAD of the direct `share` / `serviceLink` pills
+  /// when `isFinishedLiveReplay == true` (a closed-chat finished live replay — the
+  /// Flutter surface that actually renders that state, NOT `LiveBottomBarView`; see
+  /// this change's `design.md`).
+  static const Key railMore = ValueKey('lb_rail_more');
+
+  /// The「更多」bottom sheet root (`player_shell_view.dart`'s `_RailMoreMenuSheet`).
+  static const Key railMoreSheet = ValueKey('lb_rail_more_sheet');
+
+  /// 「分享」slot inside the「更多」sheet.
+  static const Key railMoreShare = ValueKey('lb_rail_more_share');
+
+  /// 「客服」slot inside the「更多」sheet.
+  static const Key railMoreContact = ValueKey('lb_rail_more_contact');
+
   static const Key liveBagButton = ValueKey('lb_live_bag_button');
   static const Key liveCommentPill = ValueKey('lb_live_comment_pill');
   static const Key livePersonEdit = ValueKey('lb_live_person_edit');
@@ -52,7 +68,6 @@ abstract final class LbTestKeys {
   static const Key infoPanel = ValueKey('lb_info_panel');
   static const Key infoTabDetail = ValueKey('lb_info_tab_detail');
   static const Key infoTabNotice = ValueKey('lb_info_tab_notice');
-  static const Key infoPanelHome = ValueKey('lb_info_panel_home');
   static const Key infoFooterContact = ValueKey('lb_info_footer_contact');
   static const Key contactModal = ValueKey('lb_contact_modal');
   static const Key contactCancel = ValueKey('lb_contact_cancel');
@@ -250,8 +265,17 @@ abstract final class LbTestKeys {
   static const Key gridEndLabel = ValueKey('lb_grid_end_label');
   static const Key cardKindBadge = ValueKey('lb_card_kind_badge');
   static const Key cardLiveBadge = ValueKey('lb_card_live_badge');
-  static const Key cardDurationPill = ValueKey('lb_card_duration_pill');
   static const Key cardUpcomingOverlay = ValueKey('lb_card_upcoming_overlay');
+
+  /// 置頂 badge (`item.pin == 1`, rb-flutter-carousel-card-pin-viewers-duration-removal,
+  /// design R33): top-right pushpin/thumbtack icon, independent of the LIVE/UPCOMING/VOD
+  /// kind badge — all three kind states may carry it simultaneously.
+  static const Key cardPinBadge = ValueKey('lb_card_pin_badge');
+
+  /// LIVE-only viewer-count pill (`item.watchNum`, gated by `item.showPvNum == 1`,
+  /// rb-flutter-carousel-card-pin-viewers-duration-removal, design R33): sits to the
+  /// right of the LIVE tag inside [cardKindBadge].
+  static const Key cardViewerBadge = ValueKey('lb_card_viewer_badge');
 
   /// `product_card == 'below'` — the surface-styled product row drawn UNDER THE TITLE,
   /// at the very bottom of the card (rb-flutter-widget-product-card-modes; placement
@@ -313,6 +337,22 @@ abstract final class LbTestKeys {
 
   /// Per-item product-row thumbnail (seek-to-intro) key.
   static Key productRowThumb(int index) => ValueKey('lb_product_row_thumb_$index');
+
+  /// Per-item ProductDetailSheet main-photo gallery thumbnail-selector key
+  /// (rb-flutter-product-detail-image-gallery).
+  static Key productGalleryThumb(int index) => ValueKey('lb_product_gallery_thumb_$index');
+
+  /// Root of ProductDetailSheet's `.detail` main-photo gallery (INERT — a `KeyedSubtree`,
+  /// paints nothing) — lets tests target the swipeable main-image area directly (e.g. for a
+  /// horizontal drag gesture) without depending on the private gallery widget's type
+  /// (rb-flutter-product-detail-image-gallery).
+  static const Key productGallery = ValueKey('lb_product_gallery');
+
+  /// The gallery's MAIN (currently selected) photo specifically (INERT — a `KeyedSubtree`,
+  /// paints nothing) — disambiguates it from the thumbnail row's own `Image` widgets, which
+  /// would otherwise be indistinguishable by `find.byType(Image)` alone
+  /// (rb-flutter-product-detail-image-gallery).
+  static const Key productGalleryMainImage = ValueKey('lb_product_gallery_main_image');
 
   /// Per-item product-row name/detail-open key.
   static Key productRowDetail(int index) => ValueKey('lb_product_row_detail_$index');

@@ -103,7 +103,9 @@ final Color _bgSunken = colorFromHex('#F4F4F6') ?? const Color(0xFFF4F4F6);
 // MARK: - Fixed localized copy (static presentation strings — parity to iOS/Android)
 
 const String _panelTitle = '點播間說明';
+const String _panelTitleLive = '直播間說明';
 const String _infoTabTitle = '影片詳情';
+const String _infoTabTitleLive = '直播詳情';
 const String _noticeTabTitle = '公告';
 const String _systemNoticeLabel = '系統公告';
 const String _mallNoticeLabel = '商城公告';
@@ -111,8 +113,13 @@ const String _subscribeLabel = '訂閱通知';
 const String _subscribedLabel = '已訂閱';
 const String _shopSublinePrefix = '這裡是 ';
 const String _noticeEmptyPlaceholder = '目前沒有公告';
-const String _storefrontLabel = '前往商城首頁';
 const String _contactLabel = '與商家一對一對話';
+
+/// 「直播中」badge label (design `screens.jsx:1368` `直播中`).
+const String _liveBadgeLabel = '直播中';
+
+/// 「直播中」badge fill — `#F03246` (design literal, same red as the LIVE pill elsewhere).
+final Color _liveBadgeFill = colorFromHex('#F03246') ?? const Color(0xFFF03246);
 
 // MARK: - Shop-logo image gate (pure)
 
@@ -218,13 +225,32 @@ class VideoInfoPanelView extends StatelessWidget {
   /// `PlayerHeaderBarView` carries BOTH flags — do not conflate them when mirroring.
   final bool live;
 
+  /// Whether the video this panel describes is an ACTUAL live broadcast in progress
+  /// (rb-flutter-live-replay-more-menu-and-video-info-live-copy, design R32) — `true` →
+  /// panel title「點播間說明」→「直播間說明」, info tab label「影片詳情」→「直播詳情」, and the
+  /// detail tab's date line swaps from plain dim text to a red (`#F03246`)「直播中」badge + `|`
+  /// + the SAME [LBInfoTabFields.publishAt] value (no new field — see `design.md`).
+  ///
+  /// ⚠️ Named `isLiveBroadcast`, deliberately NOT `live` / `isLive` — [live] above is this
+  /// panel's own runtime IMAGE GATE (an unrelated concern; see its own dartdoc), and
+  /// `PlayerHeaderBarView.isLive` is a DIFFERENT widget's field. The host feeds the SAME
+  /// broadcast-live value that already drives `PlayerHeaderBarView(isLive: m.isLive, ...)`
+  /// (`PlayerShellModel.isLive` = `channel.liveStatus == 1`). Default `false` — every existing
+  /// call site (VOD) renders byte-identically.
+  final bool isLiveBroadcast;
+
   /// Host-wired tab-switch intent (the shell forwards `model.selectInfoTab`).
   /// `null` for demo / golden instances — the panel renders correctly action-free.
   final ValueChanged<LBInfoPanelTab>? onSelectTab;
 
-  /// Footer「前往商城首頁」(primary CTA) intent. There is NO core storefront
-  /// open-intent exit yet, so the host leaves this `null`: the button RENDERS for
-  /// design fidelity but stays inert (cross-layer follow-up).
+  /// ⚠️ SOURCE-COMPAT NO-OP (rb-flutter-live-replay-more-menu-and-video-info-live-copy, design
+  /// R32): the PRIMARY「前往商城首頁」footer button this used to drive is REMOVED — nothing in
+  /// this widget renders it or reads this field anymore. The PARAMETER itself is kept
+  /// (governance `docs/contract-governance.md` I6 / 情境F: a public constructor parameter is
+  /// part of this widget's back-compat surface even though the pixel it used to trigger is not
+  /// — removing the PIXEL is an ordinary reference-ui visual change, but removing the PARAMETER
+  /// would be an API break for any existing caller that names it explicitly). Any value passed
+  /// here is silently ignored. See `design.md` for the full I6/情境F applicability note.
   final VoidCallback? onOpenStorefront;
 
   /// Footer「與商家一對一對話」(ghost CTA) intent. The host wires this to the existing
@@ -262,6 +288,7 @@ class VideoInfoPanelView extends StatelessWidget {
     required this.systemNotice,
     required this.notice,
     this.live = false,
+    this.isLiveBroadcast = false,
     this.onSelectTab,
     this.onOpenStorefront,
     this.onContactMerchant,
@@ -326,14 +353,23 @@ class VideoInfoPanelView extends StatelessWidget {
     );
   }
 
-  // MARK: - Footer CTAs (VideoInfoSheet bottom buttons — present on BOTH tabs)
+  // MARK: - Footer CTA (VideoInfoSheet bottom button — present on BOTH tabs)
   //
-  // The two bottom action buttons the design pins below the tab content regardless
-  // of tab (`screens.jsx` `VideoInfoSheet`): a primary「前往商城首頁」and a ghost
-  //「與商家一對一對話」. Stacked full-width (gap 10, padding 0 18 18). Each forwards its
-  // host-wired intent and is still drawn (inert) when null. Glyphs use Material
-  // `Icons.*` (package convention; tofu in golden is the documented limitation — the
-  // label carries the meaning).
+  // The single bottom action button the design pins below the tab content regardless of tab
+  // (`screens.jsx` `VideoInfoSheet`): a ghost「與商家一對一對話」. Full-width (padding 0 18 18).
+  // Forwards its host-wired intent and is still drawn (inert) when null. Glyph uses Material
+  // `Icons.*` (package convention; tofu in golden is the documented limitation — the label
+  // carries the meaning).
+  //
+  // rb-flutter-live-replay-more-menu-and-video-info-live-copy (design R32): the PRIMARY
+  // 「前往商城首頁」button that used to sit above this one is REMOVED — per the user's 2026-09-03
+  // explicit decision (見 `proposal.md` "Decisions"). This is a PIXEL removal only (an ordinary
+  // reference-ui visual change, no governance flow needed for that half): the button, its
+  // `_storefrontLabel` const and `LbTestKeys.infoPanelHome` E2E key are all gone. The
+  // [onOpenStorefront] CALLBACK PARAMETER on the other hand is KEPT on the public constructor as
+  // a source-compat no-op (`docs/contract-governance.md` I6 / 情境F — removing a public
+  // constructor parameter, unlike removing the pixel it drove, is the kind of change that flow
+  // actually governs; see [onOpenStorefront]'s own dartdoc and `design.md`).
 
   Widget _footer() {
     return Padding(
@@ -341,17 +377,7 @@ class VideoInfoPanelView extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // INERT E2E keys via KeyedSubtree (no RenderObject → golden byte-identical).
-          KeyedSubtree(
-            key: LbTestKeys.infoPanelHome,
-            child: _footerButton(
-              glyph: Icons.storefront,
-              label: _storefrontLabel,
-              primary: true,
-              onTap: onOpenStorefront,
-            ),
-          ),
-          const SizedBox(height: 10),
+          // INERT E2E key via KeyedSubtree (no RenderObject → golden byte-identical).
           KeyedSubtree(
             key: LbTestKeys.infoFooterContact,
             child: _footerButton(
@@ -434,7 +460,7 @@ class VideoInfoPanelView extends StatelessWidget {
         alignment: Alignment.center,
         children: [
           Text(
-            _panelTitle,
+            isLiveBroadcast ? _panelTitleLive : _panelTitle,
             textAlign: TextAlign.center,
             style: TextStyle(
               color: theme.text,
@@ -461,7 +487,8 @@ class VideoInfoPanelView extends StatelessWidget {
           // INERT E2E key via KeyedSubtree (no RenderObject → golden byte-identical).
           KeyedSubtree(
             key: LbTestKeys.infoTabDetail,
-            child: _tab(LBInfoPanelTab.info, _infoTabTitle),
+            child: _tab(LBInfoPanelTab.info,
+                isLiveBroadcast ? _infoTabTitleLive : _infoTabTitle),
           ),
           // 公告 tab item is built ONLY when noticeCanOpen — NOT built at all
           // (not built-but-hidden/disabled) when it is false
@@ -529,8 +556,14 @@ class VideoInfoPanelView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // publishAt — small dim caption.
-          if (publishAt.isNotEmpty)
+          // publishAt — 直播中 badge + date (isLiveBroadcast) OR plain dim caption (VOD, existing).
+          // Both branches reuse the SAME `publishAt` value — no new date field (design R32,
+          // 見 `isLiveBroadcast` 自身 dartdoc + `design.md` "Decisions": the host is responsible
+          // for feeding an appropriate `publishAt` string for the live case; this widget never
+          // parses/strips it).
+          if (isLiveBroadcast)
+            _liveBadgeRow(publishAt)
+          else if (publishAt.isNotEmpty)
             Text(
               publishAt,
               style: TextStyle(color: _textDim, fontSize: 12 * theme.fontScale),
@@ -569,6 +602,38 @@ class VideoInfoPanelView extends StatelessWidget {
           _shopRow(),
         ],
       ),
+    );
+  }
+
+  /// The `isLiveBroadcast` date row — a red (`#F03246`)「直播中」badge + `|` + [publishAt]
+  /// (design `screens.jsx:1362-1373`). `publishAt` is rendered AS-IS (no parsing / stripping —
+  /// see the `isLiveBroadcast` field dartdoc); an empty value still draws the badge alone (no
+  /// crash, no placeholder text invented).
+  Widget _liveBadgeRow(String publishAt) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+          decoration: BoxDecoration(
+            color: _liveBadgeFill,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            _liveBadgeLabel,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 10 * theme.fontScale,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text('|', style: TextStyle(color: _textDim, fontSize: 12 * theme.fontScale)),
+        const SizedBox(width: 8),
+        Text(publishAt, style: TextStyle(color: _textDim, fontSize: 12 * theme.fontScale)),
+      ],
     );
   }
 

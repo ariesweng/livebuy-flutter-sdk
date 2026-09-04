@@ -337,6 +337,14 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
   /// `Stack` child so the viewer covers the open sheet. iOS parity (`zoomedDetail`).
   LBProductDetailState? _zoomedDetail;
 
+  /// The photo URL the lightbox should OVERRIDE with, if any (rb-flutter-product-detail-image-
+  /// gallery). Set alongside [_zoomedDetail] by whichever sheet's zoom badge fired:
+  /// `ProductDetailSheet`'s `.detail` gallery badge passes its CURRENTLY SELECTED photo;
+  /// `NotifyRestockSheet`'s badge (no gallery concept) always passes `null`. Forwarded verbatim
+  /// to `ProductImageZoomOverlay.overridePhotoURL` — `null` → the lightbox falls back to its
+  /// existing `resolveProductPhoto` resolution, unchanged from before this field existed.
+  String? _zoomedPhotoOverride;
+
   /// Dismiss latch for the add-to-cart needs-login gate (cart-needs-login-gate). Set true when the
   /// user taps 稍後再說 / 前往登入; re-armed (false) on each new add attempt so a fresh 401 re-presents
   /// the gate even though reference-ui cannot reset the template flag. Default false → the gate
@@ -538,8 +546,15 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
               // 退化階梯，兩份推導一分歧就會出現「主圖規格圖、燈箱商品圖」。無條件傳入（含由到貨通知
               // sheet 的 zoom badge 開啟時），與 iOS lead 行為一致。
               selectedSpec: m.selectedSpec,
+              // 相簿目前選中圖 override（rb-flutter-product-detail-image-gallery）——非空時優先於
+              // 上一行 `resolveProductPhoto` 的解析結果，讓燈箱顯示與開啟它的相簿同一頁。
+              // `NotifyRestockSheet`（無相簿概念）恆灌 `null`，行為與本 change 之前不變。
+              overridePhotoURL: _zoomedPhotoOverride,
               live: widget.live,
-              onClose: () => setState(() => _zoomedDetail = null),
+              onClose: () => setState(() {
+                _zoomedDetail = null;
+                _zoomedPhotoOverride = null;
+              }),
             ),
           ),
 
@@ -618,7 +633,11 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
         live: widget.live,
         onToggleNotice: () => _handleToggleNotice(detail.productId),
         onDismiss: _handleDismissDetail,
-        onZoomImage: () => setState(() => _zoomedDetail = detail),
+        // No gallery concept here — always clear any override (rb-flutter-product-detail-image-gallery).
+        onZoomImage: () => setState(() {
+          _zoomedDetail = detail;
+          _zoomedPhotoOverride = null;
+        }),
       );
     }
     return ProductDetailSheet(
@@ -689,7 +708,12 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
       // removed the「返回」breadcrumb affordance) — `showBackButton` omitted (widget default
       // `false`), `onDismiss` always `_handleDismissDetail`.
       onDismiss: _handleDismissDetail,
-      onZoomImage: () => setState(() => _zoomedDetail = detail),
+      // 帶入相簿目前選中圖的 URL（可能為 null，rb-flutter-product-detail-image-gallery）——
+      // `.addToCart` 精簡卡的 badge 恆傳 null，`.detail` 相簿的 badge 傳目前選中頁。
+      onZoomImage: (photoUrl) => setState(() {
+        _zoomedDetail = detail;
+        _zoomedPhotoOverride = photoUrl;
+      }),
     );
   }
 

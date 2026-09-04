@@ -155,4 +155,38 @@ class LivebuyUI {
 
   /// The current host options (null if not installed or no options were passed).
   static LBUIOptions? get hostOptions => _hostOptions;
+
+  /// PUBLIC forwarding accessor (`add-flutter-dropin-container-event-forward-template`):
+  /// hand one unified [LBSdkEvent] to the currently-attached template and get
+  /// back its [LBEventReply], WITHOUT calling `LivebuySDK.setListener` again
+  /// (which would itself replace the caller's own listener — `setListener` is
+  /// a single global slot, `flutter/lib/src/livebuy_sdk.dart`).
+  ///
+  /// This is the template-layer half of the (separate, not-yet-applied)
+  /// reference-ui-layer change `rb-flutter-dropin-container-event-forwarding`:
+  /// the drop-in container's own wrapper listener (installed via its own
+  /// `LivebuySDK.setListener(...)` call, which replaces this attachment's
+  /// subscription) is intended to call this from inside its handler, e.g.:
+  ///
+  /// ```dart
+  /// LivebuySDK.setListener((event) async {
+  ///   final hostReply = await hostListener?.call(event);
+  ///   final templateReply = await LivebuyUI.forwardToTemplate(event);
+  ///   return hostReply ?? templateReply;
+  /// });
+  /// ```
+  ///
+  /// (host-reply-first, template-reply-fallback — design D3). This change does
+  /// NOT itself edit `flutter-reference-ui` code; the snippet above is
+  /// illustrative only.
+  ///
+  /// Headless-safe: when [install] has never been called, or [uninstall] has
+  /// run since the last [install], returns [LBEventReply.passthrough] and
+  /// produces no side effect — the same "no opinion" fallback a host that
+  /// never installs a template already sees today.
+  static Future<LBEventReply> forwardToTemplate(LBSdkEvent event) {
+    final attachment = _attachment;
+    if (attachment == null) return Future.value(LBEventReply.passthrough);
+    return attachment.handleEvent(event);
+  }
 }

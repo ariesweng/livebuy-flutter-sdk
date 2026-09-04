@@ -85,6 +85,18 @@ class TemplateAttachment {
   /// True while a bridge subscription is active.
   bool get isAttached => _attached;
 
+  /// PUBLIC forwarding seam (`add-flutter-dropin-container-event-forward-template`):
+  /// lets a second, external `LivebuySDK.setListener` caller (e.g. a reference-ui
+  /// drop-in container's own wrapper listener, which necessarily REPLACED this
+  /// attachment's bridge subscription — `setListener` is a single global slot)
+  /// hand one event back to this attachment's template without re-subscribing.
+  /// Delegates unconditionally to the same private router [_onSdkEvent] the live
+  /// bridge subscription itself uses (design D1 — "one router, two entry
+  /// points"): does NOT gate on [_attached] / [isAttached], so it still routes
+  /// after [detach] (the instance method is independent of the bridge
+  /// subscription's lifecycle; only the subscription itself is torn down).
+  Future<LBEventReply> handleEvent(LBSdkEvent event) => _onSdkEvent(event);
+
   /// Route one unified event to the Default template. Notification-type events
   /// reply `acknowledge` (a no-op for the SDK) so the template's default UI side
   /// effect coexists with the host's primary interaction flow.

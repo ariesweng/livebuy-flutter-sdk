@@ -15,15 +15,17 @@ import '../testing/lb_test_keys.dart';
 //   Design source: `design/templates/minimal/moments.jsx`
 //     · `LBLiveChatStream` (bottom-anchored merged stream, newest at the tail,
 //        tail-retain N=7, top fade mask)
-//     · `LBChatLine`       (name-colored avatar + translucent dark bubble)
-//     · `LBEventJoinLine`  (rb-flutter-loading-announce-restyle, design re-sync
-//        `c3c98733`: restyled to the shared 主播留言 `LBChatLine` bubble language —
-//        crown avatar slot + accent-filled bubble with a 主播名 +「主播」badge
-//        header + keyword copy + 加入活動 CTA / 已參加 moved BELOW the text —
-//        the ONLY interactive row)
-//     · `LBActivityLine`   (tier-styled pill, ascending emphasis: .join lowest-key
-//        / .purchase dark+accent border / .win accent-gradient highlight — now
-//        surfaced ONLY via `ActivityToastView`, see below)
+//     · `LBChatLine`       (name-colored avatar + translucent dark bubble; host / AI /
+//        reply rows share the SAME neutral bubble + an accent-solid name badge +
+//        unconditional colon — rb-flutter-chat-message-line-restyle, design R30)
+//     · `LBEventJoinLine`  (rb-flutter-chat-message-line-restyle, design re-sync R30:
+//        crown avatar slot + NEUTRAL bubble (was accent-filled as of the 2026-07-02
+//        `c3c98733` restyle) with an accent-solid name badge + colon header + keyword
+//        copy + 立即參加 CTA (accent-filled, full-width) / 已參加 moved BELOW the
+//        text — the ONLY interactive row)
+//     · `LBActivityLine`   (tier-styled pill: .join / .purchase / .win now FIXED
+//        semantic colors independent of `theme.accent` — R30; .browse / .intro
+//        unchanged — now surfaced ONLY via `ActivityToastView`, see below)
 //   And `live-chrome.jsx` `LBLiveChatOverlay` / `sdk-components.jsx`
 //   `LBPChatOverlay` (the same avatar + bubble language).
 //
@@ -33,12 +35,13 @@ import '../testing/lb_test_keys.dart';
 //
 //   • LBFeedKind.chat       → _ChatLine     — name-colored avatar + translucent dark
 //                                            bubble carrying `userName：text`.
-//   • LBFeedKind.eventJoin  → _EventJoinLine — restyled to the shared 主播留言 bubble
-//                                            language (rb-flutter-loading-announce-
-//                                            restyle): crown avatar slot + accent-
-//                                            filled bubble (主播名 +「主播」badge +
-//                                            keyword copy + 加入活動 CTA / 已參加
-//                                            below the text). The ONLY interactive
+//   • LBFeedKind.eventJoin  → _EventJoinLine — shares the 主播留言 bubble language
+//                                            (rb-flutter-chat-message-line-restyle,
+//                                            design R30): crown avatar slot + NEUTRAL
+//                                            bubble + accent-solid name badge + colon
+//                                            header + keyword copy + 立即參加 CTA
+//                                            (accent-filled, full-width) / 已參加
+//                                            below the text. The ONLY interactive
 //                                            row.
 //
 // (onsale 商品開賣推播已改走 host 主播聊天氣泡（template `appendChat(isHost:true)`），
@@ -96,6 +99,15 @@ const Color _chatBubbleFill = Color(0x6B000000); // 0x6B ≈ 0.42 alpha
 /// Chat / activity avatar-slot dark glyph `#3a2e25` (reads on the pastel avatars +
 /// the `.join` white slot — updated unified ACT_SLOT, parity iOS/Android).
 const Color _avatarGlyphColor = Color(0xFF3A2E25);
+
+/// `_HostChatLine`'s non-host nickname text color `#FBB0B7` (rb-flutter-chat-
+/// message-line-restyle, design R30) — used ONLY when a `_HostChatLine` row has
+/// `isHost == false` (the `isAI`-only / `replyText`-only edge case that still
+/// routes to this widget). Scope is deliberately narrow: `_ChatLine`'s own viewer
+/// nickname prefix (`_onGlassDim`) is OUT OF R30's scope and MUST NOT read this
+/// constant — see `design.md` (this change) Decision 2 for why the two paths stay
+/// on different colors even though the design source treats them as one branch.
+const Color _hostChatLineNonHostNickname = Color(0xFFFBB0B7);
 
 /// Event-join 已參加 chip fill `rgba(255,255,255,0.2)` (LBEventJoinLine restyle,
 /// rb-flutter-loading-announce-restyle — raised from the pre-restyle 0.16 now that the
@@ -170,8 +182,9 @@ const bool _showFeedAvatarSlot = false;
 /// card labels / avatar glyph) are excluded (parity Android / RN).
 const double _chatLineHeight = 1.22;
 
-/// 加入活動 CTA label.
-const String _joinLabel = '加入活動';
+/// Un-joined event-join CTA label (rb-flutter-chat-message-line-restyle, design R30:
+/// changed from `'加入活動'` — same single call site, value updated in place).
+const String _joinLabel = '立即參加';
 
 /// 已參加 joined-state label.
 const String _joinedLabel = '已參加';
@@ -882,9 +895,15 @@ class _ChatLine extends StatelessWidget {
 // MARK: - _HostChatLine — 角色版型聊天列 (chat-message-taxonomy ⑤)
 //
 // 群組① 真正的聊天：主播留言 / 主播回覆 / AI 回覆，以**版型**而非顏色區分（parity iOS `LBChatLineRow`
-// hasRole 分支 / RN `HostChatRow`）。24px accent 圖示軌（host = crown、AI = sparkles）+ accent 氣泡
-// （header 名字 +「主播」實心標 /「AI」外框標、回覆引用框、訊息本文）。Flutter 用 Material Icons。
-// 引用框只顯引用文字（後端無引用者名稱）。
+// hasRole 分支 / RN `HostChatRow`）。24px accent 圖示軌（host = crown、AI = sparkles，見下方「圖示 /
+// 頭像 slot 隱藏」條款，目前不渲染）+ **中性深色氣泡**（rb-flutter-chat-message-line-restyle，design
+// re-sync `claude-design-sync.md` R30，2026-09-03：與 `_ChatLine` 共用同一個 `_chatBubbleFill` 底色，
+// 取代先前 `Color.alphaBlend(theme.accent, ...)` 的 accent 暈染 — 主播 / AI 的角色差異化改**只靠 bubble
+// 內容本身**，不再靠氣泡染色）。header：`isHost` 時渲染**一個** accent 色底名牌（重用 `_roleTag(solid:
+// true)`，內容 = 暱稱本身，取代先前並列的純文字暱稱 +「主播」固定文案標）；非 host 時暱稱維持純文字但改
+// 固定粉色 `#FBB0B7`；`isAI` 時額外掛「AI」外框標（不變）；header 尾端無條件加全形冒號「：」（R30 新增，
+// 先前只有一般觀眾留言 `_ChatLine` 有）。回覆引用框只顯引用文字（後端無引用者名稱）+ 訊息本文。Flutter 用
+// Material Icons。
 
 class _HostChatLine extends StatelessWidget {
   final ReferenceUITheme theme;
@@ -918,12 +937,13 @@ class _HostChatLine extends StatelessWidget {
           _roleIconSlot(),
           const SizedBox(width: 8),
         ],
-        // accent 氣泡（黑底 + accent 暈染，同 activity wash 慣例）。
+        // 中性深色氣泡（rb-flutter-chat-message-line-restyle，design R30：與 _ChatLine
+        // 共用同一個 _chatBubbleFill 底色，取代先前的 accent 暈染——主播/AI 的角色差異化
+        // 改只靠 bubble 內容本身，不再靠氣泡染色）。
         Flexible(
           child: Container(
             decoration: BoxDecoration(
-              color: Color.alphaBlend(
-                  theme.accent.withValues(alpha: 0.18), _activityBubbleBase),
+              color: _chatBubbleFill,
               borderRadius: BorderRadius.circular(_bubbleRadius),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
@@ -931,24 +951,37 @@ class _HostChatLine extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                // header：名字 +「主播」/「AI」標（以版型而非顏色區分）。
+                // header（R30）：isHost → 一個 accent 色底名牌（重用 _roleTag(solid:
+                // true)，內容 = 暱稱本身，取代先前並列的純文字暱稱 +「主播」固定文案標）；
+                // 非 host（僅 isAI 或僅 replyText 觸發角色版型的邊界情況）→ 暱稱維持純文字
+                // 但改固定粉色 _hostChatLineNonHostNickname；isAI 額外掛「AI」外框標（不
+                // 變）；尾端無條件冒號「：」，緊接在名牌/暱稱 + AI 標之後、無多餘間距——
+                // SizedBox(5) 只在 AI 標會被組裝時才插入，避免名牌/暱稱與冒號之間留白。
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    if (hasName)
+                    if (isHost && hasName)
+                      _roleTag(theme, userName, solid: true)
+                    else if (hasName)
                       Text(
                         userName,
                         style: TextStyle(
-                          color: _onGlass,
+                          color: _hostChatLineNonHostNickname,
                           fontSize: 10.5 * theme.fontScale,
-                          fontWeight: isHost ? FontWeight.bold : FontWeight.w600,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    if (hasName) const SizedBox(width: 5),
-                    if (isAI)
-                      _roleTag(theme, 'AI', solid: false)
-                    else if (isHost)
-                      _roleTag(theme, '主播', solid: true),
+                    if (hasName && isAI) const SizedBox(width: 5),
+                    if (isAI) _roleTag(theme, 'AI', solid: false),
+                    if (hasName || isAI)
+                      Text(
+                        '：',
+                        style: TextStyle(
+                          color: _onGlass,
+                          fontSize: 11.5 * theme.fontScale,
+                          height: _chatLineHeight,
+                        ),
+                      ),
                   ],
                 ),
                 // 引用框（主播回覆 / AI 回覆）：左側 accent 直條 + 暗底，只顯引用文字。
@@ -1098,19 +1131,34 @@ class _PinnedBanner extends StatelessWidget {
 
 // MARK: - _EventJoinLine — event-join row (LBEventJoinLine)
 //
-// rb-flutter-loading-announce-restyle (design re-sync `c3c98733`): `LBEventJoinLine`
-// now shares the EXACT SAME bubble language as the 主播留言 bubble (`_HostChatLine` /
-// design `LBChatLine` `isHost` branch) instead of its own accent-wash bordered card.
-// Layout: a 24dp round accent avatar SLOT OUTSIDE the bubble (shared icon rail, SAME
-// crown glyph as `_HostChatLine`'s 主播 avatar — the design's `LBEventJoinLine` SVG path
-// is byte-identical to `LBChatLine`'s `isHost && !isAI` avatar path, NOT a sparkle), then
-// a solid-accent bubble (`color: theme.accent`, no wash / no border — the design's
-// `{ ...ACT_BUBBLE, background: accent }` override, same formula `LBChatLine` uses for
-// its `isHost` branch) containing, top to bottom: a header row (主播名 + 「主播」badge,
-// reusing `_roleTag` — identical to `_HostChatLine`'s header), the 2-line keyword copy,
-// and — only when `hasCTA` — a CTA block on ITS OWN row below the copy (加入活動 / 已參加).
-// The ONLY interactive row — its tap is FORWARDED via `onTap` (host-wired); this layer
-// never joins itself.
+// rb-flutter-chat-message-line-restyle (design re-sync `claude-design-sync.md` R30,
+// 2026-09-03): `LBEventJoinLine` again shares the EXACT SAME bubble language as the
+// 主播留言 bubble (`_HostChatLine` / design `LBChatLine` `isHost` branch), now updated
+// a step further — the bubble itself went from solid-accent (the 2026-07-02
+// `rb-flutter-loading-announce-restyle` version) to the SAME NEUTRAL `_chatBubbleFill`
+// `_HostChatLine` uses (design comment: 「與主播留言相同的灰底氣泡」). Layout: a 24dp
+// round accent avatar SLOT OUTSIDE the bubble (shared icon rail, SAME crown glyph as
+// `_HostChatLine`'s 主播 avatar — the design's `LBEventJoinLine` SVG path is byte-
+// identical to `LBChatLine`'s `isHost && !isAI` avatar path, NOT a sparkle), then a
+// neutral bubble (`color: _chatBubbleFill`, MUST NOT be `theme.accent` anymore)
+// containing, top to bottom: a header row (ONE accent-solid name badge reusing
+// `_roleTag(theme, hostName, solid: true)` — identical formula to `_HostChatLine`'s
+// `isHost` badge, MUST NOT be a separate plain-text name + fixed-label 「主播」 badge
+// anymore — the 2026-07-02 restyle's custom white-0.22 badge is GONE, see below for
+// why reuse is now safe — then an unconditional full-width colon「：」), the 2-line
+// keyword copy, and — only when `hasCTA` — a CTA block on ITS OWN row below the copy
+// (立即參加 / 已參加). The ONLY interactive row — its tap is FORWARDED via `onTap`
+// (host-wired); this layer never joins itself.
+//
+// Why `_roleTag(solid: true)` reuse is safe NOW (it was NOT safe as of 2026-07-02):
+// `rb-flutter-loading-announce-restyle`'s `design.md` recorded that `_roleTag(solid:
+// true)` fills with `theme.accent`, which would be ZERO-CONTRAST against THAT
+// version's bubble (also solid `theme.accent`) — hence the custom white-0.22 badge.
+// R30 changes the bubble's own fill to neutral `_chatBubbleFill`, so the accent-solid
+// badge reads correctly against it (same situation `_HostChatLine`'s own `isHost`
+// badge is in). The old constraint was conditional on the bubble ALSO being accent —
+// that premise no longer holds, so reuse is safe and avoids duplicating the same
+// "accent pill with dynamic label" formula twice.
 
 class _EventJoinLine extends StatelessWidget {
   final ReferenceUITheme theme;
@@ -1137,9 +1185,11 @@ class _EventJoinLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Shared message-row language (ACT_ROW gap 8, same as _ActivityLine / _HostChatLine): a
-    // 24dp round accent avatar SLOT OUTSIDE the bubble, then a SOLID-accent bubble (no wash /
-    // border) wrapping a header + copy + (optional) CTA block below — same Column shape as
-    // _HostChatLine (rb-flutter-loading-announce-restyle, design re-sync `c3c98733`).
+    // 24dp round accent avatar SLOT OUTSIDE the bubble, then a NEUTRAL bubble (R30 — no
+    // longer solid-accent) wrapping a header + copy + (optional) CTA block below — same
+    // Column shape as _HostChatLine (rb-flutter-chat-message-line-restyle, design re-sync
+    // `claude-design-sync.md` R30, superseding the 2026-07-02 `c3c98733` solid-accent version).
+    final hasHostName = hostName.isNotEmpty;
     return Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1151,57 +1201,46 @@ class _EventJoinLine extends StatelessWidget {
           _crownSlot(),
           const SizedBox(width: 8),
         ],
-        // Solid-accent bubble (design `background: accent` — the SAME flat-fill formula as
-        // _HostChatLine's 主播 bubble, no alphaBlend wash / no border).
+        // Neutral bubble (R30 — MUST NOT be `theme.accent` anymore; same
+        // `_chatBubbleFill` `_HostChatLine` / `_ChatLine` use).
         Flexible(
           child: Container(
             decoration: BoxDecoration(
-              color: theme.accent,
+              color: _chatBubbleFill,
               borderRadius: BorderRadius.circular(_bubbleRadius),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                // header: 主播名 + 「主播」badge. NOT `_roleTag(solid: true)` — that variant fills
-                // with `theme.accent`, which would be invisible against this bubble's OWN solid
-                // `theme.accent` background (accent-on-accent, zero contrast; `_roleTag`'s
-                // accent fill only reads correctly against `_HostChatLine`'s darker
-                // accent-wash-over-black bubble). Design `LBEventJoinLine` badge is a dedicated
-                // white 0.22 pill (`background: 'rgba(255,255,255,0.22)'`), matching iOS/RN's
-                // local badge and Android's `RoleTag(solid: true)` (white-based there, not
-                // accent-based).
-                Row(
+            // `IntrinsicWidth` so the bubble keeps shrink-wrapping to its widest
+            // content (header / keyword copy — design's bubble is `display:
+            // inline-block`, sized by content, NOT by the row's full available
+            // width), while the CTA's `SizedBox(width: double.infinity)` below
+            // fills THAT computed intrinsic width (design `width:'100%'` is
+            // relative to the bubble's own containing block, not the screen) —
+            // without this wrapper the CTA would stretch the whole bubble out to
+            // whatever width `Flexible` makes available, even for a short keyword.
+            child: IntrinsicWidth(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  // header (R30): ONE accent-solid name badge, reusing `_roleTag(solid:
+                  // true)` — safe now that the bubble above is neutral (see class doc
+                  // comment for why this reverses the 2026-07-02 restyle's "do not
+                  // reuse" call) — plus an unconditional colon「：」 immediately after
+                  // (no gap, mirrors the design's adjacent `<span>` elements).
+                  Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    Text(
-                      hostName,
-                      style: TextStyle(
-                        color: _onGlass,
-                        fontSize: 10.5 * theme.fontScale,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                    Container(
-                      height: 14,
-                      padding: const EdgeInsets.symmetric(horizontal: 5),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.22),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        '主播',
+                    if (hasHostName) _roleTag(theme, hostName, solid: true),
+                    if (hasHostName)
+                      Text(
+                        '：',
                         style: TextStyle(
                           color: _onGlass,
-                          fontSize: 9 * theme.fontScale,
-                          fontWeight: FontWeight.w800,
-                          height: 1,
+                          fontSize: 11.5 * theme.fontScale,
+                          height: _chatLineHeight,
                         ),
                       ),
-                    ),
                   ],
                 ),
                 // 2-line keyword copy (full prebuilt text, NOT split). No extra width cap — the
@@ -1257,28 +1296,37 @@ class _EventJoinLine extends StatelessWidget {
                               ],
                             ),
                           )
-                        : GestureDetector(
-                            key: LbTestKeys.eventJoinCta,
-                            onTap: onTap,
-                            child: Container(
-                              decoration: const BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.all(Radius.circular(999)),
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 14, vertical: 6),
-                              child: Text(
-                                _joinLabel,
-                                style: TextStyle(
+                        // 立即參加 CTA（R30）: accent-filled full-width pill, white text —
+                        // flipped from the prior white-filled, accent-text, center-fit
+                        // button (padding also tightened v:6→4 per design literal value).
+                        : SizedBox(
+                            width: double.infinity,
+                            child: GestureDetector(
+                              key: LbTestKeys.eventJoinCta,
+                              onTap: onTap,
+                              child: Container(
+                                alignment: Alignment.center,
+                                decoration: BoxDecoration(
                                   color: theme.accent,
-                                  fontSize: 12 * theme.fontScale,
-                                  fontWeight: FontWeight.w800,
+                                  borderRadius:
+                                      const BorderRadius.all(Radius.circular(999)),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 4),
+                                child: Text(
+                                  _joinLabel,
+                                  style: TextStyle(
+                                    color: _onGlass,
+                                    fontSize: 12 * theme.fontScale,
+                                    fontWeight: FontWeight.w800,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                   ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -1304,20 +1352,37 @@ class _EventJoinLine extends StatelessWidget {
 // MARK: - _ActivityLine — tier-styled activity row (LBActivityLine)
 //
 // Mirrors the UPDATED `moments.jsx` `LBActivityLine`: every row shares one unified
-// language — a 24×24 round icon SLOT + a rounded-12 bubble — and tiers differ ONLY
-// by accent-wash intensity + icon (emphasis ASCENDING):
-//   • .join     — 進場: lowest-key. slot 白 0.16 / person-add icon 白 0.85; bubble 黑
-//                 0.32, NO accent; text 白 0.9, medium (w500).
-//   • .purchase — 購買: slot accent / white bag icon; bubble 黑 0.46 + accent 0.13
-//                 wash, w500.
-//   • .intro    — 介紹: slot accent / white megaphone icon; bubble 黑 0.46 + accent
-//                 0.18 wash, w500 (商品開始介紹 — 強調介於購買與中獎之間).
-//   • .win      — 中獎: slot accent / white trophy icon; bubble 黑 0.46 + accent 0.23
-//                 wash + 細框 accent 0.4 + 極淡光暈 accent 0.2, bold (w700). NO 🎉.
+// language — a 24×24 round icon SLOT + a rounded-12 bubble. `join` / `purchase` /
+// `win` now use FIXED semantic colors (rb-flutter-chat-message-line-restyle, design
+// re-sync `claude-design-sync.md` R30, 2026-09-03) that do NOT vary with the
+// merchant's `theme.accent` — the accent-wash formula those three tiers used to
+// share is gone for them. `browse` / `intro` are OUT OF R30's scope (the design
+// canvas has no `browse` diff this round, and `intro` is a four-platform-only
+// extension tier with no design-canvas counterpart at all) and keep their prior
+// accent-relative styling untouched:
+//   • .join     — 進場: fixed `rgba(232,108,108,0.72)` coral bubble (R30, was black
+//                 0.32 shared with .browse), NO accent involvement; slot 白 0.16 /
+//                 person-add icon 白 0.85 (unchanged, hidden dead code — see
+//                 `_showFeedAvatarSlot`); text 白 0.9, medium (w500).
+//   • .browse   — 觀眾選購: UNCHANGED by R30 — slot 白 0.16 / magnifier icon 白
+//                 0.85; bubble 黑 0.32, NO accent; text 白 0.9, medium (w500).
+//   • .purchase — 購買: fixed `rgba(45,212,191,0.72)` teal bubble (R30, was black
+//                 0.46 + accent 0.13 wash), NO accent involvement; slot accent /
+//                 white bag icon (unchanged, hidden dead code); w500.
+//   • .intro    — 介紹: UNCHANGED by R30 — slot accent / white megaphone icon;
+//                 bubble 黑 0.46 + accent 0.18 wash, w500 (商品開始介紹 — 強調介於
+//                 購買與中獎之間; four-platform extension, no design-canvas branch).
+//   • .win      — 中獎: fixed `rgba(240,50,70,0.72)` red bubble (R30, was black 0.46
+//                 + accent 0.23 wash) — but the hairline `border` (accent 0.4) and
+//                 the faint `boxShadow` glow (accent 0.2) STILL follow `theme.accent`
+//                 (design left those alone, only the bubble fill went fixed); slot
+//                 accent / white trophy icon (unchanged, hidden dead code); bold
+//                 (w700). NO 🎉.
 //
-// The design's accent wash `linear-gradient(accentXX,accentXX)` over `rgba(0,0,0,0.46)`
-// = a flat accent overlay (alpha XX) on a 0.46 black base — modelled as a black-base
-// rounded box with an accent-tinted overlay (`Color.alphaBlend`). Parity iOS/Android/RN.
+// The `intro` tier's accent wash is still the design's `linear-gradient(accentXX,
+// accentXX)` over `rgba(0,0,0,0.46)` = a flat accent overlay (alpha XX) on a 0.46
+// black base — modelled as a black-base rounded box with an accent-tinted overlay
+// (`Color.alphaBlend`, `_washBubble()`). Parity iOS/Android/RN.
 
 class _ActivityLine extends StatelessWidget {
   final ReferenceUITheme theme;
@@ -1425,25 +1490,41 @@ class _ActivityLine extends StatelessWidget {
     }
   }
 
-  /// Rounded-12 bubble decoration, accent-wash by tier.
+  /// Rounded-12 bubble decoration. `join` / `purchase` / `win` are FIXED semantic
+  /// colors (rb-flutter-chat-message-line-restyle, design R30) that do NOT read
+  /// `theme.accent` for their fill; `browse` / `intro` are untouched by R30 and stay
+  /// accent-relative (see the class doc comment above for the full per-tier table).
   BoxDecoration get _bubbleDecoration {
     switch (tier) {
       case LBActivityTier.join:
+        // 進場 — fixed coral `rgba(232,108,108,0.72)` (R30), no longer shares
+        // .browse's black 0.32 / no longer varies with theme.accent.
+        return BoxDecoration(
+          color: const Color(0xB8E86C6C), // 0xB8 ≈ 0.72 alpha
+          borderRadius: BorderRadius.circular(_bubbleRadius),
+        );
       case LBActivityTier.browse:
-        // 進場 / 觀眾選購（browse）— black 0.32, no accent wash（最低調）。
+        // 觀眾選購（browse）— UNCHANGED by R30: black 0.32, no accent wash（最低調）。
         return BoxDecoration(
           color: const Color(0x52000000), // 0x52 ≈ 0.32 alpha
           borderRadius: BorderRadius.circular(_bubbleRadius),
         );
       case LBActivityTier.purchase:
-        return _washBubble(0.13); // accent22
+        // 購買 — fixed teal `rgba(45,212,191,0.72)` (R30), replaces the prior
+        // accent 0.13 wash; no longer varies with theme.accent.
+        return BoxDecoration(
+          color: const Color(0xB82DD4BF), // 0xB8 ≈ 0.72 alpha
+          borderRadius: BorderRadius.circular(_bubbleRadius),
+        );
       case LBActivityTier.intro:
+        // UNCHANGED by R30 — four-platform extension tier, no design-canvas branch.
         return _washBubble(0.18); // accent2e
       case LBActivityTier.win:
-        // 中獎 — accent 0.23 wash + hairline accent border + faint glow. NO 🎉.
+        // 中獎 — fixed red `rgba(240,50,70,0.72)` bubble fill (R30, replaces the
+        // prior accent 0.23 wash); hairline border + faint glow STILL follow
+        // theme.accent (design left those alone). NO 🎉.
         return BoxDecoration(
-          color: Color.alphaBlend(
-              theme.accent.withValues(alpha: 0.23), _activityBubbleBase),
+          color: const Color(0xB8F03246), // 0xB8 ≈ 0.72 alpha
           borderRadius: BorderRadius.circular(_bubbleRadius),
           border: Border.all(
             color: theme.accent.withValues(alpha: 0.4),

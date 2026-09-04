@@ -1,6 +1,6 @@
 name: livebuy_flutter_reference_ui
 description: Reference-UI (drop-in default pixel) layer for the Livebuy Flutter SDK.
-version: 2.0.1
+version: 2.0.2
 homepage: https://github.com/livebuy/livebuy-sdk/tree/main/flutter-reference-ui
 # Internal monorepo package consumed via a path dependency on the template layer
 # (`livebuy_flutter_ui`); not published to pub.dev.
@@ -26,7 +26,7 @@ dependencies:
     git:
       url: https://github.com/ariesweng/livebuy-flutter-sdk.git
       path: livebuy_flutter_ui
-      ref: v2.0.1
+      ref: v2.0.2
   # rb-flutter-widget-card-looping-preview: the widget card's `preview` looping animation
   # (parity iOS AVFoundation / Android media3 / RN react-native-video). A federated Flutter
   # plugin (auto-registers on iOS/Android in consumer apps); built ONLY on the host-runtime

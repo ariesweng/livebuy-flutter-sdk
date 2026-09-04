@@ -191,7 +191,7 @@ class CarouselView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (_showsHeader) _header(),
-          _cardRow(),
+          _cardRow(context),
         ],
       ),
     );
@@ -286,7 +286,7 @@ class CarouselView extends StatelessWidget {
   /// cards live behind the host's REAL horizontal scroll). Same hidden-sizer + clip
   /// approach as the iOS over-wide card-row lesson; NO RenderFlex overflow, fully
   /// deterministic.
-  Widget _cardRow() {
+  Widget _cardRow(BuildContext context) {
     // Turnkey (`scrollable`) → ALL videos; windowed (default) → the first [maxCards].
     final cards = scrollable ? videos : _visible;
     // No videos → no row (defensive; the live / seed path always has cards).
@@ -316,7 +316,7 @@ class CarouselView extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: SizedBox(
-          height: _cardHeight,
+          height: _cardHeight(context),
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -344,7 +344,7 @@ class CarouselView extends StatelessWidget {
         child: Stack(
           children: [
             // Text-free height sizer — drives the row height only (= card height).
-            SizedBox(height: _cardHeight, width: cardWidth),
+            SizedBox(height: _cardHeight(context), width: cardWidth),
             // The clipped full-width row on top.
             Positioned.fill(
               child: ClipRect(
@@ -367,10 +367,63 @@ class CarouselView extends StatelessWidget {
   /// the turnkey `scrollable` branch's `SizedBox` and the windowed branch's text-free
   /// sizer (whose `OverflowBox` reports zero height upward) — so it MUST track what the
   /// card actually lays out. Mirrors `CarouselCardView`'s `Column`: `width*16/9` thumb +
-  /// 8 gap + a 12*fontScale title line (≈ ×1.34 line height) (+ its 8 gap + the below
-  /// slot, which sits UNDER the title — design R17).
-  double get _cardHeight =>
-      cardWidth * 16.0 / 9.0 + 8 + _belowSlotExtent + (12 * theme.fontScale * 1.34);
+  /// 8 gap + the title line's REAL measured height ([_titleLineHeight]) (+ its 8 gap +
+  /// the below slot, which sits UNDER the title — design R17). Takes [context] because
+  /// [_titleLineHeight] needs it (see that getter's doc for why).
+  double _cardHeight(BuildContext context) =>
+      cardWidth * 16.0 / 9.0 + 8 + _belowSlotExtent + _titleLineHeight(context);
+
+  /// The title line's REAL rendered height, measured with a `TextPainter` laid out
+  /// against the EXACT SAME EFFECTIVE style `CarouselCardView._title()` paints with —
+  /// replaces the former hand-tuned estimate `12 * theme.fontScale * 1.34`
+  /// (rb-flutter-carousel-card-height-cjk-overflow-fix). `TextPainter` is the same
+  /// text-layout primitive `RenderParagraph` (which backs every `Text` widget) uses
+  /// internally, so a `TextPainter` laid out with an identical EFFECTIVE style reports
+  /// the SAME line height Flutter will actually paint — for whatever font the system
+  /// selects (Latin, or a CJK fallback such as iOS PingFang / Android Noto Sans CJK,
+  /// whose line-height metrics commonly exceed the old `× 1.34` estimate that was
+  /// hand-tuned against Latin/Roboto only).
+  ///
+  /// EFFECTIVE, not merely byte-identical `TextStyle` VALUES: `Text()` resolves its
+  /// painted style as `DefaultTextStyle.of(context).style.merge(style)` (Flutter's own
+  /// `Text.build`) — `CarouselCardView.titleTextStyle(theme)` deliberately leaves
+  /// `fontFamily` unset so it inherits whatever font the host/ambient `DefaultTextStyle`
+  /// provides, exactly like every other `Text()` in this file. A raw `TextPainter` given
+  /// that SAME style object with no context merge does NOT get that ambient font —
+  /// empirically confirmed during apply (a bare, unmerged `TextPainter` measured a
+  /// SHORTER line than the real painted title under this repo's test-host
+  /// `DefaultTextStyle(fontFamily: 'Roboto')` wrapper, reproducing a genuine
+  /// `RenderFlex` "BOTTOM OVERFLOWED" overflow — the exact failure class this change
+  /// exists to eliminate, just triggered by a style mismatch instead of a magic
+  /// multiplier). So this getter merges with `DefaultTextStyle.of(context).style`
+  /// first, mirroring `Text.build` exactly, before measuring.
+  ///
+  /// The probe string mixes one CJK glyph and one ASCII glyph (`'字A'`) rather than any
+  /// specific card's real title: `_cardHeight` is a PER-ROW constant shared by every
+  /// visible card (computed before any specific card's `item.title` script is known,
+  /// and a single row can mix Latin/CJK titles), so it cannot literally probe with the
+  /// real text. Flutter selects a fallback font per script run within the same line,
+  /// and a line's box height is driven by the tallest metrics among the fonts used on
+  /// that line — so this mixed probe captures the taller of "whatever font this
+  /// app/device selects for CJK text" vs. "the Latin font," conservatively covering
+  /// either script without needing to enumerate every script the SDK might render.
+  ///
+  /// `textScaler: TextScaler.noScaling` is pinned here — the SAME isolation the title
+  /// `Text()` pins (rb-flutter-carousel-card-title-height-overflow) — so this
+  /// measurement stays immune to the host environment's ambient `MediaQuery` text
+  /// scale, just like the real title paint, keeping both isolation axes (host
+  /// text-scale, and now font-fallback/script) consistent.
+  double _titleLineHeight(BuildContext context) {
+    final TextStyle effectiveStyle = DefaultTextStyle.of(context)
+        .style
+        .merge(CarouselCardView.titleTextStyle(theme));
+    final painter = TextPainter(
+      text: TextSpan(text: '字A', style: effectiveStyle),
+      textDirection: TextDirection.ltr,
+      textScaler: TextScaler.noScaling,
+    )..layout();
+    return painter.height;
+  }
 
   /// Extra vertical extent contributed by the `product_card == 'below'` slot: the row's
   /// FIXED height plus the `Column` gap the card adds in front of that row (which sits

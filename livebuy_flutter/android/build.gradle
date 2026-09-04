@@ -85,13 +85,17 @@ dependencies {
     // pub.dev consumers). Distinct from this file's own `version` (the tv.livebuy.flutter plugin
     // artifact version) — different version axis.
     //
-    // Current pin: 4.11.0 — the current outward-facing release (iOS + Android lockstep, tag
-    // `android-v4.11.0`), verified to carry the bridge's full core API surface, including the
-    // 2026-07-16 brand-casing rename (`LiveBuySDK`/`LiveBuyPlayerView` -> `LivebuySDK`/
-    // `LivebuyPlayerView`, commit `c140f4bf`) that this bridge imports post-rename. v4.11.0's one
-    // BREAKING item (`WinClaimStage.CONFIRM_CLOSE` / `confirmClose` removal) is scoped to
-    // reference-ui-internal and does not touch this bridge (verified: zero references in
-    // flutter/android/src) — this bump is routine maintenance, not a compile-failure fix.
+    // Current pin: 4.13.1 — the current outward-facing release (iOS + Android lockstep, tag
+    // `android-v4.13.1`), verified to carry the bridge's full core API surface, including the
+    // 2026-06-11 `LivebuyWidget` -> `LivebuyWidgetCore` core rename (`8b92c1b5`) that this
+    // bridge's `LivebuyWidgetViewFactory.kt` now imports directly (no longer riding the
+    // deprecated typealias) and the 2026-07-16 brand-casing rename (`LiveBuySDK`/
+    // `LiveBuyPlayerView` -> `LivebuySDK`/`LivebuyPlayerView`, commit `c140f4bf`) that this
+    // bridge imports post-rename. The intermediate `4.12.0` (new `LivebuyPlayerView` VOD goods
+    // signal, additive core API, no BREAKING) and `4.13.0` (one BREAKING item, scoped to
+    // reference-ui-internal gesture semantics — zero core / zero livebuy-ui touch) and `4.13.1`
+    // (reference-ui-only visual patch) have all been confirmed to carry zero references from
+    // this bridge's source — this bump is routine maintenance, not a compile-failure fix.
     //
     // ⚠️ THIS PIN WILL GO STALE AGAIN — read before bumping it (or trusting it).
     // In the monorepo + CI this pin does NOT gate correctness: flutter-bridge-build.yml /
@@ -102,11 +106,12 @@ dependencies {
     // the only path that ever proves whether the pin is actually still good. This is exactly how
     // the pin 3.2.0 once went undetected-stale: it satisfied every monorepo/CI build while
     // silently resolving pre-rename classes for real external consumers (see change
-    // `flutter-distribution-core-pin-refresh` for the incident). This time (4.10.0 -> 4.11.0) is
+    // `flutter-distribution-core-pin-refresh` for the incident). This time (4.11.0 -> 4.13.1) is
     // the milder, expected case the same doc predicted: a pin left unbumped simply falls behind
-    // the current outward-facing release over time (see change
-    // `flutter-android-bridge-core-pin-4-11-0`).
-    implementation "tv.livebuy:livebuy:4.11.0"
+    // the current outward-facing release over time — plus a bridge symbol that had silently been
+    // riding the deprecated `LivebuyWidget` typealias for three months (see change
+    // `fix-flutter-plugin-bridge-widget-core-symbol`, external report LB-6).
+    implementation "tv.livebuy:livebuy:4.13.1"
 
     // The bridge uses kotlinx.coroutines directly (CoroutineScope / Dispatchers / launch).
     // The SDK pulls it transitively but as `implementation`, so it is not on the

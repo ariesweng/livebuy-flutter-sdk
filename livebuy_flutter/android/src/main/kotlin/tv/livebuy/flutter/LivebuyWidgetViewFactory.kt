@@ -8,7 +8,7 @@ import io.flutter.plugin.platform.PlatformView
 import io.flutter.plugin.platform.PlatformViewFactory
 import tv.livebuy.sdk.models.LBVideoItem
 import tv.livebuy.sdk.models.LBFeaturedGood
-import tv.livebuy.sdk.widget.LivebuyWidget
+import tv.livebuy.sdk.widget.LivebuyWidgetCore
 
 // MARK: - LivebuyWidgetViewFactory (expand-simulate-bridge-parity Tier 2)
 
@@ -29,7 +29,7 @@ class LivebuyFlutterWidgetView(
     params: Map<*, *>,
 ) : PlatformView {
 
-    private val widget = LivebuyWidget(context, shopId = params["shopId"] as? String ?: "")
+    private val widget = LivebuyWidgetCore(context, shopId = params["shopId"] as? String ?: "")
     private val methodChannel = MethodChannel(messenger, "tv.livebuy/widget_$viewId")
 
     init {

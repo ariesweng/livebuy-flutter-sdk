@@ -38,6 +38,17 @@
 // the host names no video; the container polls `fetchLatestLive` for the current
 // `liveStatus == 1` session.
 //
+// close-grace (rb-flutter-live-entry-close-grace-period): a host mounts this container only while
+// `CollapsibleLivebuyPlayer` is NOT showing a video (host-owned `sessionVideo == null` gate), so
+// closing that sibling container and mounting this one happen almost back-to-back — which used to
+// make this card reappear in the SAME corner almost instantly after the user closed the player,
+// even on the common `immediate` `floating_setting`. A fixed, SDK-internal, merchant-config-
+// independent 2s buffer (`kLiveEntryCloseGraceMs`, `live_entry_close_gate.dart`) is folded into
+// the appearance-timing decision via `math.max(configured floating_setting delay, close-grace
+// remaining)` — see `_effectiveAppearDelayMs` / `_reconcileAppearance`. A cold open (the player has
+// never been closed this process) always yields `0` close-grace remaining, so this is a
+// zero-side-effect addition whenever there is no recent close.
+//
 // Platform divergence (vs iOS): live-end immediate-hide rides a host-provided
 // `config.liveEndedSignal` (`Stream<void>`) rather than an ambient bus — Flutter's core
 // event listener is a SINGLE interceptor the host owns (returning `LBEventReply`), so the
@@ -52,6 +63,7 @@
 // `reference-ui → template → core` intact.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart' show MaterialPageRoute;
 import 'package:flutter/widgets.dart';
@@ -64,6 +76,10 @@ import '../widget/external_live.dart' show externalLiveAwareTap;
 import '../widget/floating_widget.dart';
 import 'collapsible_live_buy_player.dart' show clampFloatingOffset;
 import 'live_buy_player.dart' show LivebuyPlayer, LivebuyPlayerConfig;
+import 'live_entry_close_gate.dart'
+    show LiveEntryCloseGate, liveEntryCloseGraceRemainingMs, msSinceLastPlayerClose;
+import 'live_entry_dismiss_memory.dart'
+    show LiveEntryDismissMemory, liveEntryInitialDismissedForId;
 import 'live_entry_position_timing.dart';
 import 'widget_data.dart' show lbWidgetEffectiveTap;
 
@@ -93,7 +109,12 @@ class LiveEntryState {
   /// The ongoing live to preview, or `null` (no live / gated out / ended).
   final LBVideoItem? live;
 
-  /// Whether the user closed the entry for the CURRENT live (reset on a new live id).
+  /// Whether the user closed the entry for the CURRENT live (reset on a new live id — see
+  /// [liveEntryShouldResetDismiss]). As of `rb-flutter-live-entry-dismiss-survives-remount`, a reset's
+  /// new value is decided by [liveEntryInitialDismissedForId], which may seed straight back to `true`
+  /// if this live's id matches the last live the user explicitly dismissed (recorded in
+  /// [LiveEntryDismissMemory], which survives this container being unmounted and remounted for the
+  /// same live) — not always a bare `false` reset.
   final bool dismissed;
 
   /// The id of the live last applied — detects "new live" to reset `dismissed`.
@@ -117,7 +138,21 @@ const LiveEntryState initialLiveEntryState = LiveEntryState();
 /// treated as "no live" (avoids resurfacing a just-ended live on a stale fetch); on a
 /// live-`id` change reset `dismissed` and update `lastLiveId`; finally update `live`.
 /// Transition order mirrors iOS / Android `apply` + the example `_applyLive`.
-LiveEntryState applyLiveEntry(LiveEntryState state, LBVideoItem? gated) {
+///
+/// [lastDismissedId] (rb-flutter-live-entry-dismiss-survives-remount) SHOULD be
+/// `LiveEntryDismissMemory.instance.lastDismissedId` — the id of the live the user last explicitly
+/// closed via the close button, which may survive a fresh mount of this container (a different
+/// `LivebuyLiveEntry` element instance than the one that recorded it). Defaults to `null` (no
+/// memory), so existing callers/tests that don't pass it keep the pre-existing "a reset always
+/// starts visible" behaviour byte-identical. The reset value itself is decided by the pure
+/// [liveEntryInitialDismissedForId] — this function stays purely a function of its explicit inputs;
+/// reading the shared singleton is the caller's job (see `_pollLatestLive()`), same division as
+/// `_closeGraceRemainingMs()` does for `LiveEntryCloseGate`.
+LiveEntryState applyLiveEntry(
+  LiveEntryState state,
+  LBVideoItem? gated, {
+  String? lastDismissedId,
+}) {
   var next = gated;
   if (next != null && state.endedLiveIds.contains(next.id)) {
     next = null; // ended → never resurface
@@ -126,7 +161,10 @@ LiveEntryState applyLiveEntry(LiveEntryState state, LBVideoItem? gated) {
   if (liveEntryShouldResetDismiss(state.lastLiveId, newId)) {
     return LiveEntryState(
       live: next,
-      dismissed: false,
+      dismissed: liveEntryInitialDismissedForId(
+        newId: newId,
+        lastDismissedId: lastDismissedId,
+      ),
       lastLiveId: newId,
       endedLiveIds: state.endedLiveIds,
     );
@@ -154,7 +192,10 @@ LiveEntryState liveEntryHandleEnded(LiveEntryState state) {
   );
 }
 
-/// Record the user closing the entry for the current live.
+/// Record the user closing the entry for the current live. Pure — does NOT touch
+/// `LiveEntryDismissMemory` itself; that impure write (`recordDismissed`, so the dismissal survives
+/// a fresh container mount) happens at the call site, `_dismiss()`, alongside this transition — see
+/// `rb-flutter-live-entry-dismiss-survives-remount`.
 LiveEntryState liveEntryDismiss(LiveEntryState state) => LiveEntryState(
       live: state.live,
       dismissed: true,
@@ -186,8 +227,14 @@ class LivebuyLiveEntryConfig {
   final void Function(LBVideoItem item)? onTapVideo;
 
   /// Close button. Default: `null`. Default behaviour = hide until the「next」live (a new
-  /// `video.id` re-surfaces it); a host wanting permanent dismissal records its own flag in
-  /// `onClose` and conditionally mounts the container.
+  /// `video.id` re-surfaces it) — and, as of `rb-flutter-live-entry-dismiss-survives-remount`, this
+  /// now genuinely holds even if the host unmounts and later remounts this container for the SAME
+  /// live (the common host lifecycle of only mounting `LivebuyLiveEntry` while no player is in the
+  /// foreground): the closed live's id is recorded in a small in-memory `LiveEntryDismissMemory`
+  /// singleton (`live_entry_dismiss_memory.dart`), NOT persisted to disk, so a process restart
+  /// naturally clears it and a host wanting permanent dismissal still records its own flag in
+  /// `onClose` and conditionally mounts the container. Only the close button records — tapping the
+  /// card to actually watch the live never does.
   final VoidCallback? onClose;
 
   /// Poll interval. Default: 30s (`fetchLatestLive` failure → 3s fast retry).
@@ -320,13 +367,24 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
   /// 解析後的出現時機。
   late LBFloatingEntryTiming _timing;
 
-  /// 出現時機閘。寫入點共 **4** 處（`grep -n "_appeared"` 列舉）：[initState] /
-  /// [_applyFloatingSettingUpdate] / [_reconcileAppearance] / [_onAppearTimerFired]。
-  /// 前兩處都走 pure `lbLiveEntryInitialAppeared`（**不得**寫死布林），後兩處都被
-  /// `_reconcileAppearance()` 第一行對非 `delay` 的 early-return 擋住。
-  /// 所以在 `immediate`(＝預設)路徑上，會執行到的寫入點**全部**走那個純函式、沒有一處寫死布林
-  /// ——它因此是該路徑「入口出不出得來」的決定點。詳細消費鏈見
-  /// `lbLiveEntryInitialAppeared` 的 doc 與 design D5。
+  /// 出現時機閘。寫入點共 **5** 處（`grep -n "_appeared"` 列舉，rb-flutter-live-entry-close-grace-period
+  /// 前是 4 處，見下方 CHANGE HISTORY）：[initState] / [_applyFloatingSettingUpdate] /
+  /// [_reconcileAppearance]（`!_eligible` 分支寫 `false`；`immediate` 分支的 `graceMs <= 0` 早返回寫
+  /// `true` —— **新增**寫入點，見下）/ [_onAppearTimerFired]。前兩處都走 pure
+  /// `lbLiveEntryInitialAppeared(_timing)`，並額外 **AND** 上 `_closeGraceRemainingMs() <= 0`
+  /// （**不得**個別拆開重寫成三元運算式）——`delay` 時 `lbLiveEntryInitialAppeared` 已為 `false`，短路、
+  /// grace 從不被求值，逐位元不變；`immediate` 時額外要求「當下沒有正在跑的 close-grace」才起始為
+  /// `true`，冷開（`LiveEntryCloseGate.instance.lastClosedAtMs == null`）恆滿足、逐位元不變，剛關閉過
+  /// 播放器則暫時為 `false`。
+  ///
+  /// ⚠️ CHANGE HISTORY（rb-flutter-live-entry-close-grace-period）：`_reconcileAppearance()` 原本第一行
+  /// 對非 `delay` early-return，使下方兩個寫入點在 `immediate` 路徑上完全不可達——那條 early-return
+  /// **已移除**。現在 `immediate` 路徑也會走到 `_reconcileAppearance()`：`!_eligible` 分支可能把
+  /// `_appeared` 撥回 `false`（下次變 eligible 時重新求值，含重新讀一次 close-grace），`immediate`
+  /// 分支本身在 grace 尚未歸零時會排一個 `Timer`、grace 已歸零時直接同步寫 `true`
+  /// （byte-identical 於本 change 之前）。詳細消費鏈見 `lbLiveEntryInitialAppeared` 的 doc（該函式本身
+  /// 的角色與契約不變——它仍是「某個 timing enum 該起始成什麼布林」唯一權威，只是呼叫點現在多 AND 一個
+  /// 獨立的 grace 條件）與本檔 [_reconcileAppearance] 的 doc。
   late bool _appeared;
 
   /// `delay` 模式的倒數排程。`null` = 沒有在倒數。
@@ -346,7 +404,9 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
     super.initState();
     _position = normalizeFloatingPosition(widget.config.position);
     _timing = normalizeFloatingTiming(widget.config.timing);
-    _appeared = lbLiveEntryInitialAppeared(_timing);
+    // rb-flutter-live-entry-close-grace-period: AND the per-timing baseline with "no close-grace
+    // currently active" — see the `_appeared` field doc above for the full contract.
+    _appeared = lbLiveEntryInitialAppeared(_timing) && _closeGraceRemainingMs() <= 0;
     _setUpEntrance();
     // Synchronous fallback theme so build never sees null; refined async from sdkConfig.
     _theme = ReferenceUIThemeResolver.resolve(
@@ -385,7 +445,8 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
         _tearDownEntrance();
         _setUpEntrance();
         _cancelAppearTimer();
-        _appeared = lbLiveEntryInitialAppeared(_timing);
+        // rb-flutter-live-entry-close-grace-period: same AND composition as `initState` above.
+        _appeared = lbLiveEntryInitialAppeared(_timing) && _closeGraceRemainingMs() <= 0;
       }
       _reconcileAppearance();
     });
@@ -412,24 +473,73 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
     _appearTimer = null;
   }
 
-  /// Reconcile the `delay` countdown against the current eligibility. MUST be called from inside
-  /// a `setState` (or from the timer callback, which does its own) — it mutates `_appeared`.
+  /// (rb-flutter-live-entry-close-grace-period) Close-grace remaining, in ms, right now — see
+  /// `LiveEntryCloseGate` (shared with the fully independent `CollapsibleLivebuyPlayer`) +
+  /// `msSinceLastPlayerClose` / `liveEntryCloseGraceRemainingMs` (`live_entry_close_gate.dart`).
+  /// `0` for a cold open (`lastClosedAtMs == null`) or once the fixed 2s window has elapsed.
+  int _closeGraceRemainingMs() => liveEntryCloseGraceRemainingMs(
+        msSinceClose: msSinceLastPlayerClose(
+          lastClosedAtMs: LiveEntryCloseGate.instance.lastClosedAtMs,
+          nowMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+
+  /// (rb-flutter-live-entry-close-grace-period) `delay` timing's effective wait: the LONGER
+  /// (`math.max` — not additive, not a replacement) of the merchant-configured
+  /// `floating_setting` delay (`lbLiveEntryAppearDelay`) and [_closeGraceRemainingMs]. A merchant
+  /// `delaySeconds` at or above the fixed 2s grace (the common case) makes this identical to the
+  /// pre-existing configured delay — zero new behaviour.
+  int _effectiveAppearDelayMs() => math.max(
+        lbLiveEntryAppearDelay(_timing, widget.config.delaySeconds).inMilliseconds,
+        _closeGraceRemainingMs(),
+      );
+
+  /// Reconcile the appearance gate against the current eligibility (and, as of
+  /// rb-flutter-live-entry-close-grace-period, the close-grace wait). MUST be called from inside a
+  /// `setState` (or from the timer callback, which does its own) — it mutates `_appeared`.
   ///
-  /// ⚠️ 第一行對非 `delay` early-return：本方法（與它排的 [_onAppearTimerFired]）這**兩**個
-  /// `_appeared` 寫入點因此都碰不到 `immediate` 路徑。加上另外兩個寫入點都走
-  /// `lbLiveEntryInitialAppeared`，該純函式的回傳值就成了 `immediate` 路徑上唯一的決定量
-  /// (design D5)。
+  /// ⚠️ Runs for BOTH `immediate` and `delay` timing — unlike before this change, which
+  /// early-returned on its first line for non-`delay`, making this entire method (and the
+  /// `_appeared = true` write in [_onAppearTimerFired] it schedules) unreachable on the `immediate`
+  /// path. The close-grace wait can require a genuine wait even on `immediate` (`_close()` /
+  /// `onDismiss()` just fired), so that early-return is gone.
+  ///
+  /// - `delay`: STRUCTURALLY unchanged — a `Timer` is unconditionally scheduled exactly as before
+  ///   (even for a `Duration.zero` wait); only the millisecond VALUE now flows through
+  ///   [_effectiveAppearDelayMs]'s `math.max`, which collapses to the pre-existing
+  ///   `lbLiveEntryAppearDelay` value whenever there is no active close-grace.
+  /// - `immediate`: NEW branch. [_closeGraceRemainingMs] `<= 0` (cold open, or the grace already
+  ///   elapsed) → synchronous `_appeared = true`, **zero** `Timer` created — byte-identical to this
+  ///   change's predecessor behaviour. Otherwise a `Timer` is scheduled for the remaining grace ms
+  ///   (never the merchant delay, which is always `0` on `immediate` by definition) — no entrance
+  ///   animation plays (`_entrance` stays `null` on `immediate`, per `_setUpEntrance`, untouched by
+  ///   this change), the card simply appears once the grace elapses.
   void _reconcileAppearance() {
-    if (_timing != LBFloatingEntryTiming.delay) return;
     if (!_eligible) {
-      // 直播結束 / 被關閉 → 作廢排程並讓閘落回，下一場重新倒數。
+      // 直播結束 / 被關閉 → 作廢排程並讓閘落回，下一場重新求值（含重新讀一次 close-grace）。
       _cancelAppearTimer();
       _appeared = false;
       return;
     }
     if (_appeared || _appearTimer != null) return; // 已顯示 / 已在倒數 → 不重播
+
+    if (_timing != LBFloatingEntryTiming.delay) {
+      // immediate (rb-flutter-live-entry-close-grace-period)：只有「剛關閉過播放器」才需要真的等；
+      // 冷開 / grace 已過 → 0ms，同步顯示，逐位元對齊本 change 之前的行為。
+      final graceMs = _closeGraceRemainingMs();
+      if (graceMs <= 0) {
+        _appeared = true;
+        return;
+      }
+      _appearTimer = Timer(Duration(milliseconds: graceMs), _onAppearTimerFired);
+      return;
+    }
+
+    // delay：既有「一律排 Timer」結構不變，秒數改由 `_effectiveAppearDelayMs`
+    // （math.max(商家設定, close-grace)）決定 —— 商家 delaySeconds 通常 ≥ 固定 2s grace，此時等同
+    // 無新行為。
     _appearTimer = Timer(
-      lbLiveEntryAppearDelay(_timing, widget.config.delaySeconds),
+      Duration(milliseconds: _effectiveAppearDelayMs()),
       _onAppearTimerFired,
     );
   }
@@ -496,7 +606,11 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
       try {
         final v = await LivebuySDK.fetchLatestLive(widget.shopId);
         if (!mounted) return;
-        _applyState(applyLiveEntry(_state, liveEntryGate(v)));
+        _applyState(applyLiveEntry(
+          _state,
+          liveEntryGate(v),
+          lastDismissedId: LiveEntryDismissMemory.instance.lastDismissedId,
+        ));
         await Future<void>.delayed(widget.config.pollInterval);
       } catch (_) {
         await Future<void>.delayed(const Duration(seconds: 3));
@@ -504,7 +618,15 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
     }
   }
 
-  void _dismiss() => _applyState(liveEntryDismiss(_state));
+  /// Close-button handler — the ONLY call site that records into `LiveEntryDismissMemory`
+  /// (rb-flutter-live-entry-dismiss-survives-remount), so the dismissal survives this container being
+  /// unmounted and remounted for the same live. `onTap` / `_openDefaultPlayer` (watching the live) is
+  /// a completely separate path and MUST NOT reach this method.
+  void _dismiss() {
+    final id = _state.live?.id;
+    if (id != null) LiveEntryDismissMemory.instance.recordDismissed(id);
+    _applyState(liveEntryDismiss(_state));
+  }
 
   /// Default-open player (dropin-live-entry-default-open-player-flutter, mirrors widget): push a
   /// full-screen `LivebuyPlayer` route. `Navigator.push` is a top-level route (independent of this

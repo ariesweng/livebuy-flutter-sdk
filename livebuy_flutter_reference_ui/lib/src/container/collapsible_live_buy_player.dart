@@ -1,11 +1,12 @@
 import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
-import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem;
+import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem, LivebuySDK;
 
 import '../reference_ui_theme.dart';
 import '../widget/live_buy_widget_visibility.dart';
 import 'live_buy_player.dart';
+import 'live_entry_close_gate.dart' show LiveEntryCloseGate;
 import 'live_entry_position_timing.dart'
     show LBFloatingEntryPosition, lbLiveEntryClampDx;
 import 'reference_ui_design.dart';
@@ -233,28 +234,35 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
   }
 
   LivebuyPlayerConfig get _composedConfig => widget.config.copyWith(
-        // Minimize → collapse to the floating preview (keep the session alive — keep-alive).
-        // full→floating: sync the cover bridge imperatively (parity iOS onChange(isMinimized)) →
-        // `presenterWidgetCovered(true, true)` == false → home previews resume.
+        // Minimize/close button tap.
         onMinimize: () {
+          // rb-flutter-player-direct-close-button: resolve the SAME pure function
+          // `_LivebuyPlayerState._overlayContext()` uses to pick the header's icon
+          // (`showCloseIcon`) — "what icon is drawn" and "what tapping it does" can never
+          // disagree because both read `resolvedEnableDirectCloseButton(...)`.
+          final directClose = resolvedEnableDirectCloseButton(
+            configValue: widget.config.enableDirectCloseButton,
+            globalValue: LivebuySDK.enableDirectCloseButton,
+          );
+          if (directClose) {
+            // Skip the floating-widget collapse entirely — go straight through the EXACT
+            // SAME close path the floating card's own close button (`_close()`) and the
+            // fatal-moment `onDismiss` seam use below. `_isMinimized` is NEVER set true on
+            // this branch.
+            _closeSession();
+            return;
+          }
+          // Default (resolved false, byte-identical to before this change): collapse to the
+          // floating preview (keep the session alive — keep-alive). full→floating: sync the
+          // cover bridge imperatively (parity iOS onChange(isMinimized)) →
+          // `presenterWidgetCovered(true, true)` == false → home previews resume.
           setState(() => _isMinimized = true);
           _syncWidgetCover();
         },
-        // Fatal-moment dismiss (end-screen close / unrecoverable error close) → close all.
-        onDismiss: () {
-          widget.onVideoChanged(null);
-          setState(() {
-            _isMinimized = false;
-            _committedOffset = Offset.zero;
-            _dragTranslation = Offset.zero;
-          });
-          // → closed: release the cover claim with a LITERAL false — NOT `_syncWidgetCover()`,
-          // because `onVideoChanged(null)` does not synchronously update `widget.video` (the parent
-          // rebuilds next frame), so `_syncWidgetCover()` here would read a stale non-null video and
-          // wrongly declare covered. Closing is unconditionally uncovered; the next-frame
-          // didUpdateWidget sync (video→null) is an edge-triggered no-op.
-          LivebuyWidgetVisibility.setWidgetsCovered(false);
-        },
+        // Fatal-moment dismiss (end-screen close / unrecoverable error close) → close all. Shares
+        // the EXACT same implementation `_close()` (the floating card's own close button) and the
+        // direct-close `onMinimize` branch above use — see `_closeSession()`'s own doc comment.
+        onDismiss: _closeSession,
         // In-place switch (hot-pick / swipe) → re-bind the FLOATING card's shown video to the
         // switched video's item so the minimized preview shows the switched video, NOT the entry
         // one (rb-flutter-collapsible-player-track-switch). Guard same-id so a no-op switch neither
@@ -284,22 +292,63 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
     _syncWidgetCover();
   }
 
+  /// The floating card's own close-button path — delegates to [_closeSession], the ONE shared
+  /// full-close implementation (see its doc comment).
   void _close() {
+    _closeSession();
+  }
+
+  /// The shared FULL close path (rb-flutter-live-entry-close-grace-period,
+  /// rb-flutter-collapsible-player-close-no-reflash, rb-flutter-player-direct-close-button).
+  /// THREE call sites share this EXACT ONE implementation so they can never drift apart:
+  /// the floating card's own close button ([_close]), the fatal-moment `onDismiss` config seam
+  /// (`_composedConfig`), and — new in rb-flutter-player-direct-close-button — the header's
+  /// minimize/close button's `onMinimize` handler when `resolvedEnableDirectCloseButton(...)`
+  /// resolves `true` (skipping the floating-widget collapse entirely).
+  void _closeSession() {
+    // rb-flutter-live-entry-close-grace-period: record "now" as the moment the player was
+    // user-closed. A sibling `LivebuyLiveEntry` — a fully independent container the host mounts
+    // only once `sessionVideo == null` — reads this to apply a short close-grace wait before
+    // reappearing in the same corner, instead of popping in almost immediately.
+    LiveEntryCloseGate.instance.recordClose();
     widget.onVideoChanged(null);
     setState(() {
-      _isMinimized = false;
-      _committedOffset = Offset.zero;
-      _dragTranslation = Offset.zero;
+      // MUST NOT reset `_isMinimized` here (rb-flutter-collapsible-player-close-no-reflash):
+      // `onVideoChanged(null)` above does not synchronously update `widget.video` (the parent
+      // rebuilds next frame — same race the `setWidgetsCovered(false)` call below already
+      // guards against). If this method forced `_isMinimized = false` immediately, the
+      // transitional frame (still `widget.video != null`) would be misread by `build()` as the
+      // `full` phase — the KEEP-ALIVE full-screen player would reappear at `Opacity(1)` and
+      // interactive, i.e. the player re-flashing right after the user closed it. Leaving
+      // `_isMinimized` at its pre-call value keeps that transitional frame at worst the
+      // (already-hidden) floating card — or, on the direct-close `onMinimize` branch, simply
+      // irrelevant, since `build()`'s `if (v == null) return const SizedBox.shrink();`
+      // early-return takes over once `widget.video` truly turns `null` next frame. A later
+      // genuine reopen still correctly clears it back to `false` via the existing
+      // `shouldReopenOnVideoChange` auto-restore branch in `didUpdateWidget`.
+      _resetFloatingOffset();
     });
-    // → closed: LITERAL false (see `onDismiss` for why not `_syncWidgetCover()` — stale `widget.video`).
+    // → closed: release the cover claim with a LITERAL false — NOT `_syncWidgetCover()`, because
+    // `onVideoChanged(null)` does not synchronously update `widget.video` (the parent rebuilds
+    // next frame), so `_syncWidgetCover()` here would read a stale non-null video and wrongly
+    // declare covered. Closing is unconditionally uncovered; the next-frame didUpdateWidget sync
+    // (video→null) is an edge-triggered no-op.
     LivebuyWidgetVisibility.setWidgetsCovered(false);
+  }
+
+  /// Resets the floating card's drag offset (unrelated to `_isMinimized` — deliberately NOT reset
+  /// by [_closeSession]). Shared so a fresh floating card (should one reappear via an
+  /// auto-restore) starts back at its resting bottom-right position.
+  void _resetFloatingOffset() {
+    _committedOffset = Offset.zero;
+    _dragTranslation = Offset.zero;
   }
 
   /// Drive the opt-in cover bridge from the CURRENT phase. `covered ⟺ full` (see
   /// [presenterWidgetCovered]). `setWidgetsCovered` is edge-triggered (same value = no-op), so
-  /// calling this from multiple hooks is safe and never churns. NOTE: callers on the CLOSE path
-  /// (`_close` / `onDismiss`) MUST NOT use this (they set `widget.video` null via the host, which is
-  /// not yet reflected here) — they call `setWidgetsCovered(false)` directly instead.
+  /// calling this from multiple hooks is safe and never churns. NOTE: [_closeSession] (all three
+  /// close call sites) MUST NOT use this (it sets `widget.video` null via the host, which is not
+  /// yet reflected here) — it calls `setWidgetsCovered(false)` directly instead.
   void _syncWidgetCover() {
     LivebuyWidgetVisibility.setWidgetsCovered(
       presenterWidgetCovered(hasVideo: widget.video != null, isMinimized: _isMinimized),

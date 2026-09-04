@@ -90,6 +90,19 @@ class LBConfigOptions {
   /// [enableStatReporting]).
   final LBEnvironment environment;
 
+  /// UI-only default: whether the `LivebuyPlayer` reference-ui collapse button
+  /// closes the player directly instead of the two-step collapse → floating
+  /// card → X flow (`player-direct-close-button`). Default `false` (unchanged
+  /// two-step behavior).
+  ///
+  /// This flag is consumed ENTIRELY by the pure-Dart `flutter-reference-ui`
+  /// package — it has NO native iOS/Android SDK consumer (nothing plays or
+  /// renders differently in the wrapped native SDK), so it is deliberately
+  /// kept Dart-only: it is captured by [LivebuySDK.configure] into
+  /// [LivebuySDK.enableDirectCloseButton] and is NEVER sent over the
+  /// `tv.livebuy/sdk` method channel.
+  final bool enableDirectCloseButton;
+
   const LBConfigOptions({
     required this.apiKey,
     required this.secret,
@@ -103,6 +116,7 @@ class LBConfigOptions {
     this.enablePowerProfileAdaptation = true,
     this.enableStatReporting = true,
     this.environment = LBEnvironment.production,
+    this.enableDirectCloseButton = false,
   });
 }
 

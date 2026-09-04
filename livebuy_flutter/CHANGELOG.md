@@ -6,7 +6,39 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
-（目前無待發項目——`2.0.1` 已於下方發布，三套件共用版號 lockstep。）
+（目前無待發項目——`2.0.2` 已於下方發布，三套件共用版號 lockstep。）
+
+## 2.0.2 - 2026-09-04
+
+> **三套件皆有實際內容變動**（與 `2.0.1` 只有 reference-ui 動不同）。源自外部 Flutter host
+> （xsmartlive）對 mirror repo `v2.0.1` 的整合缺陷回報，逐項查證後修復。
+
+### Fixed
+
+- **`livebuy_flutter`（Android bridge）** — Android 原生端於 2026-06-11 把 `LivebuyWidget` 改名
+  `LivebuyWidgetCore`，Flutter 這支 Kotlin bridge 檔（`LivebuyWidgetViewFactory.kt`）三個月來
+  沒跟上、仍依賴已 deprecated 的相容 typealias；native SDK pin 同時落後兩版（`4.11.0` →
+  `4.13.1`）。已改回正式符號並升版。
+- **`livebuy_flutter_reference_ui`** — `CarouselView` 卡片標題行高改用 `TextPainter` 對實際套用
+  的 `TextStyle` 做單行量測，取代先前手調的 `12 * fontScale * 1.34` 係數估算；該係數只針對
+  Latin/Roboto 字型調校，CJK（中文/日文/韓文）locale 下系統選用的 CJK fallback 字型行高較高，
+  會觸發 debug `RenderFlex` overflow。
+- **`livebuy_flutter_reference_ui`** — drop-in 容器 `LivebuyPlayer` 掛載時呼叫 `setListener`
+  會取代 `LivebuyUI.install()` 註冊的 template 事件訂閱（`setListener` 為單一全域槽），導致
+  template 收不到事件、開場動畫 `startScreen.phase` 卡在 `loading` 不退場。容器 wrapper listener
+  現在會同時轉發事件給 template（host 回覆優先，template 回覆 fallback）。`LivebuyWidget` 不受
+  影響（從未呼叫 `setListener`）。
+
+### Added
+
+- **`livebuy_flutter`（iOS）** — 新增 `ios/livebuy_flutter.podspec`，讓 CocoaPods host（非僅
+  Swift Package Manager）也能正常安裝；先前只有 `Package.swift`，CocoaPods-only host 會在
+  `flutter pub get` 階段直接被 Flutter tooling 中止。與既有 SwiftPM 共用同一份原始碼樹，零分岔。
+- **`livebuy_flutter_ui`** — 新增 `LivebuyUI.forwardToTemplate(LBSdkEvent) → Future<LBEventReply>`
+  與 `TemplateAttachment.handleEvent(LBSdkEvent) → Future<LBEventReply>` 公開轉發介面，供
+  drop-in 容器在自己的事件監聽器取代 template 訂閱後，仍能把事件轉發進 template（上述
+  `livebuy_flutter_reference_ui` 修復即基於此介面）。未安裝 template 時安全 no-op（回傳
+  `LBEventReply.passthrough`）。
 
 ## 2.0.1 - 2026-09-03
 

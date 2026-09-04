@@ -11,10 +11,14 @@ import '../testing/lb_test_keys.dart';
 // Flutter parity of iOS `NowIntroducingCarouselView` / Android `NowIntroducingCarousel`
 // (rb-flutter-now-introducing，問題 9 真實圖+滿寬 / 問題 10 多商品輪播).
 //
-// Draws ONLY the current card (full-width [MiniCartPeek] with a「介紹中」tag + real image when
-// `live`) + page dots — NO PageView / scroll (golden determinism). A horizontal swipe flips to
-// the prev / next card. `peeks` empty → nothing drawn. Index clamped (peeks may shrink as the
-// playhead advances).
+// Draws ONLY the current card (full-width [MiniCartPeek] with a real image when `live`) + page
+// dots — NO PageView / scroll (golden determinism). A horizontal swipe flips to the prev / next
+// card. `peeks` empty → nothing drawn. Index clamped (peeks may shrink as the playhead advances).
+//
+// （rb-flutter-minicart-remove-introducing-tag，2026-09-04）先前這裡的卡片會額外帶一個
+// 「介紹中」accent 標籤（`MiniCartPeek(tag: '介紹中')`）——已隨 `tag` 參數整段退役：
+// `design/templates/minimal/sdk-components.jsx` 的 `LBPMiniCart` 沒有任何 tag / 介紹中 /
+// 描述文案節點。
 
 const double _dotDimAlpha = 0.45;
 const int _maxDots = 6;
@@ -88,7 +92,6 @@ class _NowIntroducingCarouselState extends State<NowIntroducingCarousel> {
               peek: cur,
               live: widget.live,
               fullWidth: true,
-              tag: '介紹中',
               onDismiss: () => widget.onDismiss?.call(cur.productId),
               onOpenDetail: () => widget.onOpenDetail?.call(cur.productId),
             ),

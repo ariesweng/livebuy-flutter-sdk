@@ -57,6 +57,7 @@ class ProductImageZoomOverlay extends StatefulWidget {
     required this.theme,
     required this.detail,
     this.selectedSpec,
+    this.overridePhotoURL,
     this.live = false,
     this.onClose,
   });
@@ -79,6 +80,20 @@ class ProductImageZoomOverlay extends StatefulWidget {
   /// `null` (the DEFAULT) → the product-level photos, so every existing call site / demo /
   /// golden stays byte-identical.
   final LBSpec? selectedSpec;
+
+  /// The photo to show, OVERRIDING [selectedSpec] / [resolveProductPhoto] when non-null and
+  /// non-blank (rb-flutter-product-detail-image-gallery). Threaded in by the container when the
+  /// lightbox is opened from `ProductDetailSheet`'s multi-image gallery — the container forwards
+  /// the gallery's CURRENTLY SELECTED photo URL here, so the lightbox shows the same page the
+  /// gallery was on instead of unconditionally re-deriving `primaryPhoto`.
+  ///
+  /// Semantics deliberately mirror the design's `imgKind || product.img` (`||` falls through on
+  /// an empty string too): a value that is `null` OR blank after trim is treated as "no
+  /// override" and this widget falls back to the existing [resolveProductPhoto] resolution —
+  /// NOT a plain `!= null` check. `null` (the DEFAULT) → every existing call site (the
+  /// `NotifyRestockSheet` badge, `.addToCart`'s compact-card badge, every test / golden) is
+  /// byte-identical to before this field existed.
+  final String? overridePhotoURL;
 
   /// `false` (golden / demo) → gradient + monogram placeholder; `true` → real photo.
   final bool live;
@@ -120,11 +135,19 @@ class _ProductImageZoomOverlayState extends State<ProductImageZoomOverlay> {
   Widget build(BuildContext context) {
     final theme = widget.theme;
     final detail = widget.detail;
-    // The SINGLE photo-source resolution for this overlay — shared verbatim with the sheet
-    // (flutter-product-sheet-spec-photo-reference-ui). `primaryPhoto` is the first NON-BLANK
-    // entry of the winning source; `null` → the gradient + monogram placeholder below.
-    final resolvedPhoto =
-        resolveProductPhoto(detail: detail, selectedSpec: widget.selectedSpec);
+    // The photo this overlay draws (rb-flutter-product-detail-image-gallery): a non-null,
+    // trim-non-blank `overridePhotoURL` WINS (the gallery's currently-selected page, threaded
+    // in by the container) — mirrors the design's `imgKind || product.img` (`||` falls through
+    // on an empty string too, so a blank override is treated the same as no override). Every
+    // pre-existing call site leaves `overridePhotoURL` at its default `null`, so this is a
+    // strict superset of the prior behavior: it falls through to the SAME photo-source
+    // resolution shared verbatim with the sheet (flutter-product-sheet-spec-photo-reference-ui)
+    // — `primaryPhoto` is the first NON-BLANK entry of the winning source; `null` → the
+    // gradient + monogram placeholder below.
+    final override = widget.overridePhotoURL;
+    final photoUrl = (override != null && override.trim().isNotEmpty)
+        ? override
+        : resolveProductPhoto(detail: detail, selectedSpec: widget.selectedSpec).primaryPhoto;
     // E2E key (INERT — KeyedSubtree paints nothing) on the overlay backdrop/root.
     return KeyedSubtree(
       key: LbTestKeys.zoomOverlay,
@@ -166,7 +189,7 @@ class _ProductImageZoomOverlayState extends State<ProductImageZoomOverlay> {
                         scale: _z,
                         child: liveProductImage(
                           live: widget.live,
-                          url: resolvedPhoto.primaryPhoto,
+                          url: photoUrl,
                           placeholder: DecoratedBox(
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
