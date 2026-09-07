@@ -382,8 +382,11 @@ class CarouselCardView extends StatelessWidget {
                       live: live,
                       url: item.cover,
                       placeholder: _coverPlaceholder(),
-                      // Whole cover visible (letterbox) — iOS RemoteStillImageView default scaleAspectFit.
-                      fit: BoxFit.contain,
+                      // Fills the 9:16 cover container (crop, no letterbox) — default
+                      // `BoxFit.cover` from `liveProductImage`, parity with in-player product
+                      // cards and this card's own `LoopingVideoView` preview branch above.
+                      // rb-flutter-widget-carousel-card-image-cover reverses the prior
+                      // `BoxFit.contain` override (rb-flutter-widget-card-fidelity).
                     ),
             ),
             // UPCOMING (直播預告): a full-bleed rgba(0,0,0,0.25) dark mask + a centred
@@ -645,7 +648,6 @@ class CarouselCardView extends StatelessWidget {
               child: liveProductImage(
                 live: live,
                 url: goods.pic,
-                fit: BoxFit.contain,
                 placeholder: const DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
@@ -753,7 +755,6 @@ class CarouselCardView extends StatelessWidget {
               child: liveProductImage(
                 live: live,
                 url: goods.pic,
-                fit: BoxFit.contain,
                 placeholder: const DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(

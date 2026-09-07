@@ -3,10 +3,13 @@ import 'package:livebuy_flutter/livebuy_flutter.dart' show LBProduct;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
     show LBProductRecommendation;
 
+import '../playershell/detail_glyph.dart';
 import '../reference_ui_theme.dart';
 import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
 import 'equalizer_glyph.dart';
+import 'hot_glyph.dart';
+import 'product_row_overlay.dart' show ProductRowMode;
 import 'product_status_badge.dart';
 import 'sheet_scaffold.dart';
 
@@ -53,6 +56,24 @@ class ProductRow extends StatelessWidget {
   /// This row is the currently-introducing product (`.row` only).
   final bool isIntroducing;
 
+  /// 縮圖疊層的播放模式（product-row-status-overlay，`.row` only）。`mode ==
+  /// ProductRowMode.vod` 時，[showPlay] / [isIntroducing] 繪成 VOD 專屬的新視覺——置中黑色圓形
+  /// 播放鈕（[_VodPlayOverlay]）/ 滿版半透明黑底遮罩＋等化器圖示（[_VodIntroducingMask]），
+  /// design R36（rb-flutter-product-row-vod-intro-mask）——取代 `mode` 為 `null` 或 `live` /
+  /// `replay` 時沿用的既有底部「看講解」文字膠囊 / 「介紹中」珊瑚色橫幅視覺。`null`（預設，既有
+  /// 呼叫點 / `.grid`）→ 走既有視覺，byte-identical。Orthogonal to [showPlay] / [isIntroducing]
+  /// themselves (those still decide WHETHER an overlay shows; [mode] only decides WHICH visual).
+  final ProductRowMode? mode;
+
+  /// 縮圖左上角編號徽章的內容（design R35，rb-flutter-product-row-number-badge，`.row` only —
+  /// mirrors the `showPlay` / `isIntroducing` `.row`-only convention). `null` → no badge drawn
+  /// at all (VOD, or a call site that never wires this — e.g. `.grid`'s「更多商品」推薦格, which
+  /// has no live/replay/introducing semantics and never passes this). Non-null → the product's
+  /// 1-based position in the BACKEND-ORDER snapshot (`ProductSheetsModel.productsBackendOrder`);
+  /// [isIntroducing] then decides whether this number or a「🔥 HOT」swap renders (see
+  /// `_NumberBadge`). Orthogonal to [showPlay] / [showShare].
+  final int? index;
+
   /// 列分享 icon 可見性（`.row` only — orthogonal to [showPlay] / [isIntroducing]).
   final bool showShare;
 
@@ -96,6 +117,8 @@ class ProductRow extends StatelessWidget {
     required this.live,
     this.showPlay = false,
     this.isIntroducing = false,
+    this.mode,
+    this.index,
     this.showShare = false,
     this.layout = ProductRowLayout.row,
     this.hideSub = false,
@@ -201,79 +224,108 @@ class ProductRow extends StatelessWidget {
                             ),
                           ),
                         ),
+                        // VOD (mode == ProductRowMode.vod, design R36,
+                        // rb-flutter-product-row-vod-intro-mask): showPlay draws the NEW
+                        // centered black circle instead of the existing bottom 看講解 pill.
+                        // mode != vod (live / replay / omitted) keeps the existing pill
+                        // byte-identical.
                         if (showPlay)
-                          Positioned(
-                            left: 0,
-                            right: 0,
-                            bottom: 4,
-                            child: Center(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                                decoration: const BoxDecoration(
-                                  color: Color(0xBFFFFFFF),
-                                  borderRadius:
-                                      BorderRadius.all(Radius.circular(999)),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.play_arrow,
-                                      size: 9 * theme.fontScale,
-                                      color: const Color(0xFF111111),
-                                    ),
-                                    const SizedBox(width: 3),
-                                    Text(
-                                      _playHintLabel,
-                                      style: TextStyle(
-                                        color: const Color(0xFF111111),
-                                        fontSize: 9.5 * theme.fontScale,
-                                        fontWeight: FontWeight.w600,
+                          mode == ProductRowMode.vod
+                              ? _VodPlayOverlay(theme: theme)
+                              : Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  bottom: 4,
+                                  child: Center(
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 3),
+                                      decoration: const BoxDecoration(
+                                        color: Color(0xBFFFFFFF),
+                                        borderRadius: BorderRadius.all(
+                                            Radius.circular(999)),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.play_arrow,
+                                            size: 9 * theme.fontScale,
+                                            color: const Color(0xFF111111),
+                                          ),
+                                          const SizedBox(width: 3),
+                                          Text(
+                                            _playHintLabel,
+                                            style: TextStyle(
+                                              color: const Color(0xFF111111),
+                                              fontSize: 9.5 * theme.fontScale,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                  ],
+                                  ),
                                 ),
-                              ),
-                            ),
-                          ),
+                        // VOD "now" (mode == ProductRowMode.vod, design R36): full-bleed mask +
+                        // centered equalizer, no text — replaces the existing bottom coral
+                        // 介紹中 banner for VOD only. mode != vod keeps the existing banner
+                        // byte-identical. Same isIntroducing && !soldOut sold-out precedence
+                        // gate as the existing banner.
                         if (isIntroducing && !soldOut)
-                          Positioned(
-                            left: 0,
-                            right: 0,
-                            bottom: 0,
-                            child: Container(
-                              // Fixed coral fill (rb-flutter-vod-live-product-card-restyle,
-                              // 2026-09-03) — was `theme.accent` (varied with the merchant
-                              // theme). Unifies the「介紹中」vocabulary with
-                              // `LiveOverlayChromeView._pinnedCard`'s narrate banner and the
-                              // design's `LBPProductRow` introBadge.
-                              color: _introducingBadgeFill,
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 3, horizontal: 4),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.max,
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const EqualizerGlyph(
-                                      size: 9, color: Color(0xFFFFFFFF)),
-                                  const SizedBox(width: 3),
-                                  Text(
-                                    _introducingLabel,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.clip,
-                                    style: TextStyle(
-                                      color: const Color(0xFFFFFFFF),
-                                      // 10 → 12 (rb-flutter-vod-live-product-card-restyle),
-                                      // parity with the design's introBadge (`fontSize: 12`).
-                                      fontSize: 12 * theme.fontScale,
-                                      fontWeight: FontWeight.bold,
+                          mode == ProductRowMode.vod
+                              ? const _VodIntroducingMask()
+                              : Positioned(
+                                  left: 0,
+                                  right: 0,
+                                  bottom: 0,
+                                  child: Container(
+                                    // Fixed coral fill (rb-flutter-vod-live-product-card-restyle,
+                                    // 2026-09-03) — was `theme.accent` (varied with the merchant
+                                    // theme). Unifies the「介紹中」vocabulary with
+                                    // `LiveOverlayChromeView._pinnedCard`'s narrate banner and
+                                    // the design's `LBPProductRow` introBadge.
+                                    color: _introducingBadgeFill,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 3, horizontal: 4),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.max,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        const EqualizerGlyph(
+                                            size: 9, color: Color(0xFFFFFFFF)),
+                                        const SizedBox(width: 3),
+                                        Text(
+                                          _introducingLabel,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.clip,
+                                          style: TextStyle(
+                                            color: const Color(0xFFFFFFFF),
+                                            // 10 → 12 (rb-flutter-vod-live-product-card-restyle),
+                                            // parity with the design's introBadge
+                                            // (`fontSize: 12`).
+                                            fontSize: 12 * theme.fontScale,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                ],
-                              ),
+                                ),
+                        // 縮圖左上角編號徽章（design R35，rb-flutter-product-row-number-badge）—
+                        // orthogonal to the play affordance / bottom introducing banner above.
+                        // `index == null` → no badge node at all (VOD, or an unwired call site).
+                        if (index != null)
+                          Positioned(
+                            top: 0,
+                            left: 0,
+                            child: _NumberBadge(
+                              theme: theme,
+                              index: index!,
+                              introducing: isIntroducing,
                             ),
                           ),
                       ],
@@ -371,7 +423,17 @@ class ProductRow extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              _RowOutlineIcon(theme: theme, glyph: '≣', onTap: _open),
+              // 明細鈕 icon — self-drawn `DetailGlyph` (design `Icons.detail`, size 16),
+              // replacing the prior text-character '≣' glyph (rb-flutter-icon-parity-
+              // product-detail-button). `DetailGlyph` is reused verbatim from
+              // `../playershell/detail_glyph.dart` (already migrated for the clean-mode
+              // exit button by `rb-flutter-clean-mode-exit-icon-fix`) — same design source
+              // glyph, no duplicate CustomPainter needed.
+              _RowOutlineIcon(
+                theme: theme,
+                onTap: _open,
+                child: DetailGlyph(color: theme.accent, size: 16),
+              ),
               const SizedBox(width: 8),
               if (showShare) ...[
                 _RowOutlineIcon(
@@ -593,7 +655,133 @@ class _StatusPill extends StatelessWidget {
   }
 }
 
+// MARK: - VOD overlays (design R36, rb-flutter-product-row-vod-intro-mask)
+//
+// `.row` layout, `mode == ProductRowMode.vod` only. Parity iOS `VodPlayOverlay` /
+// `VodIntroducingMask` (Swift) / Android `VodPlayOverlay` / `VodIntroducingMask` (Compose) / RN
+// `VodPlayOverlay` / `VodIntroducingMask` (`.tsx`). Design `sdk-components.jsx` `LBPProductRow`'s
+// `playOverlay` / `introBadge` (VOD branch).
+
+/// VOD `upcoming`（含缺 `beginTime`/`endTime` 時的既有 fallback）覆蓋層：縮圖置中一顆 32px 黑色
+/// 圓形播放鈕（`rgba(0,0,0,0.5)` 底 + 白色播放三角），取代 `mode != ProductRowMode.vod` 沿用的
+/// 底部「看講解」文字膠囊。純視覺——縮圖本身既有的 `GestureDetector`（`_playTap`）已覆蓋整個縮圖
+/// 範圍，這裡不重複掛 tap handler。
+class _VodPlayOverlay extends StatelessWidget {
+  final ReferenceUITheme theme;
+
+  const _VodPlayOverlay({required this.theme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned.fill(
+      child: Center(
+        child: Container(
+          width: 32,
+          height: 32,
+          alignment: Alignment.center,
+          decoration: const BoxDecoration(
+            color: Color(0x80000000), // rgba(0,0,0,0.5)
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            Icons.play_arrow,
+            size: 15 * theme.fontScale,
+            color: const Color(0xFFFFFFFF),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// VOD `now`（播放進度落在該商品 `[beginTime, endTime)` 介紹時間窗內）覆蓋層：縮圖滿版
+/// `rgba(0,0,0,0.5)` 遮罩 + 置中白色等化器圖示，無文字——語意等同 `mode != ProductRowMode.vod`
+/// 底部珊瑚色「介紹中」橫幅（同一個 [EqualizerGlyph]），但視覺不同（滿版、無底部貼齊、無文字）。
+class _VodIntroducingMask extends StatelessWidget {
+  const _VodIntroducingMask();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Positioned.fill(
+      child: DecoratedBox(
+        decoration: BoxDecoration(color: Color(0x80000000)), // rgba(0,0,0,0.5)
+        child: Center(
+          child: EqualizerGlyph(size: 18, color: Color(0xFFFFFFFF)),
+        ),
+      ),
+    );
+  }
+}
+
+/// 縮圖左上角編號徽章（design R35，rb-flutter-product-row-number-badge，`.row` only）：平常顯示
+/// 商品在**後端原始清單**（backend order，非介紹中優先重排）中的 1-based 序號；[introducing] 為
+/// `true` 時整個內容換成火焰 icon（[HotGlyph]）+「HOT」文字，取代數字，兩者互斥。設計稿
+/// `sdk-components.jsx:LBPProductRow` 的 `numberBadge`（`layout:'row'` 分支：`minWidth:18,
+/// height:18, fontSize:11`；黑底 70% 透明、外側兩角圓角 `0.25rem 0 0.25rem 0`）。呼叫端
+/// （`_buildRow`）只在 [ProductRow.index] 非 `null` 時才建構這個 widget——VOD（`index` 恆 `null`）
+/// 完全不會出現這顆徽章的任何節點。
+class _NumberBadge extends StatelessWidget {
+  final ReferenceUITheme theme;
+  final int index;
+  final bool introducing;
+
+  const _NumberBadge({
+    required this.theme,
+    required this.index,
+    required this.introducing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 18,
+      constraints: const BoxConstraints(minWidth: 18),
+      padding: EdgeInsets.symmetric(horizontal: introducing ? 6 : 5),
+      decoration: const BoxDecoration(
+        color: Color(0xB3000000), // rgba(0,0,0,0.7)
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(4),
+          bottomRight: Radius.circular(4),
+        ),
+      ),
+      alignment: Alignment.center,
+      child: introducing
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                HotGlyph(size: 10 * theme.fontScale, color: const Color(0xFFFFFFFF)),
+                const SizedBox(width: 3),
+                Text(
+                  _numberBadgeHotLabel,
+                  style: TextStyle(
+                    color: const Color(0xFFFFFFFF),
+                    fontSize: 11 * theme.fontScale,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            )
+          : Text(
+              '$index',
+              style: TextStyle(
+                color: const Color(0xFFFFFFFF),
+                fontSize: 11 * theme.fontScale,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+    );
+  }
+}
+
 /// An outline-accent 30-wide circular icon button (detail affordance).
+///
+/// [glyph] (text-character fallback rendering) has no remaining call site as of
+/// `rb-flutter-icon-parity-product-detail-button` — the last user (明細鈕) now passes
+/// [child] (`DetailGlyph`), matching the sibling 分享 icon's existing `child:
+/// ShareGlyph(...)` call. Kept on the constructor (not removed) as source-compat for
+/// any future text-glyph call site; MUST NOT be re-adopted for a new icon position
+/// without first checking whether a self-drawn glyph already exists (see
+/// `docs/reference-ui/drop-in-roadmap.md` / prior `rb-flutter-icon-parity-*` batches).
 class _RowOutlineIcon extends StatelessWidget {
   final ReferenceUITheme theme;
   final String? glyph;
@@ -797,6 +985,10 @@ const String _introducingLabel = '介紹中';
 const String _outSoonLabel = '即將售完';
 const String _hotLabel = '熱賣中';
 const String _playHintLabel = '看講解';
+
+/// 縮圖左上角編號徽章（design R35）介紹中內容的文字——「熱賣中」（[_hotLabel]，`is_hot` 商品狀態
+/// 標籤）是一個完全不同的概念，兩者刻意使用不同常數，不共用。
+const String _numberBadgeHotLabel = 'HOT';
 
 // MARK: - LBProductRecommendation → LBProduct (PRESENTATION-ONLY conversion)
 //

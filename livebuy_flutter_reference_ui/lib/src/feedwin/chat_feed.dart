@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
     show LBActivityTier, LBFeedItem, LBFeedKind, PinnedMessage;
 
+import '../playershell/arrow_down_glyph.dart';
+import '../playershell/bag_glyph.dart';
+import '../playershell/pin_fill_glyph.dart';
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 
@@ -753,13 +756,20 @@ class _ScrollableChatFeedState extends State<_ScrollableChatFeed> {
                     color: widget.theme.accent,
                     borderRadius: BorderRadius.circular(999),
                   ),
-                  child: Text(
-                    '↓ 最新訊息',
-                    style: TextStyle(
-                      color: const Color(0xFFFFFFFF),
-                      fontSize: 11.5 * widget.theme.fontScale,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      const ArrowDownGlyph(size: 10, color: Colors.white),
+                      const SizedBox(width: 4),
+                      Text(
+                        '最新訊息',
+                        style: TextStyle(
+                          color: const Color(0xFFFFFFFF),
+                          fontSize: 11.5 * widget.theme.fontScale,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -1097,7 +1107,9 @@ class _PinnedBanner extends StatelessWidget {
         children: <Widget>[
           Padding(
             padding: const EdgeInsets.only(top: 1),
-            child: Icon(Icons.push_pin, size: 11, color: theme.accent),
+            // 置頂 icon 改設計稿自繪圓頭+直線尾 PinFillGlyph（rb-flutter-icon-parity-
+            // operation-rail-batch，取代 Material Icons.push_pin 圖釘造型）。
+            child: PinFillGlyph(color: theme.accent, size: 11),
           ),
           const SizedBox(width: 6),
           Flexible(
@@ -1444,7 +1456,7 @@ class _ActivityLine extends StatelessWidget {
       height: _activitySlot,
       alignment: Alignment.center,
       decoration: BoxDecoration(color: _slotFill, shape: BoxShape.circle),
-      child: Icon(_glyph, size: 12, color: _glyphColor),
+      child: _glyph,
     );
   }
 
@@ -1462,18 +1474,23 @@ class _ActivityLine extends StatelessWidget {
   }
 
   /// Tier-styled icon glyph. `browse`（chat-message-taxonomy ⑤）→ 放大鏡（最低調，同 join 級）。
-  IconData get _glyph {
+  /// Widened from `IconData` to `Widget` (rb-flutter-icon-parity-operation-rail-batch) so
+  /// `purchase` can return the self-drawn `BagGlyph` (design `Icons.bag`, takes over from
+  /// Material `Icons.shopping_bag_outlined`) alongside the other tiers' `Icon(...)`. The sole
+  /// call site is `_iconSlot()` in this same file, so each branch now bakes in the `size: 12` /
+  /// `color: _glyphColor` that `_iconSlot()` used to apply uniformly.
+  Widget get _glyph {
     switch (tier) {
       case LBActivityTier.join:
-        return Icons.person_add_alt_1;
+        return Icon(Icons.person_add_alt_1, size: 12, color: _glyphColor);
       case LBActivityTier.browse:
-        return Icons.search; // magnifyingglass — 觀眾選購
+        return Icon(Icons.search, size: 12, color: _glyphColor); // magnifyingglass — 觀眾選購
       case LBActivityTier.purchase:
-        return Icons.shopping_bag_outlined;
+        return BagGlyph(color: _glyphColor, size: 12);
       case LBActivityTier.intro:
-        return Icons.campaign; // megaphone / loudspeaker
+        return Icon(Icons.campaign, size: 12, color: _glyphColor); // megaphone / loudspeaker
       case LBActivityTier.win:
-        return Icons.emoji_events; // trophy
+        return Icon(Icons.emoji_events, size: 12, color: _glyphColor); // trophy
     }
   }
 

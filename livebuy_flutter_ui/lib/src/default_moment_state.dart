@@ -354,6 +354,15 @@ class DefaultProductOverlayState extends ChangeNotifier {
   /// reference-ui MUST NOT re-sort. Parity iOS / Android / RN `productsIntroducingFirst`.
   /// Reads off the GATED [products] / [activeProduct] (both empty/null while the
   /// intro is playing), so it collapses to `[]` over the intro automatically.
+  ///
+  /// **LIVE-only** (rb-flutter-vod-product-list-introducing-order-template): this stays
+  /// exactly as-is (VOD / no-active case remains `products` unchanged) — reference-ui's
+  /// product list ordering should instead bind the aggregate
+  /// `DefaultPlayerTemplate.productsIntroducingFirst` (a DIFFERENT property on the
+  /// enclosing template, same name, different receiver), which delegates HERE for LIVE
+  /// and additionally floats `DefaultPlayerTemplate.vodActiveProducts` to the front for
+  /// VOD / replay. This getter itself is unchanged and remains directly unit-testable
+  /// in isolation (it has no access to `playbackProgress` / `header`, by design).
   List<LBProduct> get productsIntroducingFirst {
     final source = products;
     final id = activeProduct?.id;

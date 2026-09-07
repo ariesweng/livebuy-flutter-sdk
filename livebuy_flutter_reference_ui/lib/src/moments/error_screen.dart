@@ -4,6 +4,9 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import 'arrow_clockwise_glyph.dart';
+import 'arrow_up_circle_glyph.dart';
+import 'wifi_slash_glyph.dart';
 
 // ErrorScreenView — family-4 player moment surface 3 (full-screen terminal error).
 //
@@ -57,8 +60,13 @@ import '../testing/lb_test_keys.dart';
 // Row / Stack only — NO scrollable container (`ListView` / `GridView` /
 // `SingleChildScrollView`) and NO network image (`Image.network` / `NetworkImage`).
 // The error moment is a dark full-bleed scrim regardless of the light surface theme
-// (design-literal). Glyphs are `Icons.*`. No animation / no randomness so the golden
-// is byte-stable.
+// (design-literal). Glyphs (`rb-flutter-icon-parity-error-retry-batch`): `.stream`'s
+// icon badge is self-drawn `WifiSlashGlyph`, its retry CTA is self-drawn
+// `ArrowClockwiseGlyph`, and `.outdated`'s icon badge is self-drawn
+// `ArrowUpCircleGlyph` — none of the three are Material `Icons.*` any more.
+// `.notFound`'s icon badge remains Material `Icons.search_off_rounded` (untouched,
+// out of scope for that change). No animation / no randomness so the golden is
+// byte-stable.
 
 // MARK: - Decorative design tokens (literal hex — lifted verbatim from LBPErrorScreen)
 //
@@ -171,8 +179,15 @@ class ErrorScreenView extends StatelessWidget {
   //
   // `.outdated` tints with the brand accent (a「前往更新」-style affordance, not a
   // danger); `.stream` / `.notFound` tint with the design's danger color.
+  //
+  // `icon` is a BUILDER (`Widget Function(Color)`), not a pre-built widget —
+  // `rb-flutter-icon-parity-error-retry-batch`: the tint it needs (`theme.accent`
+  // for `.outdated`, the module-level `_danger` for `.stream`/`.notFound`) is
+  // resolved HERE (the only place that needs to know both the disc's own tint AND
+  // the glyph's tint), so the glyph is built with the SAME `tint` value used for
+  // the disc background/border — no risk of the two drifting out of sync.
 
-  Widget _iconBadge(IconData icon, bool accentTinted) {
+  Widget _iconBadge(Widget Function(Color color) icon, bool accentTinted) {
     final tint = accentTinted ? theme.accent : _danger;
     return Container(
       width: 60,
@@ -183,7 +198,7 @@ class ErrorScreenView extends StatelessWidget {
         shape: BoxShape.circle,
         border: Border.all(color: tint.withValues(alpha: 0.40), width: 1),
       ),
-      child: Icon(icon, size: 28, color: tint),
+      child: icon(tint),
     );
   }
 
@@ -274,11 +289,15 @@ class ErrorScreenView extends StatelessWidget {
   }
 
   /// Filled accent button (primary CTA / solo 返回). Forwards [onTap] (a no-op when
-  /// null — demo / golden). Optional leading [icon] (重試 has a refresh glyph).
+  /// null — demo / golden). Optional leading [icon] (重試 has a self-drawn
+  /// `ArrowClockwiseGlyph`) — a PRE-BUILT widget (not a builder like
+  /// `_iconBadge`'s), because it always renders in the same fixed on-scrim white
+  /// (`_onScrimText`, a genuine `const Color`), so its color/size can be baked in
+  /// at the call site and stay `const`-able.
   Widget _filledButton({
     Key? key,
     required String label,
-    IconData? icon,
+    Widget? icon,
     VoidCallback? onTap,
   }) {
     return GestureDetector(
@@ -297,7 +316,7 @@ class ErrorScreenView extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             if (icon != null) ...[
-              Icon(icon, size: 16, color: _onScrimText),
+              icon,
               const SizedBox(width: 7),
             ],
             Text(
@@ -345,22 +364,31 @@ class ErrorScreenView extends StatelessWidget {
   // template's classification (`DefaultErrorState.kindFor`). We map the three KNOWN
   // `kind` cases to human copy + a glyph + the primary CTA. NO raw code shown.
 
+  // NOTE (`rb-flutter-icon-parity-error-retry-batch`): these three `return`s are
+  // NOT `const` — `icon` is a lambda (a compile-time NON-constant in Dart; only
+  // top-level/static function tear-offs qualify), so a `const _ErrorCopy(...)`
+  // call here would fail to compile. This is an intentional, permanent trade-off
+  // (see design.md D3), not an oversight — do NOT "fix" it back to `const`.
   _ErrorCopy _copyFor(LBPlayerErrorKind kind) {
     switch (kind) {
       case LBPlayerErrorKind.stream:
-        return const _ErrorCopy(
+        return _ErrorCopy(
           title: _streamTitle,
           body: _streamBody,
-          icon: Icons.wifi_off_rounded,
+          icon: (color) => WifiSlashGlyph(color: color, size: 28),
           primaryLabel: _retryLabel,
-          primaryIcon: Icons.refresh_rounded,
+          primaryIcon: const ArrowClockwiseGlyph(color: _onScrimText, size: 16),
           accentTinted: false,
         );
       case LBPlayerErrorKind.notFound:
-        return const _ErrorCopy(
+        // Untouched by `rb-flutter-icon-parity-error-retry-batch` — still the
+        // Material glyph, just re-wrapped in the same builder shape as the other
+        // two kinds so `_ErrorCopy.icon`'s type stays uniform across all branches.
+        return _ErrorCopy(
           title: _notFoundTitle,
           body: _notFoundBody,
-          icon: Icons.search_off_rounded,
+          icon: (color) =>
+              Icon(Icons.search_off_rounded, size: 28, color: color),
           primaryLabel: null,
           primaryIcon: null,
           accentTinted: false,
@@ -369,10 +397,10 @@ class ErrorScreenView extends StatelessWidget {
         // 前往更新 ONLY (design secondary:null) — the dedicated accent upgrade CTA,
         // wired to onDismiss (design `isOutdated ? onDismiss`; the host treats it as
         // the upgrade entry). No 返回. Retry won't help a rejected build.
-        return const _ErrorCopy(
+        return _ErrorCopy(
           title: _outdatedTitle,
           body: _outdatedBody,
-          icon: Icons.system_update_alt_rounded,
+          icon: (color) => ArrowUpCircleGlyph(color: color, size: 28),
           primaryLabel: _updateLabel,
           primaryIcon: null,
           accentTinted: true,
@@ -389,14 +417,32 @@ class ErrorScreenView extends StatelessWidget {
 class _ErrorCopy {
   final String title;
   final String body;
-  final IconData icon;
+
+  /// The icon-badge glyph, as a BUILDER that receives the resolved tint color
+  /// (`_iconBadge` computes it once — `accentTinted ? theme.accent : _danger` —
+  /// and passes it in) and returns the glyph widget
+  /// (`rb-flutter-icon-parity-error-retry-batch`). A builder, not a pre-built
+  /// `Widget`, because the tint depends on `theme.accent` (a dynamic instance
+  /// field) for `.outdated` and the module-level `final Color _danger` (NOT
+  /// `const` — it's computed via `colorFromHex()`) for `.stream`/`.notFound`;
+  /// neither is a compile-time constant, so a widget with the color baked in at
+  /// this layer could never be assembled inside a `const _ErrorCopy(...)` call —
+  /// and baking it in non-const here would duplicate the tint formula that
+  /// `_iconBadge` already needs for the disc's own background/border. See
+  /// design.md D3 for the full trade-off.
+  final Widget Function(Color color) icon;
 
   /// The primary CTA label (重試 / 前往更新), or null when retry won't help
   /// (`.notFound` → 返回 only).
   final String? primaryLabel;
 
-  /// Optional leading glyph on the primary CTA (重試 → refresh; 前往更新 → none).
-  final IconData? primaryIcon;
+  /// Optional leading glyph on the primary CTA (重試 → self-drawn
+  /// `ArrowClockwiseGlyph`; 前往更新 → none). Unlike [icon], this is a PRE-BUILT
+  /// `Widget` (not a builder) — `_filledButton` always renders it in the same
+  /// fixed on-scrim white (`_onScrimText`, a genuine `const Color`), so its
+  /// color/size can be baked in at the `_copyFor` call site and stay
+  /// `const`-able (`rb-flutter-icon-parity-error-retry-batch`).
+  final Widget? primaryIcon;
 
   /// `.outdated` tints the icon disc with the brand accent (update affordance);
   /// `.stream` / `.notFound` tint with the design's danger color.

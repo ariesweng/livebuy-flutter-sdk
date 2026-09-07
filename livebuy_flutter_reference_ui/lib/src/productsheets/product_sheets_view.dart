@@ -190,6 +190,44 @@ ProductSheetKind sheetKindFor(ProductSheetPresentation mode) {
   }
 }
 
+// MARK: - anyProductSheetPresented — the single aggregate presented-state decision point
+// (rb-flutter-block-swipe-nav-when-sheet-open).
+//
+// `PlayerShellView`'s vertical-swipe-to-switch-video gesture must NOT fire while the sibling
+// `ProductSheetsOverlayView` is covering the video area with a sheet/modal — swiping past a
+// sheet's edge must not leak into "switch video" underneath it. This container renders FIVE
+// full-bleed surfaces that can be presented independently: the product LIST drawer, the
+// detail-or-restock `BottomSheetPresenter`, the photo zoom lightbox, the add-to-cart
+// needs-login gate, and the「請選規格」variant-selection prompt. The cart-add success TOAST
+// (`_cartToastVisible`) is deliberately EXCLUDED — it is wrapped in `IgnorePointer` (see its
+// `_buildContent` call site), so it never absorbs a touch and is not a "sheet" in the blocking
+// sense this predicate cares about.
+
+/// PURE: whether ANY product-related sheet/modal this container renders is currently
+/// presented (rb-flutter-block-swipe-nav-when-sheet-open) — the single decision point
+/// [_ProductSheetsOverlayViewState] diffs on every rebuild (see
+/// [_ProductSheetsOverlayViewState._reportSheetsPresentedIfChanged]) to report up via
+/// [ProductSheetsOverlayView.onPresentationChange]. Every one of the FIVE surfaces this
+/// predicate covers renders a full-bleed scrim/backdrop that dims + is meant to block the
+/// content behind it, yet (as of this change) none of their `GestureDetector`s register a
+/// vertical-drag recognizer — so a vertical swipe starting over one of them is not, by
+/// itself, claimed by that scrim; it can still be won by `PlayerShellView`'s own
+/// `VerticalDragGestureRecognizer` underneath. This predicate is what lets `PlayerShellView`
+/// gate its swipe-to-switch-video action off in that case (see `PlayerShellView.allowsSwipeNav`
+/// / this change's design.md for the full mechanism). Unit-testable without a widget.
+bool anyProductSheetPresented({
+  required bool listPresented,
+  required bool detailPresented,
+  required bool zoomPresented,
+  required bool cartLoginGatePresented,
+  required bool variantPromptPresented,
+}) =>
+    listPresented ||
+    detailPresented ||
+    zoomPresented ||
+    cartLoginGatePresented ||
+    variantPromptPresented;
+
 /// The family-3 product-sheets container. Binds the relevant template
 /// `ChangeNotifier`s (`productOverlay` + `cartCTA` + `productSheet` + `variantPicker`
 /// + `qtyStepper` + `miniCart` + `goodsTracking`) with `ListenableBuilder`, re-reads
@@ -281,6 +319,20 @@ class ProductSheetsOverlayView extends StatefulWidget {
   /// stranded over the video.
   final ValueChanged<String>? onSwitchRecommendationVideo;
 
+  /// Reports whether ANY product sheet/modal this container renders (list drawer / detail-or-
+  /// restock / zoom lightbox / cart-needs-login gate / variant-selection prompt — see
+  /// [anyProductSheetPresented]) is currently presented (rb-flutter-block-swipe-nav-when-sheet-
+  /// open). Fires only on a CHANGE (diff-then-report, bubble pattern copied from
+  /// `PlayerShellView.onInfoPanelOpenChange` / `.onCleanModeChange` / `.onMoreMenuOpenChange`),
+  /// deferred to the frame AFTER the change via `WidgetsBinding.addPostFrameCallback` — never
+  /// invoked synchronously from `build()` (see
+  /// [_ProductSheetsOverlayViewState._reportSheetsPresentedIfChanged]'s own doc comment for
+  /// why). The container mirrors this into a local bool and forwards it back down to
+  /// `PlayerShellView` (via `PlayerOverlayContext.productSheetsPresented`) so its swipe-to-
+  /// switch-video gesture can gate on it. `null` (default) → no report (demo / golden /
+  /// standalone instances unaffected).
+  final ValueChanged<bool>? onPresentationChange;
+
   const ProductSheetsOverlayView({
     super.key,
     this.template,
@@ -296,6 +348,7 @@ class ProductSheetsOverlayView extends StatefulWidget {
     this.onDismissList,
     this.onRequestLogin,
     this.onSwitchRecommendationVideo,
+    this.onPresentationChange,
   });
 
   @override
@@ -382,6 +435,45 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
   DateTime? _cartLoadingShownAt;
   Timer? _cartLoadingTimer;
 
+  /// Last "any product sheet presented" value reported via
+  /// [ProductSheetsOverlayView.onPresentationChange] (rb-flutter-block-swipe-nav-when-sheet-
+  /// open). Seeded `false` — matches every input's own default (`widget.presented` defaults
+  /// `false`, a fresh template has no open `detail`, `_zoomedDetail` / `_cartGateDismissed` /
+  /// `_variantPromptDismissed` all start at their own defaults) — so mount never fires a
+  /// spurious report.
+  bool _lastReportedSheetsPresented = false;
+
+  /// Diff-then-report [anyPresented] up via [ProductSheetsOverlayView.onPresentationChange]
+  /// (rb-flutter-block-swipe-nav-when-sheet-open) — the sibling `PlayerShellView`'s vertical-
+  /// swipe gesture ultimately reads this (mirrored by the container into
+  /// `PlayerOverlayContext.productSheetsPresented`, forwarded back down) to ALSO block swipe-
+  /// to-switch-video while a product sheet covers the video area. Bubble pattern copied from
+  /// `PlayerShellView._setInfoPanel` / `_toggleCleanMode` / `_setMoreMenuOpen`, adapted for a
+  /// value with SEVERAL uncoordinated write paths (the list drawer's `widget.presented`, the
+  /// template's `productSheet.detail`, and three purely-local `setState` fields) rather than
+  /// one dedicated setter — so instead of scattering a report call at every one of those write
+  /// sites (easy to miss one), this is called from a SINGLE chokepoint at the top of
+  /// [_buildContent], which every one of those paths already reaches (a `widget.presented` flip
+  /// triggers `didUpdateWidget` → rebuild; a `t.productSheet` notify triggers the
+  /// `ListenableBuilder` above to rebuild; every local `setState` in this file triggers a
+  /// rebuild of this whole `State` regardless of which field changed) — so no call site can be
+  /// missed by a future edit. Reports on the FOLLOWING frame via
+  /// [WidgetsBinding.addPostFrameCallback] — never synchronously from `build()` (which
+  /// `_buildContent` runs inside): a host callback invoked synchronously from build could
+  /// itself try to call `setState` on an ancestor (the container mirrors this value), which
+  /// Flutter forbids while ANY widget is mid-build — parity this same file's existing
+  /// `_onCartCTAChanged` doc comment's "Runs OUTSIDE build ... so `setState` is safe"
+  /// reasoning, applied here via deferral instead of an out-of-build listener callback (this
+  /// value has no single ChangeNotifier to listen to — it is an aggregate over several sources).
+  void _reportSheetsPresentedIfChanged(bool anyPresented) {
+    if (anyPresented == _lastReportedSheetsPresented) return;
+    _lastReportedSheetsPresented = anyPresented;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.onPresentationChange?.call(anyPresented);
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -462,6 +554,17 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     final m = _model;
     final detail = m.detail;
 
+    // Single chokepoint (rb-flutter-block-swipe-nav-when-sheet-open) — see
+    // `_reportSheetsPresentedIfChanged`'s own doc comment for why this specific spot reaches
+    // every write path that can flip any of the five inputs below.
+    _reportSheetsPresentedIfChanged(anyProductSheetPresented(
+      listPresented: widget.presented,
+      detailPresented: detail != null,
+      zoomPresented: _zoomedDetail != null,
+      cartLoginGatePresented: m.addToCartNeedsLogin && !_cartGateDismissed,
+      variantPromptPresented: m.needsVariantSelection && !_variantPromptDismissed,
+    ));
+
     return Stack(
       children: [
         // Surface 1 — product list drawer (GATED): a dim scrim (tap → dismiss) + the bottom-anchored
@@ -494,6 +597,10 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
               // 真實 mode + 播放秒數。
               mode: m.rowMode,
               playbackPosition: m.position.floor(),
+              // 縮圖左上角編號徽章（design R35，rb-flutter-product-row-number-badge）——後端原始
+              // （未依介紹中重排）順序清單，供每列算 1-based 編號；VOD（`mode ==
+              // ProductRowMode.vod`）恆不顯示，與這裡是否非空無關。
+              backendOrderProducts: m.productsBackendOrder,
               onOpenProduct: _handleOpenProduct,
               onQuickAdd: _handleQuickAdd,
               onNotifyRestock: _handleNotifyRestock,

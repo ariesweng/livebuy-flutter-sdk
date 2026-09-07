@@ -85,16 +85,19 @@ class ProductSheetsModel {
   // -- Surface 1: ProductListSheet ← product list drawer + cart CTA -----------
 
   /// The core-fed products snapshot, INTRODUCING-FIRST
-  /// (`DefaultProductOverlayState.productsIntroducingFirst`): the currently-introducing
-  /// product (LIVE narrate_status==2) floated to the head, the rest in their original
-  /// order. Already ordered by the data layer — this layer MUST NOT slice / merge /
-  /// re-sort. Parity iOS / Android / RN. For demo instances returns
+  /// (`DefaultPlayerTemplate.productsIntroducingFirst`,
+  /// rb-flutter-vod-product-list-introducing-order-template): the currently-introducing
+  /// product/s floated to the head, the rest in their original order — LIVE delegates
+  /// verbatim to `productOverlay.productsIntroducingFirst` (single narrate_status==2
+  /// active product), VOD/replay floats ALL `vodActiveProducts` ([beginTime,endTime)
+  /// window hits) to the head instead. Already ordered by the data layer — this layer
+  /// MUST NOT slice / merge / re-sort. For demo instances returns
   /// [ProductSheetsSeeds.products].
   // demo seed ONLY when unbound; a BOUND template returns its real (possibly empty) list —
   // the `??` must NOT leak demo products into a real session (rb-flutter-player-demo-seed-leak).
   List<LBProduct> get products => template == null
       ? ProductSheetsSeeds.products
-      : template!.productOverlay.productsIntroducingFirst;
+      : template!.productsIntroducingFirst;
 
   /// The currently-introducing product's id
   /// (`DefaultProductOverlayState.introducingProductId`, LIVE narrate_status==2), or
@@ -119,6 +122,26 @@ class ProductSheetsModel {
   /// (flutter-product-bag-multi-narrating).
   List<LBProduct> get liveActiveProducts =>
       template == null ? const [] : template!.liveActiveProducts;
+
+  // -- Surface 1: ProductList ← product-row number badge backend order (design R35,
+  //    rb-flutter-product-row-number-badge) --
+
+  /// The RAW core-fed products snapshot, in **backend order**
+  /// (`DefaultProductOverlayState.products` via `DefaultPlayerTemplate.productOverlay` — NOT
+  /// introducing-first, unlike [products] which mirrors `productsIntroducingFirst`). Feeds the
+  /// product-row number badge's index (design R35: `ProductListSheet` → `ProductRow` `.row`
+  /// layout's left-top badge) — the badge must show the product's position in the ORIGINAL,
+  /// un-reordered list so a product becoming「介紹中」does not shuffle every other row's number.
+  /// LIVE re-fetches this list every 5s poll tick (core-owned re-fetch — this getter holds NO
+  /// extra state of its own, it just re-reads the template each call, exactly like [products]);
+  /// replay/VOD's list is fixed after load. For demo instances returns
+  /// [ProductSheetsSeeds.products] (the SAME seed [products] falls back to when unbound — the
+  /// seed list has no separate "introducing-first" reordering anyway, so the two demo fallbacks
+  /// are identical by construction, not coincidentally). Parity iOS / Android / RN
+  /// `ProductSheetsModel.productsBackendOrder`.
+  List<LBProduct> get productsBackendOrder => template == null
+      ? ProductSheetsSeeds.products
+      : template!.productOverlay.products;
 
   // -- Surface 1: ProductList ← product-row thumbnail overlay mode (product-row-status-overlay) --
   //

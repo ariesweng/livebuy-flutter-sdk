@@ -502,19 +502,38 @@ Widget liveProductImage({
 }) {
   final Uri? uri = _httpUri(url);
   if (!live || uri == null) return placeholder;
-  final Widget image = Image.network(
-    uri.toString(),
-    fit: fit,
-    width: double.infinity,
-    height: double.infinity,
-    // While loading, keep the placeholder visible underneath (the Stack below
-    // already draws it); fade in nothing extra — just show the frame when ready.
-    loadingBuilder: (context, child, progress) =>
-        progress == null ? child : const SizedBox.expand(),
-    // On any decode / network error, fall back to the placeholder (draw nothing
-    // over it — the Stack's placeholder stays visible).
-    errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
-  );
+  // TEST SEAM (`docs/unit-test-discipline.md` naming contract) — `null` (default, every
+  // existing call site + host runtime) keeps the exact `Image.network(...)` branch below,
+  // byte-identical to before this seam existed. A widget / golden test that needs to
+  // exercise ACTUAL decoded pixel content (not just the placeholder — `Image.network`
+  // never resolves in a test environment with no network) may set this to a zero-network
+  // synthetic [ImageProvider] for the duration of one test, then reset it to `null`.
+  // MUST NOT be mutated outside `test/` (`rb-flutter-product-detail-main-image-scale-down-
+  // letterbox` verifier fix).
+  final ImageProvider? testProvider = liveProductImageProviderForTesting?.call(uri.toString());
+  final Widget image = testProvider != null
+      ? Image(
+          image: testProvider,
+          fit: fit,
+          width: double.infinity,
+          height: double.infinity,
+          loadingBuilder: (context, child, progress) =>
+              progress == null ? child : const SizedBox.expand(),
+          errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
+        )
+      : Image.network(
+          uri.toString(),
+          fit: fit,
+          width: double.infinity,
+          height: double.infinity,
+          // While loading, keep the placeholder visible underneath (the Stack below
+          // already draws it); fade in nothing extra — just show the frame when ready.
+          loadingBuilder: (context, child, progress) =>
+              progress == null ? child : const SizedBox.expand(),
+          // On any decode / network error, fall back to the placeholder (draw nothing
+          // over it — the Stack's placeholder stays visible).
+          errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
+        );
   final Widget overlay = borderRadius == null
       ? image
       : ClipRRect(borderRadius: borderRadius, child: image);
@@ -526,6 +545,11 @@ Widget liveProductImage({
     ],
   );
 }
+
+/// TEST SEAM — see [liveProductImage]'s doc comment above. `null` by default (host
+/// runtime + every pre-existing call site): the real `Image.network(url)` path.
+@visibleForTesting
+ImageProvider Function(String url)? liveProductImageProviderForTesting;
 
 /// Parse [s] into a non-empty http(s) [Uri], or null (empty / whitespace / non-http
 /// → placeholder-only). Pure.

@@ -57,8 +57,43 @@ import '../testing/lb_test_keys.dart';
 /// Total width of the transport bar's leading play/pause button + its gap to the track
 /// (`28 (button) + 8 (gap)`), used to translate a drag's local x-offset into a track-relative
 /// ratio once [PlaybackProgressBarView.scrubBarExpanded] is true (the idle state has no button,
-/// so its inset is `0`).
+/// so its inset is `0`). Deliberately NOT the same value as iOS/Android's
+/// `transportHorizontalPadding` (`12`) — this is a distinct, meaningful "make room for the
+/// button" offset, not a symmetric container margin (rb-flutter-progress-bar-expanded-ui-parity).
 const double _transportBarInset = 36;
+
+/// Expanded-state ONLY trailing (right) inset applied to the track, matching iOS
+/// `PlaybackProgressBarView.transportHorizontalPadding` / Android
+/// `transportHorizontalPadding` (both `12`, applied to BOTH sides of the transport row —
+/// Flutter's leading side already gets its own asymmetric [_transportBarInset] for the
+/// play/pause button, so only the trailing side needs this new, independent padding to reach
+/// visual parity). Flutter logical pixels are device-independent, exactly like iOS points and
+/// Android dp (see `player_header_bar_view.dart`'s marquee-constants doc comment), so this
+/// ports across with no unit conversion. `0` in the idle state (no transport bar, no padding —
+/// see [PlaybackProgressBarView._expandedTrackVisual], only ever composed while expanded).
+/// (rb-flutter-progress-bar-expanded-ui-parity)
+const double _expandedTrailingPadding = 12;
+
+/// Play/pause glyph size while the transport bar is expanded, matching iOS
+/// `PlaybackProgressBarView.playPauseIconSize` / Android `playPauseIconSize` (both `14`) — NOT
+/// [_playPauseButtonSize] (`28`, the tappable button's own frame, unchanged and already at
+/// parity). (rb-flutter-progress-bar-expanded-ui-parity)
+const double _playPauseIconSize = 14;
+
+/// The play/pause button's own tappable frame (unchanged — already at parity with iOS
+/// `playPauseButtonSize` / Android `playPauseButtonSize`, both `28`). Named so the icon-vs-button
+/// size distinction is explicit at every call site (rb-flutter-progress-bar-expanded-ui-parity).
+const double _playPauseButtonSize = 28;
+
+/// PURE: the expanded-state track's interactive/rendered width for a given full container
+/// [containerWidth] — subtracts the leading [_transportBarInset] (button + gap, unchanged) and
+/// the new symmetric trailing [_expandedTrailingPadding] (`12`, matches iOS/Android
+/// `transportHorizontalPadding` on the far side of the track). Negative results clamp to `0`
+/// (unit-testable without a widget; rb-flutter-progress-bar-expanded-ui-parity). Only used while
+/// [PlaybackProgressBarView.scrubBarExpanded] is true — the idle state has neither inset.
+double expandedTrackWidth(double containerWidth) =>
+    (containerWidth - _transportBarInset - _expandedTrailingPadding)
+        .clamp(0.0, double.infinity);
 
 /// PURE: idle-state / non-dragging fill ratio (`position/duration`, clamp to `[0,1]`).
 /// `duration <= 0` (including non-finite / negative) → `0` (unit-testable without a widget).
@@ -168,7 +203,9 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
         builder: (context, constraints) {
           final width = constraints.maxWidth;
           final inset = widget.scrubBarExpanded ? _transportBarInset : 0.0;
-          final trackWidth = (width - inset).clamp(0.0, double.infinity);
+          final trackWidth = widget.scrubBarExpanded
+              ? expandedTrackWidth(width)
+              : width.clamp(0.0, double.infinity);
           return Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -235,12 +272,12 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
                           behavior: HitTestBehavior.opaque,
                           onTap: widget.onTogglePlayPause,
                           child: SizedBox(
-                            width: 28,
-                            height: 28,
+                            width: _playPauseButtonSize,
+                            height: _playPauseButtonSize,
                             child: Icon(
                               widget.isPlaying ? Icons.pause : Icons.play_arrow,
                               color: Colors.white,
-                              size: 20,
+                              size: _playPauseIconSize,
                             ),
                           ),
                         ),
@@ -265,10 +302,13 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
   }
 
   /// Expanded-state visual: the draggable track + handle, shifted right by [inset] to clear the
-  /// play/pause button painted on top of this same region (see [build]'s doc comment).
+  /// play/pause button painted on top of this same region (see [build]'s doc comment), and
+  /// inset from the trailing edge by [_expandedTrailingPadding] to match iOS/Android's symmetric
+  /// `transportHorizontalPadding` on the far side of the track (rb-flutter-progress-bar-expanded-
+  /// ui-parity — the leading side keeps its own distinct [inset], only the trailing side is new).
   Widget _expandedTrackVisual(double inset, double trackWidth) {
     return Padding(
-      padding: EdgeInsets.only(left: inset),
+      padding: EdgeInsets.only(left: inset, right: _expandedTrailingPadding),
       child: Center(
         child: SizedBox(
           height: 14,

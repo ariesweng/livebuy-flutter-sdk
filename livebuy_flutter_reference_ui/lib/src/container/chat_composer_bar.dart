@@ -4,6 +4,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import 'arrow_up_circle_fill_glyph.dart';
 
 // MARK: - ChatComposerBar — the on-demand chat composer (SheetKit-of-Flutter; new pixel)
 //
@@ -297,19 +298,26 @@ class _ChatComposerBarState extends State<ChatComposerBar> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                // Send glyph tints accent when there is sendable text, else a dim white (parity
-                // iOS arrow.up.circle.fill accent / white-0.35). Listens to the field directly.
+                // Send glyph is a self-drawn ArrowUpCircleFillGlyph (rb-flutter-icon-parity-
+                // composer-skip-pip-batch, parity iOS arrow.up.circle.fill / Android
+                // ArrowUpCircleFillGlyph) whose disc tints accent when there is sendable text,
+                // else a dim white (the arrow itself is always white — see the glyph's own
+                // doc). `IconButton` is KEPT for its 48×48 tap target / disabled semantics /
+                // ripple, but its `color:` param is DROPPED — it only cascades via `IconTheme`
+                // to a descendant `Icon`, which a `CustomPaint`-based glyph never reads; the
+                // dynamic color is instead fed straight into the glyph's own `color:` argument.
+                // Listens to the field directly.
                 ValueListenableBuilder<TextEditingValue>(
                   valueListenable: _text,
                   builder: (context, value, _) {
                     final canSend = value.text.trim().isNotEmpty;
+                    final sendColor = canSend
+                        ? theme.accent
+                        : Colors.white.withValues(alpha: 0.35);
                     return IconButton(
                       key: LbTestKeys.chatSend,
                       onPressed: canSend ? _submit : null,
-                      color: canSend
-                          ? theme.accent
-                          : Colors.white.withValues(alpha: 0.35),
-                      icon: const Icon(Icons.send),
+                      icon: ArrowUpCircleFillGlyph(color: sendColor),
                     );
                   },
                 ),

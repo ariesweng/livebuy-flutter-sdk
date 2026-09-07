@@ -23,6 +23,7 @@ import tv.livebuy.sdk.events.LBShareContext
 import tv.livebuy.sdk.events.LivebuyEventListener
 import tv.livebuy.sdk.models.LBCheckoutItem
 import tv.livebuy.sdk.models.LBError
+import tv.livebuy.sdk.models.LBFeaturedGood
 import tv.livebuy.sdk.models.LBUser
 import tv.livebuy.sdk.models.LBVideoItem
 
@@ -593,24 +594,42 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
         }
     }
 
-    private fun serializeVideoItem(item: LBVideoItem): Map<String, Any?> = mapOf(
-        "id" to item.id,
-        "type" to item.type,
-        "title" to item.title,
-        "sessionName" to item.sessionName,
-        "cover" to item.cover,
-        "preview" to item.preview,
-        "duration" to item.duration,
-        "publishAt" to item.publishAt,
-        "watchNum" to item.watchNum,
-        "pvNum" to item.pvNum,
-        "liveStatus" to item.liveStatus,
-        "pin" to item.pin,
-        "showPvNum" to item.showPvNum,
-        "liveurl" to item.liveurl,
-        "playbackurl" to item.playbackurl,
-        "previewTime" to item.previewTime,
-        "showStock" to item.showStock,
+    private fun serializeVideoItem(item: LBVideoItem): Map<String, Any?> {
+        val map = mutableMapOf<String, Any?>(
+            "id" to item.id,
+            "type" to item.type,
+            "title" to item.title,
+            "sessionName" to item.sessionName,
+            "cover" to item.cover,
+            "preview" to item.preview,
+            "duration" to item.duration,
+            "publishAt" to item.publishAt,
+            "watchNum" to item.watchNum,
+            "pvNum" to item.pvNum,
+            "liveStatus" to item.liveStatus,
+            "pin" to item.pin,
+            "showPvNum" to item.showPvNum,
+            "liveurl" to item.liveurl,
+            "playbackurl" to item.playbackurl,
+            "previewTime" to item.previewTime,
+            "showStock" to item.showStock,
+        )
+        // video-linked-goods-core-flutter: omit the key entirely when null (mirrors the iOS
+        // `sessionName` / `goods` convention), never emit an explicit null entry for it.
+        item.goods?.let { map["goods"] = serializeFeaturedGood(it) }
+        return map
+    }
+
+    /// Serialize an `LBFeaturedGood` into the camelCase Flutter wire map
+    /// (video-linked-goods-core-flutter).
+    private fun serializeFeaturedGood(goods: LBFeaturedGood): Map<String, Any?> = mapOf(
+        "name" to goods.name,
+        "pic" to goods.pic,
+        "price" to goods.price,
+        "originalPrice" to goods.originalPrice,
+        "soldOut" to goods.soldOut,
+        "stock" to goods.stock,
+        "status" to goods.status,
     )
 
     private fun serializeSdkConfig(config: SDKConfig): Map<String, Any?> {

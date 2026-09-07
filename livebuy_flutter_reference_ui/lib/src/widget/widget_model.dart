@@ -1,4 +1,5 @@
-import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem;
+import 'package:livebuy_flutter/livebuy_flutter.dart'
+    show LBFeaturedGood, LBVideoItem;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
     show DefaultWidgetTemplate, LBWidgetContent, LBWidgetContentMode;
 
@@ -59,28 +60,41 @@ import 'widget_visibility.dart';
 //   fallback entry point (`normalizeProductCardMode`) turns it into a mode; this model
 //   just hands the raw value down. rb-flutter-widget-product-card-modes.
 //
-// ── goods overlay (Flutter core delta) ───────────────────────────────────────────
+// ── goods overlay (rb-flutter-video-linked-goods-auto-render — no longer a core
+//    delta) ─────────────────────────────────────────────────────────────────────
 //   The design's `LBPCarouselCard` carries a bottom dark-glass product overlay
-//   (`item.product` → name / price). On iOS / Android the core `LBVideoItem` exposes
-//   `goods: LBFeaturedGood?`; the Flutter core `LBVideoItem` (`/flutter/lib/src/
-//   models.dart`) has NO `goods` field and there is NO Dart `LBFeaturedGood`. To
-//   honour the spec's product-overlay requirement WITHOUT touching core, this
-//   reference-ui layer carries a tiny READ-ONLY value type [WidgetGoods]
-//   (`name` / `pic` / `price`) supplied BY VALUE for demo / golden cards. A live
-//   template `LBVideoItem` carries no goods, so the live path renders the overlay
-//   only when the host explicitly supplies a [WidgetGoods] (it never reaches back
-//   into core / template). This is the Flutter analogue of the Android delta
-//   ("`LBWidgetContent` has no `isLive` field → derive it").
+//   (`item.product` → name / price). This reference-ui layer still carries its own
+//   tiny READ-ONLY value type [WidgetGoods] (`name` / `pic` / `price` /
+//   `originalPrice`) — the shared `CarouselCardView` primitive keeps taking it BY
+//   VALUE, never reaching into `LBVideoItem` itself (SUB-VIEW INPUT PATTERN). What
+//   CHANGED (`video-linked-goods-core-flutter`, archived 2026-09-05): Flutter core
+//   `LBVideoItem` now carries `goods: LBFeaturedGood?`, aligned with iOS / Android —
+//   the historical "Flutter core has no goods field" parity delta is RETIRED. The
+//   drop-in `LivebuyWidget` container derives [WidgetGoods] straight off
+//   `item.goods` via [widgetGoodsFromFeatured] by DEFAULT now (host omits
+//   `LivebuyWidgetConfig.goodsFor`); a host-supplied `goodsFor` remains a full
+//   OVERRIDE escape hatch (including returning `null` to explicitly hide a card),
+//   taking precedence over the derived value. See `live_buy_widget.dart`'s
+//   `lbWidgetResolvedGoodsFor` (`widget_data.dart`) for the resolution order. A
+//   hand-assembled `WidgetOverlayView` (bypassing `LivebuyWidget`) is UNCHANGED —
+//   it still defaults to [WidgetSeeds.goodsFor] when `goodsFor` is omitted
+//   entirely, independent of this container-level default.
 //
 // No Flutter-framework dependency here — pure reads + plain-literal demo seeds, so
 // it stays unit-testable (see `docs/unit-test-discipline.md`).
 
 /// A tiny read-only product-overlay value for the shared `CarouselCardView`'s
 /// bottom dark-glass overlay (`LBPCarouselCard` `item.product`). Mirrors the
-/// iOS / Android `LBFeaturedGood` overlay fields (`name` / `pic` / `price`) WITHOUT
-/// depending on a core type the Flutter `LBVideoItem` does not carry. `price` is a
-/// raw `String` (rendered verbatim after the「NT$ 」prefix); `pic` is a URL the
-/// reference-ui never fetches (deterministic placeholder only). Supplied BY VALUE.
+/// iOS / Android `LBFeaturedGood` overlay fields (`name` / `pic` / `price`).
+/// Historically this existed to work around the Flutter core `LBVideoItem` not
+/// carrying a `goods` field at all; that gap is now closed
+/// (`video-linked-goods-core-flutter`) and [widgetGoodsFromFeatured] converts the
+/// core `LBFeaturedGood?` into this type — but [WidgetGoods] itself still exists,
+/// so the shared `CarouselCardView` primitive keeps a by-value, source-agnostic
+/// input (SUB-VIEW INPUT PATTERN) rather than reaching into `LBVideoItem` itself.
+/// `price` is a raw `String` (rendered verbatim after the「NT$ 」prefix); `pic` is a
+/// URL the reference-ui never fetches (deterministic placeholder only). Supplied BY
+/// VALUE.
 class WidgetGoods {
   /// Product name (1-line clamp in the overlay).
   final String name;
@@ -93,14 +107,14 @@ class WidgetGoods {
 
   /// OPTIONAL raw original price — the source for the struck-through「was」price the
   /// `product_card == 'below'` product row draws (design `LBPCardProductRow`'s
-  /// `product.was`). It is the Flutter stand-in for the iOS / Android
-  /// `LBFeaturedGood.originalPrice`, which the Flutter core `LBVideoItem` has no
-  /// equivalent of; since [WidgetGoods] is a reference-ui-owned by-value type, carrying
-  /// it here needs NO core / view-model change. Defaults to `''` (so every pre-existing
-  /// construction site is unchanged) → empty after trim → NO struck-through price is
-  /// drawn at all. The `inside` overlay never draws one (the design's
-  /// `LBPCardProductOverlay` has no `was`). Raw passthrough — it runs through the same
-  /// currency de-duplication as [price].
+  /// `product.was`). Mirrors the iOS / Android `LBFeaturedGood.originalPrice` field
+  /// (Flutter core now carries the same field on `LBFeaturedGood`,
+  /// `video-linked-goods-core-flutter` — [widgetGoodsFromFeatured] copies it
+  /// verbatim). Defaults to `''` (so every pre-existing construction site is
+  /// unchanged) → empty after trim → NO struck-through price is drawn at all. The
+  /// `inside` overlay never draws one (the design's `LBPCardProductOverlay` has no
+  /// `was`). Raw passthrough — it runs through the same currency de-duplication as
+  /// [price].
   final String originalPrice;
 
   const WidgetGoods({
@@ -109,6 +123,30 @@ class WidgetGoods {
     required this.price,
     this.originalPrice = '',
   });
+}
+
+/// Converts the core `LBFeaturedGood?` (`LBVideoItem.goods`,
+/// `video-linked-goods-core-flutter`) into this layer's by-value [WidgetGoods] —
+/// the DEFAULT data source `LivebuyWidget` now derives its product card from
+/// (rb-flutter-video-linked-goods-auto-render). `null` → `null` (a video with no
+/// linked product renders no card, same as an unbound demo card).
+///
+/// Pure field mapping, no trimming / reformatting: [WidgetGoods] carries no
+/// `soldOut` / `stock` / `status` counterpart — parity iOS / Android
+/// `CarouselCardView`, which likewise never renders those three `LBFeaturedGood`
+/// fields on the widget card, so they are dropped here rather than given a home
+/// nothing reads. `originalPrice` is passed through VERBATIM (including the
+/// backend's raw `''` for "no original price") — `CarouselCardView.strikePrice`
+/// already treats an empty / trim-empty value as "draw no struck-through price",
+/// so this function MUST NOT duplicate that trimming.
+WidgetGoods? widgetGoodsFromFeatured(LBFeaturedGood? featured) {
+  if (featured == null) return null;
+  return WidgetGoods(
+    name: featured.name,
+    pic: featured.pic,
+    price: featured.price,
+    originalPrice: featured.originalPrice,
+  );
 }
 
 /// Read-only snapshot bridge for the family-5 widget surfaces. Wraps a live

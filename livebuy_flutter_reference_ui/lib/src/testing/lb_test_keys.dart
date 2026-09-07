@@ -37,21 +37,40 @@ abstract final class LbTestKeys {
   static const Key railService = ValueKey('lb_rail_service');
   static const Key railGoods = ValueKey('lb_rail_goods');
 
-  /// 「更多」收合 pill (rb-flutter-live-replay-more-menu-and-video-info-live-copy):
-  /// shown by [OperationRailView] INSTEAD of the direct `share` / `serviceLink` pills
-  /// when `isFinishedLiveReplay == true` (a closed-chat finished live replay — the
-  /// Flutter surface that actually renders that state, NOT `LiveBottomBarView`; see
-  /// this change's `design.md`).
+  /// 「更多」收合 pill — COMPONENT-LEVEL ONLY since `rb-flutter-replay-live-chrome-parity`
+  /// (originally rb-flutter-live-replay-more-menu-and-video-info-live-copy): shown by
+  /// [OperationRailView] INSTEAD of the direct `share` / `serviceLink` pills when
+  /// `isFinishedLiveReplay == true`. No longer a real `player_shell_view.dart` call-site path —
+  /// the rail's `!usesLiveChrome` gate guarantees this branch is unreachable in production now;
+  /// see `OperationRailView.isFinishedLiveReplay`'s own doc comment. Retained for
+  /// `operation_rail_test.dart`'s standalone component tests.
   static const Key railMore = ValueKey('lb_rail_more');
 
-  /// The「更多」bottom sheet root (`player_shell_view.dart`'s `_RailMoreMenuSheet`).
-  static const Key railMoreSheet = ValueKey('lb_rail_more_sheet');
+  /// The「更多」(⋯) button on [LiveBottomBarView]'s `isFinishedLiveReplay` variant
+  /// (`rb-flutter-replay-live-chrome-parity`, parity iOS `LBAccessibilityID.liveMore`) — the REAL
+  /// call-site path for a closed-chat finished live replay's collapsed-more entry point.
+  static const Key liveMore = ValueKey('lb_live_more');
 
-  /// 「分享」slot inside the「更多」sheet.
-  static const Key railMoreShare = ValueKey('lb_rail_more_share');
+  /// The CC (字幕) toggle button on [LiveBottomBarView]'s `isFinishedLiveReplay` variant, in the
+  /// trailing slot share's position (`rb-flutter-replay-live-chrome-parity`, parity iOS
+  /// `LBAccessibilityID.liveCC`).
+  static const Key liveCC = ValueKey('lb_live_cc');
 
-  /// 「客服」slot inside the「更多」sheet.
-  static const Key railMoreContact = ValueKey('lb_rail_more_contact');
+  /// The「更多」bottom sheet root (`player_shell_view.dart`'s `_RailMoreMenuSheet`), triggered
+  /// via [liveMore] since `rb-flutter-replay-live-chrome-parity` (was triggered via the now-
+  /// component-level-only [railMore] — renamed `railMoreSheet` → `liveMoreSheet`, value
+  /// `lb_rail_more_sheet` → `lb_live_more_sheet`, to match the real trigger surface and align
+  /// with iOS `LBAccessibilityID.liveMoreSheet`'s existing same-named value).
+  static const Key liveMoreSheet = ValueKey('lb_live_more_sheet');
+
+  /// 「分享」slot inside the「更多」sheet (renamed from `railMoreShare`, value
+  /// `lb_rail_more_share` → `lb_live_more_share`, parity iOS `LBAccessibilityID.liveMoreShare`).
+  static const Key liveMoreShare = ValueKey('lb_live_more_share');
+
+  /// 「客服」slot inside the「更多」sheet (renamed from `railMoreContact`, value
+  /// `lb_rail_more_contact` → `lb_live_more_contact`, parity iOS
+  /// `LBAccessibilityID.liveMoreContact`).
+  static const Key liveMoreContact = ValueKey('lb_live_more_contact');
 
   static const Key liveBagButton = ValueKey('lb_live_bag_button');
   static const Key liveCommentPill = ValueKey('lb_live_comment_pill');

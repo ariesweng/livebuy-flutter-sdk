@@ -291,8 +291,10 @@ class FeedWinOverlayView extends StatefulWidget {
   /// Whether the family-1 info panel (VideoInfoPanel bottom sheet) is currently open. The chat
   /// feed (rendered ABOVE the shell layer) would otherwise occlude / swallow taps on the sheet,
   /// so it is hidden while the panel is up (parity iOS rb-ios-info-panel-not-covered-by-chat).
-  /// Default false. The chat is ALSO LIVE-only — dropped in VOD (parity rb-ios-hide-chat-feed-
-  /// in-vod): with no live template (`isLive` false / demo seeds) it is not drawn.
+  /// Default false. The chat is ALSO live-chrome-family-only — dropped in purely-VOD (parity
+  /// rb-ios-hide-chat-feed-in-vod, extended by `rb-flutter-replay-live-chrome-parity` to also
+  /// cover an already-finished live replay, parity iOS/Android `usesLiveChrome`): with no live
+  /// template (both `isLive` / `isFinishedLiveReplay` false / demo seeds) it is not drawn.
   final bool infoPanelOpen;
 
   /// Right-edge clearance (pt) reserved for the chat feed so it stays in the design's LEFT column
@@ -309,10 +311,13 @@ class FeedWinOverlayView extends StatefulWidget {
   /// EXISTING call site keeps rendering unchanged.
   final bool cleanMode;
 
-  /// Whether the closed-chat finished-replay rail's「更多」sheet (`PlayerShellView`'s
-  /// `_moreMenuOpen` / `_RailMoreMenuSheet`) is currently open — bubbled through the container
-  /// (`onMoreMenuOpenChange` → `PlayerOverlayContext.moreMenuOpen` → `MinimalDesign.playerOverlay`
-  /// forward), 比照既有 [cleanMode] 冒泡管線 (rb-flutter-live-more-sheet-above-chat). `true` →
+  /// Whether the closed-chat finished-replay「更多」sheet (`PlayerShellView`'s `_moreMenuOpen` /
+  /// `_RailMoreMenuSheet`, triggered via `LiveBottomBarView.onMore` since
+  /// `rb-flutter-replay-live-chrome-parity` — originally the now-component-level-only
+  /// `OperationRailView.onTapMore`, see that widget's own doc comment) is currently open —
+  /// bubbled through the container (`onMoreMenuOpenChange` → `PlayerOverlayContext.moreMenuOpen`
+  /// → `MinimalDesign.playerOverlay` forward), 比照既有 [cleanMode] 冒泡管線
+  /// (rb-flutter-live-more-sheet-above-chat). `true` →
   /// hides this WHOLE widget (聊天 feed + 中獎 toast / 入口一起隱藏 —— 沿用 [infoPanelOpen] /
   /// [cleanMode] 已建立的隱藏粒度, 非本欄位新開更細的機制). Default `false` — every EXISTING call
   /// site keeps rendering unchanged.
@@ -411,16 +416,20 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
     final theme = widget.theme;
     final m = _model;
 
-    // The chat feed is LIVE-only (parity rb-ios-hide-chat-feed-in-vod) AND hidden while the info
-    // panel is up (parity rb-ios-info-panel-not-covered-by-chat). VOD or info-panel-open → the
-    // chat is dropped so it neither occludes the info-panel sheet nor swallows the VOD side rail's
-    // taps. `isLive` reads the live template's header (false for demo seeds / no template).
+    // The chat feed is live-chrome-family-only (真直播 OR 已結束直播回放,
+    // rb-flutter-replay-live-chrome-parity — was LIVE-only, parity rb-ios-hide-chat-feed-in-vod
+    // extended to also cover a finished replay, parity iOS/Android `usesLiveChrome`) AND hidden
+    // while the info panel is up (parity rb-ios-info-panel-not-covered-by-chat). 純 VOD or
+    // info-panel-open → the chat is dropped so it neither occludes the info-panel sheet nor
+    // swallows the VOD side rail's taps. `isLive` / `isFinishedLiveReplay` read the live
+    // template's header (both `false` for demo seeds / no template, i.e. treated as pure VOD).
     // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）追加 `&& !widget.cleanMode` —— 冒泡自
     // `PlayerShellView._cleanMode`（design.md D5），比照既有 infoPanelOpen 的同一個判斷式、同一個
     // 隱藏粒度（ActivityToastView + ChatFeedView 一起隱藏；WinEntryView / WinClaimSheetView 不受影響）。
     // 「更多」選單開合（rb-flutter-live-more-sheet-above-chat）追加 `&& !widget.moreMenuOpen` ——
     // 冒泡自 `PlayerShellView._moreMenuOpen`，同一個隱藏粒度，避免其被聊天列遮蓋/吃點擊。
-    final chatVisible = (widget.template?.header.isLive ?? false) &&
+    final chatVisible = ((widget.template?.header.isLive ?? false) ||
+            (widget.template?.header.isFinishedLiveReplay ?? false)) &&
         !widget.infoPanelOpen &&
         !widget.cleanMode &&
         !widget.moreMenuOpen;

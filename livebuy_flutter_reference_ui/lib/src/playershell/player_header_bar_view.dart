@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../productsheets/sheet_scaffold.dart' show liveProductImage;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import 'pip_glyph.dart';
 
 // PlayerHeaderBarView — family-1 surface 1 (top-bar chrome).
 //
@@ -175,6 +176,15 @@ class PlayerHeaderBarView extends StatelessWidget {
   /// dead space for a hidden badge.
   final bool showSubscribe;
 
+  /// Whether the viewer-count badge is drawn at all
+  /// (rb-flutter-viewer-count-visibility-toggle, parity iOS / Android `showViewerCount`).
+  /// Default `true` — this WIDGET's own default preserves EXISTING call sites / golden
+  /// baselines byte-identical (this file's viewer-count gate was `isLive` alone before
+  /// this flag landed). `false` hides the badge even while `isLive == true` (including
+  /// replay); the LIVE red pill (`isLive && !isReplay`) is UNAFFECTED — this flag only
+  /// ANDs onto the viewer-count gate, never the LIVE pill's.
+  final bool showViewerCount;
+
   /// MERCHANT capability gate for the top-bar title MARQUEE
   /// (rb-flutter-marquee-title-scroll, parity iOS / Android `titleScroll`).
   ///
@@ -222,8 +232,9 @@ class PlayerHeaderBarView extends StatelessWidget {
   /// resolves that elsewhere (via the shared pure function
   /// `resolvedEnableDirectCloseButton`) and hands down this single bool.
   ///
-  /// `false` (DEFAULT — every EXISTING call site / golden baseline) → draws the existing
-  /// `Icons.picture_in_picture_alt` glyph, semantics label `'最小化'`. `true` → draws
+  /// `false` (DEFAULT — every EXISTING call site / golden baseline) → draws the self-drawn
+  /// `PipGlyph` (`rb-flutter-icon-parity-composer-skip-pip-batch`, replacing the former
+  /// Material `Icons.picture_in_picture_alt`), semantics label `'最小化'`. `true` → draws
   /// `Icons.close` (the same codepoint `FloatingWidgetView` / `MinimizedWidgetView` already
   /// use for their own close buttons — no new glyph invented), semantics label `'關閉'`
   /// (see [minimizeButtonSemanticsLabel]). `onMinimize`'s trigger timing is COMPLETELY
@@ -259,6 +270,7 @@ class PlayerHeaderBarView extends StatelessWidget {
     this.onToggleSubscribe,
     this.onTapHostBadge,
     this.showSubscribe = true,
+    this.showViewerCount = true,
     this.titleScroll,
     this.hideHostPill = false,
     this.showCloseIcon = false,
@@ -384,14 +396,17 @@ class PlayerHeaderBarView extends StatelessWidget {
                       ),
                     ),
                     // Per design `LBPHostBadge`: LIVE pill ⟺ isLive && !isReplay;
-                    // viewer count ⟺ isLive (replay KEEPS the count, only HIDES the
-                    // pill; VOD shows neither). The spacing folds into each gate so no
-                    // dangling gap remains when an element is hidden.
+                    // viewer count ⟺ isLive && showViewerCount (replay KEEPS the count,
+                    // only HIDES the pill; VOD shows neither). showViewerCount is the
+                    // host opt-out gate (rb-flutter-viewer-count-visibility-toggle,
+                    // parity iOS/Android) — it ANDs onto the viewer-count gate ONLY, the
+                    // LIVE pill's own gate is unaffected. The spacing folds into each
+                    // gate so no dangling gap remains when an element is hidden.
                     if (isLive && !isReplay) ...[
                       const SizedBox(width: 6),
                       _livePill(),
                     ],
-                    if (isLive) ...[
+                    if (isLive && showViewerCount) ...[
                       const SizedBox(width: 6),
                       _viewerBadge(),
                     ],
@@ -868,23 +883,27 @@ class PlayerHeaderBarView extends StatelessWidget {
   // gated to only appear while [onToggleMute] is non-null (i.e. clean mode is active).
 
   Widget _minimizeButton() {
-    // picture_in_picture_alt = the Material PiP-enter glyph (parity to the iOS SF
-    // Symbol `pip.enter`): collapse into the bottom-right floating preview.
+    // showCloseIcon == false (DEFAULT): self-drawn PipGlyph (rb-flutter-icon-parity-
+    // composer-skip-pip-batch, parity iOS/Android PipGlyph — replaces the former Material
+    // `Icons.picture_in_picture_alt`): collapse into the bottom-right floating preview.
     // `_glassIconButton` is a shared helper → wrap (not key) so the minimize key is
     // specific to this button (KeyedSubtree → no RenderObject, golden byte-identical).
     //
     // rb-flutter-player-direct-close-button: [showCloseIcon] swaps the glyph for
     // `Icons.close` (same codepoint `FloatingWidgetView` / `MinimizedWidgetView` already
-    // use) and the `Semantics.label` accordingly — a pure by-value presentation switch,
-    // `onMinimize`'s trigger timing is unaffected. DEFAULT `false` keeps every EXISTING
-    // call site / golden baseline byte-identical.
+    // use, UNTOUCHED by the icon-parity upgrade above) and the `Semantics.label`
+    // accordingly — a pure by-value presentation switch, `onMinimize`'s trigger timing is
+    // unaffected. DEFAULT `false` keeps every EXISTING call site / golden baseline
+    // byte-identical (aside from the one-time PipGlyph re-record).
     return KeyedSubtree(
       key: LbTestKeys.playerMinimize,
       child: Semantics(
         label: minimizeButtonSemanticsLabel(showCloseIcon),
         button: true,
         child: _glassIconButton(
-          showCloseIcon ? Icons.close : Icons.picture_in_picture_alt,
+          showCloseIcon
+              ? (size, color) => Icon(Icons.close, size: size, color: color)
+              : (size, color) => PipGlyph(color: color, size: size),
           onMinimize,
         ),
       ),
@@ -905,13 +924,23 @@ class PlayerHeaderBarView extends StatelessWidget {
     return KeyedSubtree(
       key: LbTestKeys.playerHeaderMuteButton,
       child: _glassIconButton(
-          muted ? Icons.volume_off : Icons.volume_up, onToggleMute),
+        (size, color) =>
+            Icon(muted ? Icons.volume_off : Icons.volume_up, size: size, color: color),
+        onToggleMute,
+      ),
     );
   }
 
   /// A 36×36 round glass icon button (live-chrome.jsx iconBtn). Always rendered so
   /// the chrome is visually complete; inert when its callback is null.
-  Widget _glassIconButton(IconData icon, VoidCallback? onTap) {
+  ///
+  /// [iconBuilder] is a builder (`rb-flutter-icon-parity-composer-skip-pip-batch`, widened
+  /// from a plain `IconData` param) rather than a pre-built `Widget`: the `20 *
+  /// theme.fontScale` size and `_onGlass` color formula below stay centralized in this ONE
+  /// place — both callers ([_minimizeButton] / [_muteButton]) just hand back the `Icon(...)`
+  /// or glyph widget for the given size/color, instead of each duplicating this formula.
+  Widget _glassIconButton(
+      Widget Function(double size, Color color) iconBuilder, VoidCallback? onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -922,7 +951,7 @@ class PlayerHeaderBarView extends StatelessWidget {
           color: _iconGlass,
           shape: BoxShape.circle,
         ),
-        child: Icon(icon, size: 20 * theme.fontScale, color: _onGlass),
+        child: iconBuilder(20 * theme.fontScale, _onGlass),
       ),
     );
   }

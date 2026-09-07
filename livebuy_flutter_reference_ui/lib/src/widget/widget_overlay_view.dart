@@ -5,7 +5,8 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 
 import '../reference_ui_theme.dart';
 import 'external_live.dart';
-import 'widget_model.dart';
+import 'widget_model.dart'
+    show WidgetGoods, WidgetModel, WidgetSeeds, widgetGoodsFromFeatured;
 // Surface widgets — landed by the parallel Surfaces agents. The container fixes the
 // call-site shapes; the file names match the imports EXACTLY (no shim files). Per
 // the family file-naming discipline: carousel.dart (CarouselView) / video_shop_grid
@@ -143,9 +144,15 @@ export 'minimized_widget.dart';
 // off [WidgetModel] by this container) and derive the theme INTERNALLY; `FloatingWidgetView`
 // / `MinimizedWidgetView` deliberately take neither (rb-flutter-widget-embed-colors).
 //
-// The container passes the deterministic per-card goods overlay via
-// `WidgetSeeds.goodsFor` (Flutter core `LBVideoItem` has no `goods` field). The host
-// path supplies its own `goodsFor` (or null → no overlay).
+// The container's per-card goods overlay is a three-tier priority
+// (`rb-flutter-widget-overlay-view-goods-auto-render`, see `_goodsFor` below): host
+// `goodsFor` (full override, including an explicit `null` to hide a card) > the
+// deterministic `WidgetSeeds.goodsFor` seed when `template == null` (demo / golden /
+// widget-test) > deriving straight off the core `item.goods` field via
+// `widgetGoodsFromFeatured` when `template != null` (real live data — Flutter core
+// `LBVideoItem` HAS a `goods: LBFeaturedGood?` field since `video-linked-goods-core-flutter`,
+// retiring the historical "Flutter core has no goods field" parity delta this doc comment
+// used to describe).
 
 /// The top-level family-5 embedded-widget container. Binds the WIDGET template's
 /// host-bindable `content` (`DefaultWidgetContent`) and dispatches the matching
@@ -159,9 +166,13 @@ class WidgetOverlayView extends StatefulWidget {
   /// Resolved reference-ui theme.
   final ReferenceUITheme theme;
 
-  /// Optional per-card product overlay resolver (reference-ui `WidgetGoods` — Flutter
-  /// core `LBVideoItem` has no `goods` field). Defaults to [WidgetSeeds.goodsFor]
-  /// (deterministic demo overlays). Pass `(_) => null` for no overlay.
+  /// Optional per-card product overlay resolver (reference-ui `WidgetGoods`, a by-value type
+  /// distinct from the core `LBFeaturedGood` that `LBVideoItem.goods` carries). When omitted,
+  /// [_WidgetOverlayViewState._goodsFor] falls back to [WidgetSeeds.goodsFor] (`template ==
+  /// null`, demo / golden / widget tests) or derives from `item.goods` via
+  /// [widgetGoodsFromFeatured] (`template != null`, real live data —
+  /// `rb-flutter-widget-overlay-view-goods-auto-render`). Pass `(_) => null` for no overlay on
+  /// every card regardless of `item.goods`.
   final WidgetGoods? Function(LBVideoItem item)? goodsFor;
 
   /// Whether the dispatched surface's cards load their real cover photo. `false`
@@ -222,9 +233,30 @@ class _WidgetOverlayViewState extends State<WidgetOverlayView> {
     }
   }
 
-  /// Per-card goods overlay resolver (host-supplied or the deterministic demo).
-  WidgetGoods? _goodsFor(LBVideoItem item) =>
-      (widget.goodsFor ?? WidgetSeeds.goodsFor)(item);
+  /// Per-card goods overlay resolver — three-tier priority
+  /// (`rb-flutter-widget-overlay-view-goods-auto-render`, parity with the `LivebuyWidget`
+  /// container's own `lbWidgetResolvedGoodsFor`, but keyed on `template == null` rather than
+  /// a `usingDemo` flag — this widget has no such flag of its own):
+  ///   1. `widget.goodsFor` non-null (host override) → its return value WINS for every card,
+  ///      including an explicit `null` for a specific item (host chose to hide it — MUST NOT
+  ///      fall back to `item.goods`).
+  ///   2. `widget.goodsFor == null && widget.template == null` (demo / golden / widget-test
+  ///      path — no live data to derive from) → the deterministic [WidgetSeeds.goodsFor] seed,
+  ///      UNCHANGED from before this three-tier priority existed.
+  ///   3. `widget.goodsFor == null && widget.template != null` (real live-data path, the most
+  ///      common case for a host that bypasses `LivebuyWidget`) → derive straight off the
+  ///      core `item.goods` field via [widgetGoodsFromFeatured] (`null` → no card).
+  ///
+  /// When reached via `LivebuyWidget` (the turnkey container), the `goodsFor` it passes down
+  /// is ALWAYS a non-null resolver (`lbWidgetResolvedGoodsFor` never itself returns `null`),
+  /// so tier 1 always wins on that path and tiers 2/3 here never actually execute — they only
+  /// matter for a host that assembles this widget directly, bypassing `LivebuyWidget`.
+  WidgetGoods? _goodsFor(LBVideoItem item) {
+    final hostGoodsFor = widget.goodsFor;
+    if (hostGoodsFor != null) return hostGoodsFor(item);
+    if (widget.template == null) return WidgetSeeds.goodsFor(item);
+    return widgetGoodsFromFeatured(item.goods);
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -3,6 +3,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show LBPStartPhase;
 
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import 'chevron_forward_glyph.dart';
 import 'loading_mark_animation_view.dart';
 
 // StartScreenView — family-4 moments surface 1 (start-lifecycle).
@@ -206,8 +207,10 @@ class StartScreenView extends StatelessWidget {
             ),
             const SizedBox(width: 6),
             // Fast-forward chevrons (the design's `M5 4l8 8…M14 4l6 8…` SVG):
-            // open double chevron » (stroke), matching iOS/Android ChevronForwardGlyph.
-            const Icon(Icons.keyboard_double_arrow_right, size: 13, color: Colors.white),
+            // self-drawn open double chevron » (stroke), matching iOS/Android
+            // ChevronForwardGlyph (rb-flutter-icon-parity-composer-skip-pip-batch — this
+            // comment previously claimed parity before the glyph actually existed here).
+            const ChevronForwardGlyph(color: Colors.white, size: 13),
           ],
         ),
       ),

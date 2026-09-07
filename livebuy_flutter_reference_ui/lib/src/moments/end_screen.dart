@@ -7,6 +7,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 import '../productsheets/sheet_scaffold.dart' show liveProductImage;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import 'arrow_clockwise_glyph.dart';
 
 // EndScreenView — family-4 moments surface 2 (full-screen END moment).
 //
@@ -609,7 +610,7 @@ class _EndScreenViewState extends State<EndScreenView> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.refresh, size: 13, color: Colors.white),
+                const ArrowClockwiseGlyph(color: Colors.white, size: 13),
                 const SizedBox(width: 5),
                 Text(
                   _shuffleLabel,

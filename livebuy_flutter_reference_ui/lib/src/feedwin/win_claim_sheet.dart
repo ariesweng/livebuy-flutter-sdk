@@ -12,6 +12,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import 'gift_glyph.dart';
 import 'win_glyph.dart';
 
 // WinClaimSheetView — family-2 feed-win surface 3 (四階段領獎 modal，含 email 輸入，Flutter).
@@ -1306,7 +1307,7 @@ class _WinClaimSheetViewState extends State<WinClaimSheetView> {
               color: theme.accent.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(Icons.redeem, size: 20, color: theme.accent),
+            child: GiftGlyph(color: theme.accent, size: 20),
           ),
           const SizedBox(width: 12),
           Expanded(

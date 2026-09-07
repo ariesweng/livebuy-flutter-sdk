@@ -195,6 +195,12 @@ class TemplateAttachment {
           final bool chatEnabled = (event.params['live_status'] as num?)?.toInt() == 1 &&
               (gc as num).toInt() == 1;
           template.handleChatEnabled(chatEnabled);
+          // guest-edit-available-poll-derive-template-flutter — 同一輪已解出的 `guest_comment` 額外
+          // 推導側欄 `guestNameEdit.enabled`（`guestEditAvailable`），鏡射 iOS `ingestChannel` 對這個
+          // 旗標本身的公式（`ch.guestComment == 1`）。刻意 NOT 併入 `live_status`（design.md D1）——
+          // 與上面 `chatEnabled` 的公式不同，這是兩個獨立推導。
+          final bool guestEditAvailable = (gc as num).toInt() == 1;
+          template.handleGuestEditAvailable(guestEditAvailable);
         }
         // 問題5 — the native core relays the CURRENT channel `notice` / `sys_notice` on every
         // POLL_RECEIVED (live-notice-poll-relay-core). Ingest it so the LIVE 公告 banner / notice tab

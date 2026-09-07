@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBProduct;
 
@@ -117,6 +119,40 @@ class LiveOverlayChromeView extends StatelessWidget {
   /// live-announce-tap-open-info-panel.
   final VoidCallback? onTapAnnounce;
 
+  /// LIVE vs already-finished-live-replay flag (`rb-flutter-replay-live-chrome-parity`, parity
+  /// iOS `LiveOverlayChromeView.isLive`). Default `true` — this widget was ORIGINALLY only ever
+  /// composed while `PlayerShellModel.isLive == true` (a genuinely-live broadcast); the default
+  /// keeps every existing call site / golden byte-identical when it is omitted. Now that
+  /// `PlayerShellView` also composes this widget for an already-finished live replay
+  /// (`isFinishedLiveReplay == true`, `isLive == false`), the call site feeds `isLive: m.isLive`
+  /// so this widget can tell the two live-chrome-family sub-states apart:
+  ///   - [_isNarrating] uses `product.narrateStatus == 2` ONLY when `isLive == true` (a real live
+  ///     source); when `isLive == false` the pinned card's source is already the time-window-
+  ///     filtered `vodActiveProducts` (see `PlayerShellView`'s call site), so every product fed in
+  ///     is already "currently narrating" by construction — `narrateStatus` carries no such
+  ///     signal for a replay.
+  ///   - [_gestureHints] shows a THIRD hold-hint line ("長按畫面 = 2倍速快轉") ONLY when
+  ///     `isLive == false` — a long-press has no effect at all while genuinely live (see
+  ///     `PlayerShellView.isSeekable` / `_handleLongPressStart`: `isSeekable` is structurally
+  ///     `false` whenever `isLive == true`, so showing that hint there would describe an
+  ///     unreachable gesture), but DOES trigger a real 2×-speed hold for a finished replay
+  ///     (`isSeekable == true` there).
+  final bool isLive;
+
+  /// Whether the gesture-hint pill group (`_gestureHints()`) SHALL auto-fade to fully
+  /// transparent 3.5s after it appears, via a 0.6s ease-out animation
+  /// (`autoFadeGestureHints-gesture-hint-fade`, parity iOS
+  /// `LiveOverlayChromeView.swift:124,189,216-224` / Android
+  /// `LiveOverlayChrome.kt:179,247,626-639`). New parameter, default `false` — source-compatible,
+  /// non-BREAKING; every existing call site / golden stays byte-identical when omitted (no
+  /// `Timer` / `AnimatedOpacity` is constructed on the default path, see `_FadingGestureHints`).
+  /// Orthogonal to [isLive]'s two-vs-three-row hint split (`rb-flutter-replay-live-chrome-parity`)
+  /// and to [showGestureHints]'s own display gate — this only controls whether an ALREADY-shown
+  /// hint group fades away, never whether it is drawn at all. The driving value at the
+  /// `PlayerShellView` call site is `widget.live` (NOT `isLive` — see that call site's own
+  /// doc comment for why the two are semantically distinct).
+  final bool autoFadeGestureHints;
+
   const LiveOverlayChromeView({
     super.key,
     required this.theme,
@@ -128,6 +164,8 @@ class LiveOverlayChromeView extends StatelessWidget {
     this.onTapPinnedProduct,
     this.onDismissPinnedProduct,
     this.onTapAnnounce,
+    this.isLive = true,
+    this.autoFadeGestureHints = false,
   });
 
   @override
@@ -151,9 +189,19 @@ class LiveOverlayChromeView extends StatelessWidget {
             ),
           ),
 
-        // Centered static gesture hints (`LBPGestureHint`).
+        // Centered static gesture hints (`LBPGestureHint`). Wrapped in `_FadingGestureHints` so
+        // `autoFadeGestureHints` can fade the WHOLE group to fully transparent 3.5s after it
+        // appears (autoFadeGestureHints-gesture-hint-fade) — orthogonal to the `isLive`
+        // two/three-row split baked into `_gestureHints()` itself.
         if (showGestureHints)
-          IgnorePointer(child: Center(child: _gestureHints())),
+          IgnorePointer(
+            child: Center(
+              child: _FadingGestureHints(
+                autoFade: autoFadeGestureHints,
+                child: _gestureHints(),
+              ),
+            ),
+          ),
 
         // Bottom row: announce banner (left) + pinned card (right).
         // `live-chrome.jsx`: announce `left:8 right:120 bottom:70`,
@@ -310,9 +358,10 @@ class LiveOverlayChromeView extends StatelessWidget {
                   // the thumbnail to a full-width strip overlaid on the thumbnail's bottom edge
                   // (rb-flutter-vod-live-product-card-restyle; was `theme.accent` icon+text under
                   // the image). Fixed coral fill (design `rgba(240,50,70,.7)`), unifying the
-                  // vocabulary with `ProductRow`'s「介紹中」badge. Render condition unchanged
-                  // (`_isNarrating(product)`).
-                  if (_isNarrating(product))
+                  // vocabulary with `ProductRow`'s「介紹中」badge. Render condition
+                  // (`_isNarrating(product, isLive)`, rb-flutter-replay-live-chrome-parity — was
+                  // `_isNarrating(product)` reading only `narrateStatus`).
+                  if (_isNarrating(product, isLive))
                     Positioned(
                       left: 0,
                       right: 0,
@@ -451,15 +500,23 @@ class LiveOverlayChromeView extends StatelessWidget {
 
   // ── LBPGestureHint — centered static gesture hints ───────────────────────
 
-  /// Two centered dark hint pills (`LBPGestureHint`): tap-to-toggle-clean-mode,
-  /// swipe-to-switch (rb-flutter-gesture-clean-mode-v2 — the long-press hint pill this widget
-  /// used to show a THIRD row for is REMOVED: this widget is only ever composed while
-  /// `PlayerShellModel.isLive == true`, i.e. a genuinely-live broadcast in progress — see
-  /// `PlayerShellView._buildContent`'s `if (m.isLive) LiveOverlayChromeView else ...`
-  /// branch, which VOD and a finished-live replay never reach — and under R29 a long-press has NO
-  /// action at all for that state (see the「Flutter player-shell 播放器手勢二度重寫...」
-  /// Requirement's structural no-op), so there is no correct long-press copy left to show here).
-  /// Pure static localized copy.
+  /// Two OR three centered dark hint pills (`LBPGestureHint`): tap-to-toggle-clean-mode,
+  /// [optionally] hold-for-2x-speed, swipe-to-switch.
+  ///
+  /// `rb-flutter-replay-live-chrome-parity` RESTORES the hold-hint pill for `isLive == false`
+  /// (already-finished-live replay), correcting the prior `rb-flutter-gesture-clean-mode-v2`-era
+  /// removal: that removal's reasoning was CORRECT at the time (this widget was ONLY ever
+  /// composed while `PlayerShellModel.isLive == true`, a genuinely-live broadcast, where a
+  /// long-press structurally has no action under R29 — see `isSeekable(isLive:isUpcoming:
+  /// isFinishedLiveReplay:)`, which is `false` whenever `isLive == true`), but the PREMISE
+  /// changed: `PlayerShellView._buildContent` now also composes this widget for `usesLiveChrome`
+  /// (`isLive || isFinishedLiveReplay`), so the previously-unreachable `isLive == false` render
+  /// path is real — and for THAT sub-state `isSeekable` is structurally `true` (a finished
+  /// replay IS seekable, same as VOD), so a long-press really does trigger the 2×-speed hold
+  /// (`_handleLongPressStart` / `_startSpeedMode` in `player_shell_view.dart`) and deserves the
+  /// hint. `isLive == true` (genuinely live) still shows only the two original rows — no
+  /// structural change there, byte-identical to the pre-this-change render. Pure static
+  /// localized copy.
   Widget _gestureHints() {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -467,6 +524,10 @@ class LiveOverlayChromeView extends StatelessWidget {
       children: [
         _gestureHintPill(Icons.touch_app, _hintTap),
         const SizedBox(height: 8),
+        if (!isLive) ...[
+          _gestureHintPill(Icons.back_hand, _hintHold),
+          const SizedBox(height: 8),
+        ],
         _gestureHintPill(Icons.swap_vert, _hintSwipe),
       ],
     );
@@ -499,9 +560,17 @@ class LiveOverlayChromeView extends StatelessWidget {
 
   // ── Design tokens / derived copy (pure) ──────────────────────────────────
 
-  /// The pinned product is "narrating" when `narrateStatus == 2` (core
-  /// convention). Pure.
-  bool _isNarrating(LBProduct product) => product.narrateStatus == 2;
+  /// The pinned product is "narrating" when `isLive == true` (a genuinely-live source, its
+  /// pinned card comes from `PlayerShellModel.livePinnedProducts`, ALL of which may or may not
+  /// currently be narrating) AND `narrateStatus == 2` (core convention). For a finished-live
+  /// replay (`isLive == false`), `pinnedCard(_:)`'s caller only ever feeds
+  /// `PlayerShellModel.vodActiveProducts` — already time-window-filtered `[beginTime, endTime)`
+  /// against the current playhead — so being IN that list IS the "narrating" signal;
+  /// re-checking the stale `narrateStatus` on top of it would be redundant and wrong (a replay
+  /// has no live `narrateStatus == 2` signal at all), so this unconditionally returns `true`
+  /// there (`rb-flutter-replay-live-chrome-parity`, parity iOS `isNarrating(_:isLive:)`). Pure.
+  bool _isNarrating(LBProduct product, bool isLive) =>
+      isLive ? product.narrateStatus == 2 : true;
 
   /// The pinned card's product image URL (`photos.first ?? pic`). `liveProductImage`
   /// trims it and gates on emptiness, so this only picks the first photo or falls back
@@ -516,6 +585,68 @@ class LiveOverlayChromeView extends StatelessWidget {
     if (show.isNotEmpty) return show;
     final price = product.price ?? 0;
     return 'NT\$ ${price.toInt()}';
+  }
+}
+
+// ── LBPGestureHint auto-fade wrapper ──────────────────────────────────────
+
+/// Locally-scoped fade-out timer / animation for the gesture-hint pill group
+/// (`autoFadeGestureHints`, parity iOS `LiveOverlayChromeView.swift:124,189,216-224` / Android
+/// `LiveOverlayChrome.kt:179,247,626-639`). `LiveOverlayChromeView` itself stays a
+/// `StatelessWidget` — this private `StatefulWidget` carries the transient opacity state,
+/// mirroring this file's existing `HeartBurst` precedent (`heart_burst.dart`) for localizing
+/// short-lived animation state to the smallest necessary scope instead of upgrading the whole
+/// surface to Stateful.
+///
+/// `autoFade == false` (default) returns [child] UNCHANGED — no `Timer`, no `AnimatedOpacity` is
+/// ever constructed — so the widget-tree SHAPE (and therefore every existing byte-identical
+/// golden) is unaffected. `autoFade == true` starts a one-shot 3.5s `Timer`; once it fires,
+/// [child] fades to fully transparent over 0.6s with an ease-out curve (`AnimatedOpacity`),
+/// matching iOS `.easeOut(duration: 0.6).delay(3.5)` and Android
+/// `tween(durationMillis = 600, easing = LinearOutSlowInEasing)` + `delay(3500)` 1:1.
+class _FadingGestureHints extends StatefulWidget {
+  final bool autoFade;
+  final Widget child;
+
+  const _FadingGestureHints({required this.autoFade, required this.child});
+
+  @override
+  State<_FadingGestureHints> createState() => _FadingGestureHintsState();
+}
+
+class _FadingGestureHintsState extends State<_FadingGestureHints> {
+  double _opacity = 1;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.autoFade) {
+      _timer = Timer(const Duration(milliseconds: 3500), () {
+        if (mounted) setState(() => _opacity = 0);
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // MUST NOT construct an AnimatedOpacity on the default (false) path — even a
+    // permanently-opacity-1 AnimatedOpacity inserts an extra Opacity/FadeTransition
+    // RenderObject into the tree, which would needlessly widen the byte-identical-golden
+    // surface area (see design.md D1).
+    if (!widget.autoFade) return widget.child;
+    return AnimatedOpacity(
+      opacity: _opacity,
+      duration: const Duration(milliseconds: 600),
+      curve: Curves.easeOut,
+      child: widget.child,
+    );
   }
 }
 
@@ -581,11 +712,14 @@ const String _narrateTagText = '介紹中';
 
 /// Gesture-hint copy (static localized presentation strings). `_hintTap` updated by
 /// rb-flutter-gesture-clean-mode-v2 (was '點擊畫面 = 切換靜音' — R23's tap-to-mute gesture is
-/// retired, replaced by tap-to-toggle-clean-mode). The former `_hintHold` constant ('長按畫面 =
-/// 切換乾淨模式') has NO remaining call site — this widget is only ever composed while genuinely
-/// live, and R29 gives long-press no action at all there — so it is removed rather than kept
-/// unused (see `_gestureHints()`'s own doc comment).
+/// retired, replaced by tap-to-toggle-clean-mode). `_hintHold` is a FRESH constant
+/// (`rb-flutter-replay-live-chrome-parity`) — NOT the old R23-era `_hintHold` ('長按畫面 =
+/// 切換乾淨模式', hold-to-clean-mode) that a prior pass at this file removed as unreachable; this
+/// is R29's distinct hold-for-2x-speed copy, parity iOS/Android `hintHold`, shown only for
+/// `isLive == false` (see `_gestureHints()`'s own doc comment for the full reachability
+/// derivation).
 const String _hintTap = '點擊畫面 = 切換乾淨模式';
+const String _hintHold = '長按畫面 = 2倍速快轉';
 const String _hintSwipe = '上下滑動 = 切換影片';
 
 // ── LBLivePinnedCard carousel — single card OR multi-product carousel + 分頁點 ──

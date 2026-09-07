@@ -156,6 +156,18 @@ class DefaultOperationRail extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Update ONLY the LIVE guest-name-edit-availability rail flag (a mid-live `guest_comment`
+  /// change relayed via POLL_RECEIVED — `guest-edit-available-poll-derive-template-flutter`),
+  /// preserving the other rail flags — narrow-field mirror of [handleChatEnabled] /
+  /// [handleSubtitleAvailable], bypassing the not-yet-wired-in-production [handleEnablement]
+  /// path. Notifies only on a real change.
+  @internal
+  void handleGuestEditAvailable(bool guestEditAvailable) {
+    if (guestEditAvailable == _guestEditAvailable) return;
+    _guestEditAvailable = guestEditAvailable;
+    notifyListeners();
+  }
+
   /// Echo the bag-count (= products.count). Notifies only on a real change.
   @internal
   void handleBagCount(int count) {

@@ -345,6 +345,42 @@ class DefaultPlayerTemplate {
   List<LBProduct> get liveActiveProducts =>
       productOverlay.products.where((p) => p.narrateStatus == 2).toList();
 
+  /// 商品清單「介紹中優先」排序，統一涵蓋 LIVE 與 VOD/回放
+  /// （rb-flutter-vod-product-list-introducing-order-template，parity iOS/Android同批次同設計）：
+  ///
+  ///   • **LIVE**（[header].isLive == true）：原樣委派 [DefaultProductOverlayState
+  ///     .productsIntroducingFirst]（既有單一 `narrate_status==2` active product 置頂邏輯，
+  ///     行為不變）。
+  ///   • **VOD / 回放**（`isLive == false`）：把 [vodActiveProducts]（已依 beginTime 升冪排序
+  ///     好的「所有」`[beginTime,endTime)` 命中商品）整批移到清單最前，維持其既有順序；其餘
+  ///     商品維持 [productOverlay].products 的原始相對順序接在後面。[vodActiveProducts] 為空
+  ///     （無命中視窗；開場影片播放中時 [vodActiveProducts] 內部讀的
+  ///     `productOverlay.products` / `playbackProgress.position` 皆已被既有介紹中閘門收斂，
+  ///     天然也收斂為空）時等於 [productOverlay].products（順序不變）。
+  ///
+  /// 分支判斷 MUST 用明確的 [header].isLive 旗標，MUST NOT 用「[vodActiveProducts] 是否非空」
+  /// 判斷——[vodActiveProducts] 本身沒有直播狀態閘門，理論上極端情況兩者可能同時有值；`isLive`
+  /// 為 true 時 MUST 優先走 LIVE 分支。
+  ///
+  /// 純 computed 唯讀：MUST NOT 新增第二份狀態、MUST NOT 新增輪詢或通知管道、MUST NOT 改變既有
+  /// [DefaultProductOverlayState.productsIntroducingFirst] / [vodActiveProducts] /
+  /// [header].isLive 任一者的既有合約——本 getter 只是在既有兩個排序結果之上依 live/VOD 旗標
+  /// 擇一 forward。與 [DefaultProductOverlayState.productsIntroducingFirst]（LIVE-only，同名、
+  /// 不同類別 receiver，維持不動、繼續可單獨測試）是不同屬性、不互相取代——後者供任何只想看
+  /// LIVE 排序的呼叫端使用，本 getter 是在它之上再組合 VOD 分支的聚合版。
+  ///
+  /// reference-ui（`ProductSheetsModel.products`）綁定**這個**聚合 getter 取代直讀
+  /// `productOverlay.productsIntroducingFirst`；排序仍是資料層職責，reference-ui MUST NOT
+  /// 自行 slice / merge / 排序。
+  List<LBProduct> get productsIntroducingFirst {
+    if (header.isLive) return productOverlay.productsIntroducingFirst;
+    final active = vodActiveProducts;
+    if (active.isEmpty) return productOverlay.products;
+    final activeIds = active.map((p) => p.id).toSet();
+    final rest = productOverlay.products.where((p) => !activeIds.contains(p.id));
+    return List.unmodifiable([...active, ...rest]);
+  }
+
   /// swipe-navigate-flutter-template — read-only prev/next adjacent-video nav
   /// targets view-model (its own ChangeNotifier; host binds with
   /// `ListenableBuilder`). Host-fed via [handleNavTargets] (the Flutter core does
@@ -496,6 +532,29 @@ class DefaultPlayerTemplate {
   /// 對齊 iOS `ingestChannel` 的 coalescing 語意。由 [TemplateAttachment] 的 `VIDEO_OPEN`
   /// case 呼叫（Flutter 無 ingestChannel）。
   void applyRestriction(bool restricted) => restriction.value = restricted;
+
+  /// 通用 loading cover（player-loading-cover-background-template-flutter），channel-derived、
+  /// 不分 upcoming，映射 `channel.cover`，供 host / reference-ui 在播放器 loading 期
+  /// （`startPhase == LOADING` 的 loading surface）把純色底改繪成封面圖背景（實際像素由後續
+  /// reference-ui change 繪製）。**MUST 與既有 upcoming-scoped [DefaultUpcomingState.cover]
+  /// 語意分離、並存**——`loadingCover` 涵蓋一般 live / VOD / upcoming 的 loading 期，
+  /// `upcoming.cover` 專供直播預告倒數背景。Flutter 無 `ingestChannel()`，故本欄位由 host 呼叫
+  /// [applyLoadingCover] 餵入（parity [restriction] / [applyRestriction]）；host-wiring
+  /// （`onChannelChange` → reference-ui `forwardChannelChangeToTemplate` 餵入）留給後續
+  /// `player-loading-cover-background-reference-ui-flutter` change——[applyLoadingCover]
+  /// 目前 MUST NOT 被任何生產呼叫端呼叫。預設 `""`。其自有 `ValueNotifier`（reference-ui 併入
+  /// `Listenable.merge`），內建 diff-then-notify。
+  final ValueNotifier<String> loadingCoverNotifier = ValueNotifier<String>('');
+
+  /// 通用 loading cover view-model（對齊 iOS/Android 已使用的跨平台公開欄位名 `loadingCover`）。
+  /// 預設 `""`；由 [applyLoadingCover] 原樣 passthrough（template 本身 MUST NOT 載入圖片、
+  /// MUST NOT 繪製任何視覺）。
+  String get loadingCover => loadingCoverNotifier.value;
+
+  /// 由 host 呼叫，原樣 passthrough `cover` 字串（`channel.cover ?? ""`），parity
+  /// [applyRestriction]。`ValueNotifier` 內建 diff-then-notify（相同值不重複通知）。目前
+  /// MUST NOT 被任何生產呼叫端呼叫——host-wiring 留給後續 reference-ui 層 change。
+  void applyLoadingCover(String cover) => loadingCoverNotifier.value = cover;
 
   /// 當前影片短碼（cart-add-tier2-unify），由統一 `VIDEO_OPEN` 事件（`params.video_id`）追蹤，
   /// 串接進 [addToCart] → `LBAddToCartOptions.videoId`，使 core 的 `CART_ADD_REQUEST` 帶正確
@@ -1294,6 +1353,12 @@ class DefaultPlayerTemplate {
   /// the native core via POLL_RECEIVED; the other rail flags are preserved. Lets RN/Flutter apply a
   /// backend「開啟訪客留言」change WITHOUT a re-enter.
   void handleChatEnabled(bool chatEnabled) => operationRail.handleChatEnabled(chatEnabled);
+
+  /// Update ONLY the LIVE guest-name-edit-availability flag — a mid-live `guest_comment` change
+  /// relayed by the native core via POLL_RECEIVED (`guest-edit-available-poll-derive-template-
+  /// flutter`); the other rail flags are preserved.
+  void handleGuestEditAvailable(bool guestEditAvailable) =>
+      operationRail.handleGuestEditAvailable(guestEditAvailable);
 
   /// OperationPanel bag-count (D2) — host echoes `products.count` alongside the
   /// products snapshot (DERIVED from ProductOverlay's products — no second copy).

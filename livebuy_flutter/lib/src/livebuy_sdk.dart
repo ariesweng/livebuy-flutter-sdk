@@ -19,8 +19,10 @@ class LivebuySDK {
 
   /// Dart-only backing store for [enableDirectCloseButton]
   /// (`player-direct-close-button`). Deliberately NEVER sent over the
-  /// `tv.livebuy/sdk` method channel — see the getter doc for why.
-  static bool _enableDirectCloseButton = false;
+  /// `tv.livebuy/sdk` method channel — see the getter doc for why. Default
+  /// `true` (direct close) — a deliberate, breaking UX default change
+  /// (`flutter-player-direct-close-button-default-true`).
+  static bool _enableDirectCloseButton = true;
 
   // MARK: - Configure
 
@@ -64,14 +66,14 @@ class LivebuySDK {
   /// value has no native iOS/Android SDK consumer: it only governs whether
   /// the `flutter-reference-ui` package's `LivebuyPlayer` collapse button
   /// closes directly instead of the two-step collapse → floating card → X
-  /// flow. Defaults to `false` before [configure] has ever been called.
+  /// flow. Defaults to `true` before [configure] has ever been called.
   static bool get enableDirectCloseButton => _enableDirectCloseButton;
 
-  /// Test-only. Resets [enableDirectCloseButton] back to its `false` default.
+  /// Test-only. Resets [enableDirectCloseButton] back to its `true` default.
   /// Production code never calls this.
   @visibleForTesting
   static void resetEnableDirectCloseButtonForTesting() {
-    _enableDirectCloseButton = false;
+    _enableDirectCloseButton = true;
   }
 
   // MARK: - Conversion attribution (opt-in, conversion-attribution-context)

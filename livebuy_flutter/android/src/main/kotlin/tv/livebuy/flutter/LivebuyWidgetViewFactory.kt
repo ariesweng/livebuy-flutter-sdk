@@ -68,8 +68,26 @@ class LivebuyFlutterWidgetView(
 
 // MARK: - LBVideoItem deserializer (Widget bridge)
 
+/// Build an `LBFeaturedGood` from a Flutter-supplied host map's `"goods"` value
+/// (video-linked-goods-core-flutter). Returns `null` when [value] is not a well-shaped
+/// `Map` — the caller falls back to its own default in that case.
+private fun featuredGoodFrom(value: Any?): LBFeaturedGood? {
+    val map = value as? Map<*, *> ?: return null
+    return LBFeaturedGood(
+        name = map["name"] as? String ?: "",
+        pic = map["pic"] as? String ?: "",
+        price = map["price"] as? String ?: "0",
+        originalPrice = map["originalPrice"] as? String ?: "0",
+        soldOut = (map["soldOut"] as? Number)?.toInt() ?: 0,
+        stock = (map["stock"] as? Number)?.toInt() ?: 0,
+        status = (map["status"] as? Number)?.toInt() ?: 1,
+    )
+}
+
 private fun lbVideoItemFrom(map: Map<*, *>?): LBVideoItem? {
     val id = map?.get("id") as? String ?: return null
+    // `goods` (video-linked-goods-core-flutter): read from the host map when present;
+    // otherwise keep the pre-existing dummy placeholder unchanged (existing-caller parity).
     return LBVideoItem(
         id = id,
         type = (map["type"] as? Number)?.toInt() ?: 1,
@@ -88,7 +106,7 @@ private fun lbVideoItemFrom(map: Map<*, *>?): LBVideoItem? {
         playbackurl = map["playbackurl"] as? String ?: "",
         previewTime = "00:00",
         showStock = false,
-        goods = LBFeaturedGood(
+        goods = featuredGoodFrom(map["goods"]) ?: LBFeaturedGood(
             name = "", pic = "", price = "0",
             originalPrice = "0", soldOut = 0, stock = 0, status = 1,
         ),

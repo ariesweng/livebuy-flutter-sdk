@@ -18,7 +18,8 @@
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem, LBWidgetColors;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show DefaultWidgetTemplate;
 
-import '../widget/widget_model.dart' show WidgetSeeds;
+import '../widget/widget_model.dart'
+    show WidgetGoods, WidgetSeeds, widgetGoodsFromFeatured;
 
 /// Container layout mode. carousel / grid only (floating / minimized need a single live).
 enum WidgetContainerMode { carousel, grid }
@@ -54,6 +55,28 @@ void Function(LBVideoItem) lbWidgetEffectiveTap(
   void Function(LBVideoItem) openDefaultPlayer,
 ) =>
     hostTap ?? openDefaultPlayer;
+
+/// Per-card goods-resolver precedence for `LivebuyWidget`
+/// (rb-flutter-video-linked-goods-auto-render, parity iOS / Android — the historical
+/// "Flutter core `LBVideoItem` has no `goods` field" delta is retired by
+/// `video-linked-goods-core-flutter`): [hostGoodsFor], when supplied, is a full
+/// OVERRIDE and takes precedence for EVERY card — including a host choosing to
+/// return `null` for a specific item, which is honored verbatim as "show no card"
+/// rather than falling back to the item's own `goods`. When the host does NOT
+/// supply one, [usingDemo] selects between the deterministic [WidgetSeeds.goodsFor]
+/// (opted-in demo fallback fixtures, whose seed `LBVideoItem`s carry no `goods` of
+/// their own) and the LIVE default, which derives the card straight off each
+/// item's core `goods` field via [widgetGoodsFromFeatured] (`goods == null` → no
+/// card, same as before this default existed). Pure — no Flutter dependency — so
+/// the container and its tests share one implementation.
+WidgetGoods? Function(LBVideoItem item) lbWidgetResolvedGoodsFor(
+  WidgetGoods? Function(LBVideoItem item)? hostGoodsFor, {
+  required bool usingDemo,
+}) {
+  if (hostGoodsFor != null) return hostGoodsFor;
+  if (usingDemo) return WidgetSeeds.goodsFor;
+  return (LBVideoItem item) => widgetGoodsFromFeatured(item.goods);
+}
 
 /// Grid pagination accumulation at the raw video-map level. `append` → concat the
 /// new page onto the prior accumulated maps (grid load-more); else → replace

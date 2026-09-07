@@ -218,17 +218,33 @@ class OperationPanelController {
   Future<void> _invoke(String method, [Map<String, dynamic>? args]) async =>
       await _channel?.invokeMethod(method, args);
 
+  /// Like [_invoke] but for native methods that return a `Bool`/`Boolean`
+  /// (host-interception result). Not attached, or a native response that is
+  /// not a bool, resolves to `false` — same fallback posture as iOS
+  /// `channel == nil → false` / Android `channel == null → false`.
+  Future<bool> _invokeBool(String method, [Map<String, dynamic>? args]) async =>
+      (await _channel?.invokeMethod<bool>(method, args)) ?? false;
+
   Future<void> simulateGoodsTap() =>
       _invoke('operationPanel_simulateGoodsTap');
   Future<void> simulateChatToggleTap() =>
       _invoke('operationPanel_simulateChatToggleTap');
   Future<void> simulateLikeTap() => _invoke('operationPanel_simulateLikeTap');
-  Future<void> simulateShareTap() =>
-      _invoke('operationPanel_simulateShareTap');
+
+  /// Simulate user tapping the share button. Returns whether the host
+  /// intercepted the share action (`true`) or the SDK's default share sheet
+  /// ran (`false`) — mirrors iOS `performShare()` / Android `performShare()`.
+  Future<bool> simulateShareTap() =>
+      _invokeBool('operationPanel_simulateShareTap');
   Future<void> simulateSubtitleToggleTap() =>
       _invoke('operationPanel_simulateSubtitleToggleTap');
-  Future<void> simulateServiceLinkTap() =>
-      _invoke('operationPanel_simulateServiceLinkTap');
+
+  /// Simulate user tapping the service-link button. Returns whether the host
+  /// intercepted the tap (`true`) or the SDK's default browser handling ran
+  /// (`false`) — mirrors iOS `performServiceLink()` / Android
+  /// `performServiceLink()`.
+  Future<bool> simulateServiceLinkTap() =>
+      _invokeBool('operationPanel_simulateServiceLinkTap');
   Future<void> simulateMoreTap() => _invoke('operationPanel_simulateMoreTap');
   Future<void> simulateGuestNameEditTap() =>
       _invoke('operationPanel_simulateGuestNameEditTap');
@@ -245,10 +261,23 @@ class VideoInfoPanelController {
   Future<void> _invoke(String method, [Map<String, dynamic>? args]) async =>
       await _channel?.invokeMethod(method, args);
 
+  /// Like [_invoke] but for native methods that return a `Bool`/`Boolean`
+  /// (host-interception result). Not attached, or a native response that is
+  /// not a bool, resolves to `false` — same fallback posture as iOS
+  /// `channel == nil → false` / Android `channel == null → false`.
+  Future<bool> _invokeBool(String method, [Map<String, dynamic>? args]) async =>
+      (await _channel?.invokeMethod<bool>(method, args)) ?? false;
+
   Future<void> simulateSubscribeTap() =>
       _invoke('videoInfoPanel_simulateSubscribeTap');
-  Future<void> simulateServiceLinkTap() =>
-      _invoke('videoInfoPanel_simulateServiceLinkTap');
+
+  /// Simulate user tapping the service-link entry in the info panel. Returns
+  /// whether the host intercepted the tap (`true`) or the SDK's default
+  /// browser handling ran (`false`) — mirrors iOS
+  /// `performInfoPanelServiceLink()` / Android
+  /// `videoInfoPanel.simulateServiceLinkTap()`.
+  Future<bool> simulateServiceLinkTap() =>
+      _invokeBool('videoInfoPanel_simulateServiceLinkTap');
   Future<void> simulateShopTap() => _invoke('videoInfoPanel_simulateShopTap');
   Future<void> simulateDismiss() => _invoke('videoInfoPanel_simulateDismiss');
 
@@ -687,6 +716,34 @@ class LivebuyPlayerCore extends StatefulWidget {
   /// callbacks are unaffected.
   final void Function(LBSubtitleInfo)? onSubtitleChange;
 
+  /// replay-chat-revealed-seam-core-flutter — public notification-type
+  /// callback, forwarding the existing native `onReplayChatRevealed` seam
+  /// (iOS `Player.onReplayChatRevealed` / Android
+  /// `LivebuyPlayerView.onReplayChatRevealed`) via a DEDICATED
+  /// `replayChatRevealed` `EventChannel` event (direct closure subscription,
+  /// NOT an `onStateChange` piggyback — mirrors `onPlaybackProgressChange`).
+  /// Fires during finished-live replay only, with the "已揭露前綴" (comments
+  /// revealed so far, ascending by `LBComment.time`) — an empty list is a
+  /// real cleanup signal (per-session reset / replay entry), forwarded as-is,
+  /// never filtered. Purely additive — leaving this null is an inert no-op;
+  /// the existing callbacks are unaffected. Does NOT route into any
+  /// `flutter-ui` view-model / activityFeed (a follow-up template-layer
+  /// concern) and is NOT added to the unified `LBEvent` enum / `onSdkEvent`
+  /// listener path.
+  final void Function(List<LBComment>)? onReplayChatRevealed;
+
+  /// player-moment-fields-bridge-core-flutter — a deliberately narrow 6-field
+  /// subset of the native `LBPlayerMomentState` aggregate (`viewerCount` /
+  /// `isSubscribed` / `autoNextCountdownActive` / `autoNextRemainingSeconds` /
+  /// `nextItem` / `hotItems`), fired via a DEDICATED native
+  /// `onMomentStateChange` hook subscription (NOT an `onStateChange`
+  /// piggyback — mirrors `onPlaybackProgressChange`). The other 12
+  /// `LBPlayerMomentState` fields are NOT carried here — each already has an
+  /// established, independent Flutter derivation path (see design.md D2).
+  /// Purely additive — leaving this null is an inert no-op; the existing
+  /// callbacks are unaffected.
+  final void Function(LBPlayerMomentInfo)? onMomentStateChange;
+
   const LivebuyPlayerCore({
     super.key,
     required this.videoId,
@@ -702,6 +759,8 @@ class LivebuyPlayerCore extends StatefulWidget {
     this.onChannelChange,
     this.onPlaybackProgressChange,
     this.onSubtitleChange,
+    this.onReplayChatRevealed,
+    this.onMomentStateChange,
   });
 
   @override
@@ -774,6 +833,20 @@ class _LivebuyPlayerCoreState extends State<LivebuyPlayerCore> {
         // forward (available/url). Inert when null.
         widget.onSubtitleChange?.call(LBSubtitleInfo.fromMap(event));
         break;
+      case 'replayChatRevealed':
+        // replay-chat-revealed-seam-core-flutter — direct-subscription
+        // forward of the native `onReplayChatRevealed` seam. `asCommentList`
+        // forwards an empty list as-is (design D6 — never filtered /
+        // special-cased). Inert when null.
+        widget.onReplayChatRevealed?.call(asCommentList(event['comments']));
+        break;
+      case 'momentStateChange':
+        // player-moment-fields-bridge-core-flutter — narrow 6-field
+        // moment-state forward (viewerCount / isSubscribed /
+        // autoNextCountdownActive / autoNextRemainingSeconds / nextItem /
+        // hotItems). Inert when null.
+        widget.onMomentStateChange?.call(LBPlayerMomentInfo.fromMap(event));
+        break;
     }
   }
 
@@ -837,6 +910,8 @@ class LivebuyPlayer extends LivebuyPlayerCore {
     super.onChannelChange,
     super.onPlaybackProgressChange,
     super.onSubtitleChange,
+    super.onReplayChatRevealed,
+    super.onMomentStateChange,
   });
 }
 

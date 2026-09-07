@@ -5,7 +5,10 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 import '../reference_ui_theme.dart';
 import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
+import 'bag_glyph.dart';
 import 'cc_glyph.dart';
+import 'contact_glyph.dart';
+import 'more_glyph.dart';
 
 // OperationRailView — family-1 player-shell surface 2 (side rail).
 //
@@ -34,13 +37,25 @@ import 'cc_glyph.dart';
 // `simulate*`. Taps surface a single `onTapItem` intent (each kind), which the
 // shell / host wires to the matching core exit.
 //
-// CLOSED-CHAT FINISHED REPLAY (rb-flutter-live-replay-more-menu-and-video-info-live-copy,
-// design R32): this is the surface Flutter ACTUALLY renders for a closed-chat finished live
-// replay (`PlayerShellModel.isFinishedLiveReplay`) — `LiveBottomBarView` never composes for
-// that state (see `player_shell_view.dart`'s `_buildContent`). `isFinishedLiveReplay == true`
-// collapses `share` + `serviceLink` into one 更多 pill (`onTapMore`, host-opened sheet);
-// `subtitle` (CC) is unaffected. Default `false` keeps every existing (VOD) call site
-// byte-identical.
+// CLOSED-CHAT FINISHED REPLAY — COMPONENT-LEVEL ONLY, NOT A REAL CALL-SITE PATH SINCE
+// rb-flutter-replay-live-chrome-parity (originally introduced by
+// rb-flutter-live-replay-more-menu-and-video-info-live-copy, design R32, when this WAS the
+// surface Flutter actually rendered for a closed-chat finished live replay). `player_shell_view
+// .dart` now unifies its LIVE-chrome gating into `usesLiveChrome = isLive || isFinishedLiveReplay`
+// (parity iOS/Android) and gates this rail on `!usesLiveChrome` — a closed-chat finished replay
+// (`isFinishedLiveReplay == true`) therefore now falls INSIDE the live-chrome family and this
+// rail's own render condition guarantees it is NEVER actually composed for that state anymore
+// (`!usesLiveChrome` ⟹ `isFinishedLiveReplay == false` whenever this widget renders). The real
+// chrome for that state is now `LiveBottomBarView`'s own `isFinishedLiveReplay` variant (leading
+// slot → 更多, trailing slot → CC, comment area → disabled「聊天室已關閉」; see
+// `live_bottom_bar_view.dart`), triggered via `LiveBottomBarView.onMore` — the mirror image of
+// this rail's previous role. `isFinishedLiveReplay` / `onTapMore` on THIS widget are RETAINED as
+// pure component-level capabilities (directly constructible + testable, see
+// `operation_rail_test.dart`'s existing 5 assertions, which construct this widget standalone and
+// are unaffected by the call-site change) — `player_shell_view.dart` MUST NOT feed them anymore.
+// `isFinishedLiveReplay == true` (when directly constructed) still collapses `share` +
+// `serviceLink` into one 更多 pill (`onTapMore`); `subtitle` (CC) is unaffected. Default `false`
+// keeps every existing (VOD) call site byte-identical.
 //
 // RENDERING CONSTRAINTS (inherited from iOS / Android — CRITICAL): NO scrollable
 // (`ListView` / `GridView` / `SingleChildScrollView`) — a fixed small `Column`
@@ -99,27 +114,36 @@ class OperationRailView extends StatelessWidget {
   /// no-op so demo / golden instances construct action-free.
   final ValueChanged<LBSideRailKind>? onTapItem;
 
-  /// Closed-chat finished-live-replay flag (rb-flutter-live-replay-more-menu-and-
+  /// Closed-chat finished-live-replay flag (originally rb-flutter-live-replay-more-menu-and-
   /// video-info-live-copy, design `claude-design-sync.md` R32). Default `false` keeps
   /// every existing (VOD) call site's rail byte-identical.
   ///
   /// `true` collapses `share` + `serviceLink` into a single 更多 (more) pill (tapped via
   /// [onTapMore]) — `subtitle` (CC) is UNAFFECTED, it keeps its normal `enabled`-gated pill
   /// in the SAME position. This mirrors the design's `LBLiveBottomBar` replay branch
-  /// ("更多" swaps in where CC used to sit, 分享 collapses into the menu) onto the surface
-  /// Flutter ACTUALLY renders for a closed-chat finished replay — this VOD-family side rail,
-  /// NOT `LiveBottomBarView` (which never composes for that state; see this change's
-  /// `design.md` "架構落差查證"). The caller feeds `PlayerShellModel.isFinishedLiveReplay`
-  /// — NOT the narrower core DVR `isReplay` (a stream STILL live, scrubbed behind the edge,
-  /// same call-site discipline as `showsPlaybackProgressBar`'s own `isReplay` parameter).
+  /// ("更多" swaps in where CC used to sit, 分享 collapses into the menu).
+  ///
+  /// ⚠️ **COMPONENT-LEVEL ONLY since `rb-flutter-replay-live-chrome-parity`** — this is no
+  /// longer a real `player_shell_view.dart` call-site path. That change unified the shell's
+  /// LIVE-chrome gating into `usesLiveChrome = isLive || isFinishedLiveReplay` (parity
+  /// iOS/Android) and gates THIS rail on `!usesLiveChrome`, which guarantees
+  /// `isFinishedLiveReplay == false` whenever this widget actually renders in production — a
+  /// closed-chat finished replay now falls inside the live-chrome family and its real chrome is
+  /// `LiveBottomBarView`'s own `isFinishedLiveReplay` variant (leading slot → 更多, triggered via
+  /// `LiveBottomBarView.onMore`), the mirror image of this field's former role. This field /
+  /// [onTapMore] are RETAINED purely so this widget stays directly constructible + testable in
+  /// isolation (see `operation_rail_test.dart`'s existing assertions, which construct it
+  /// standalone and are unaffected by the call-site change) — `player_shell_view.dart` MUST NOT
+  /// feed either anymore.
   final bool isFinishedLiveReplay;
 
-  /// Host-wired「更多」pill tap (only reachable when [isFinishedLiveReplay] is true).
-  /// Deliberately NOT routed through [onTapItem] / `LBSideRailKind` — the existing
-  /// `LBSideRailKind.more` kind already carries a DIFFERENT, unrelated semantic
-  /// (`PlayerShellView._handleRailTap` toggles the info panel for it, a vestigial rail-`more`
-  /// pill from before the rail dropped that affordance) and is currently unused
-  /// (`enabled: false` in every seed, absent from [_presentationOrder]) — reusing it here
+  /// Host-wired「更多」pill tap (only reachable when [isFinishedLiveReplay] is true — see that
+  /// field's own doc comment for why this is component-level-only in production since
+  /// `rb-flutter-replay-live-chrome-parity`). Deliberately NOT routed through [onTapItem] /
+  /// `LBSideRailKind` — the existing `LBSideRailKind.more` kind already carries a DIFFERENT,
+  /// unrelated semantic (`PlayerShellView._handleRailTap` toggles the info panel for it, a
+  /// vestigial rail-`more` pill from before the rail dropped that affordance) and is currently
+  /// unused (`enabled: false` in every seed, absent from [_presentationOrder]) — reusing it here
   /// would silently repurpose a different, already-tested meaning. `null` → inert (demo /
   /// golden / preview construct action-free).
   final VoidCallback? onTapMore;
@@ -200,9 +224,11 @@ class OperationRailView extends StatelessWidget {
 // MARK: - More pill (rb-flutter-live-replay-more-menu-and-video-info-live-copy)
 
 /// The collapsed「更多」pill shown by the replay rail — same 40×40 translucent-dark
-/// circle chrome as [_PillButton], reusing [railIconFor]'s existing `more` → `Icons.more_horiz`
-/// mapping for the glyph WITHOUT adopting `LBSideRailKind.more`'s existing (different, unrelated)
-/// tap semantics — this pill's tap is a plain [VoidCallback], not routed through `onTapItem`.
+/// circle chrome as [_PillButton], drawing the self-drawn [MoreGlyph] (design
+/// `Icons.more`, `rb-flutter-icon-parity-operation-rail-batch` — replaces the prior
+/// [railIconFor] `more` → `Icons.more_horiz` mapping) WITHOUT adopting
+/// `LBSideRailKind.more`'s existing (different, unrelated) tap semantics — this
+/// pill's tap is a plain [VoidCallback], not routed through `onTapItem`.
 class _MorePillButton extends StatelessWidget {
   final ReferenceUITheme theme;
   final VoidCallback? onTap;
@@ -222,10 +248,9 @@ class _MorePillButton extends StatelessWidget {
           color: _railPillBackground,
           shape: BoxShape.circle,
         ),
-        child: Icon(
-          railIconFor(LBSideRailKind.more),
-          size: _pillGlyphSize * theme.fontScale,
+        child: MoreGlyph(
           color: Colors.white,
+          size: _pillGlyphSize * theme.fontScale,
         ),
       ),
     );
@@ -287,7 +312,9 @@ class _PillButton extends StatelessWidget {
         ),
         // 分享 改設計稿自繪三節點 ShareGlyph（rb-flutter-share-icon-design-align，問題 8）；
         // CC/字幕 改設計稿自繪雙 C 曲線 CcGlyph（rb-flutter-cc-icon-design-align，取代 Material
-        // Icons.closed_caption 方塊造型）；其餘 kind 維持 Material glyph。
+        // Icons.closed_caption 方塊造型）；聯繫商家 改設計稿自繪雙對話框+問號 ContactGlyph
+        // （rb-flutter-icon-parity-operation-rail-batch，取代 Material Icons.chat_bubble）；
+        // 其餘 kind 維持 Material glyph。
         child: kind == LBSideRailKind.subtitle
             ? CcGlyph(
                 color: Colors.white,
@@ -298,11 +325,16 @@ class _PillButton extends StatelessWidget {
                     color: Colors.white,
                     size: _pillGlyphSize * theme.fontScale,
                   )
-                : Icon(
-                    railIconFor(kind),
-                    size: _pillGlyphSize * theme.fontScale,
-                    color: Colors.white,
-                  ),
+                : kind == LBSideRailKind.serviceLink
+                    ? ContactGlyph(
+                        color: Colors.white,
+                        size: _pillGlyphSize * theme.fontScale,
+                      )
+                    : Icon(
+                        railIconFor(kind),
+                        size: _pillGlyphSize * theme.fontScale,
+                        color: Colors.white,
+                      ),
       ),
     );
   }
@@ -342,10 +374,9 @@ class _BagButton extends StatelessWidget {
               color: Colors.white,
               shape: BoxShape.circle,
             ),
-            child: Icon(
-              railIconFor(LBSideRailKind.goods),
-              size: _bagGlyphSize * theme.fontScale,
+            child: BagGlyph(
               color: theme.accent,
+              size: _bagGlyphSize * theme.fontScale,
             ),
           ),
           if (bagCount > 0)
@@ -422,11 +453,18 @@ IconData railIconFor(LBSideRailKind kind) {
       // fallback value is kept for doc/back-compat purposes only.
       return Icons.closed_caption;
     case LBSideRailKind.serviceLink:
-      return Icons.chat_bubble; // bubble.left.fill / chat bubble (contact)
+      // bubble.left.fill / chat bubble (contact) — actual rail rendering now draws
+      // self-drawn `ContactGlyph` (rb-flutter-icon-parity-operation-rail-batch,
+      // `_PillButton` special-case); this Material fallback value is kept for
+      // doc/back-compat purposes only.
+      return Icons.chat_bubble;
     case LBSideRailKind.guestNameEdit:
       return Icons.edit; // pencil / edit display name
     case LBSideRailKind.more:
-      return Icons.more_horiz; // ellipsis / more menu
+      // ellipsis / more menu — actual rendering (in `_MorePillButton`) now draws
+      // self-drawn `MoreGlyph` (rb-flutter-icon-parity-operation-rail-batch); this
+      // Material fallback value is kept for doc/back-compat purposes only.
+      return Icons.more_horiz;
   }
 }
 

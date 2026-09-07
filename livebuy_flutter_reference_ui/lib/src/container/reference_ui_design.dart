@@ -109,6 +109,14 @@ class PlayerOverlayContext {
   /// [showSubscribe].
   final bool showFavorite;
 
+  /// Whether the PlayerHeader viewer-count badge is drawn at all
+  /// (rb-flutter-viewer-count-visibility-toggle, parity iOS / Android `showViewerCount`),
+  /// carried verbatim from `LivebuyPlayerConfig.showViewerCount` to
+  /// `PlayerShellView.showViewerCount`. Default `true` — matches iOS/Android's own
+  /// default exactly (unlike [showSubscribe] / [showFavorite], this container does NOT
+  /// reverse the default; `showViewerCount` is a pure host opt-OUT, not opt-in chrome).
+  final bool showViewerCount;
+
   /// MERCHANT capability gate for the top-bar title marquee — the RAW
   /// `extensions.video_title_scroll` wire value (rb-flutter-marquee-title-scroll, parity
   /// iOS / Android `titleScroll`), carried verbatim from
@@ -188,6 +196,21 @@ class PlayerOverlayContext {
 
   /// Dismiss the product LIST drawer (scrim / close) — container sets open state false.
   final VoidCallback? onDismissProductList;
+
+  /// Whether ANY product sheet/modal is currently presented by `ProductSheetsOverlayView` (list
+  /// drawer / detail-or-restock / zoom lightbox / cart-needs-login gate / variant-select prompt
+  /// — see `anyProductSheetPresented` in `product_sheets_view.dart`), mirrored from
+  /// [onProductSheetsPresentedChange] into the container's own local bool and forwarded HERE to
+  /// `PlayerShellView.sheetsPresented` (rb-flutter-block-swipe-nav-when-sheet-open, bubble
+  /// pattern copied verbatim from [cleanMode] / [moreMenuOpen]) so its swipe-to-switch-video
+  /// gesture can gate on it. Default `false`.
+  final bool productSheetsPresented;
+
+  /// Reports the aggregate product-sheet-presented state from `ProductSheetsOverlayView` up to
+  /// the container (which mirrors it into [productSheetsPresented]). null → no report (demo /
+  /// golden / a custom `ReferenceUIDesign` not wiring it) — `PlayerShellView`'s swipe gesture
+  /// then never gates on this (byte-identical to before this change).
+  final ValueChanged<bool>? onProductSheetsPresentedChange;
 
   /// Optional host swipe overrides (rb-player-shell swipe-override seam). The turnkey
   /// container always passes null (host-feed `swipeFeed` removed → swipe uses the shell's
@@ -305,6 +328,7 @@ class PlayerOverlayContext {
     this.showStock,
     this.showSubscribe = true,
     this.showFavorite = true,
+    this.showViewerCount = true,
     this.titleScroll,
     this.showCloseIcon = false,
     this.infoPanelOpen = false,
@@ -315,6 +339,8 @@ class PlayerOverlayContext {
     this.onMoreMenuOpenChange,
     this.productListPresented = false,
     this.onDismissProductList,
+    this.productSheetsPresented = false,
+    this.onProductSheetsPresentedChange,
     required this.onMinimize,
     required this.onToggleMute,
     required this.onToggleSubscribe,
@@ -470,6 +496,9 @@ class MinimalDesign extends ReferenceUIDesign {
             onToggleSubscribe: c.onToggleSubscribe,
             // 訂閱鈕顯示/隱藏（rb-flutter-subscribe-favorite-visibility-toggle）— raw hand-off.
             showSubscribe: c.showSubscribe,
+            // PlayerHeader 觀看人數徽章顯示/隱藏（rb-flutter-viewer-count-visibility-toggle，
+            // parity iOS/Android `showViewerCount`）— raw hand-off,預設 `true`。
+            showViewerCount: c.showViewerCount,
             // 標題跑馬燈的商家能力閘（rb-flutter-marquee-title-scroll）：原樣帶 host 注入的
             // raw `extensions.video_title_scroll`，design seam **不**正規化、**不**讀 sdkConfig
             // （由 `PlayerHeaderBarView` 的 `normalizeTitleScroll` 單一入口負責）。
@@ -517,6 +546,9 @@ class MinimalDesign extends ReferenceUIDesign {
             onMoreMenuOpenChange: c.onMoreMenuOpenChange,
             // Hide the LIVE bottom bar while the opaque 留言 composer is up (avoid overlap).
             composerPresented: c.composerController.isPresented,
+            // 商品 sheet 開啟時抑制上下滑動換片（rb-flutter-block-swipe-nav-when-sheet-open）：
+            // 鏡射自 ProductSheetsOverlayView.onPresentationChange（下方）、容器再轉發回這裡。
+            sheetsPresented: c.productSheetsPresented,
             // Playback-progress-bar control plane (rb-flutter-vod-playback-progress-bar) —
             // straight pass-through, both nullable (see PlayerOverlayContext doc comments).
             onTogglePlayPause: c.onTogglePlayPause,
@@ -552,6 +584,14 @@ class MinimalDesign extends ReferenceUIDesign {
         ProductSheetsOverlayView(
           template: c.template,
           theme: c.theme,
+          // rb-flutter-product-sheets-live-images-wiring: host-runtime real-image gate,
+          // forwarded from the container (parity `PlayerShellView`'s `live: true` above and
+          // Android `MinimalDesign.kt`'s `live = context.live` at this same call site). This
+          // was PREVIOUSLY OMITTED entirely — `ProductSheetsOverlayView` silently fell back to
+          // its own constructor default (`live = false`), so `c.live` was a dead field here
+          // regardless of what the container set it to; every product sheet (list / detail /
+          // restock / zoom) showed only placeholders in production.
+          live: c.live,
           // Product LIST drawer is container-driven (default closed; GOODS rail/bag tap opens it),
           // NOT self-opening — parity iOS onOpenProductList.
           presented: c.productListPresented,
@@ -573,6 +613,9 @@ class MinimalDesign extends ReferenceUIDesign {
           onRequestLogin: c.onLogin,
           // 商品明細「更多商品」推薦卡播放圖示 → 換片 (rb-flutter-product-detail-recommendations §4).
           onSwitchRecommendationVideo: c.onSwitchRecommendationVideo,
+          // 任一商品 sheet/modal 開合 → 回報容器（rb-flutter-block-swipe-nav-when-sheet-open），
+          // 容器鏡射後轉發回上面 PlayerShellView 的 sheetsPresented，抑制上下滑動換片。
+          onPresentationChange: c.onProductSheetsPresentedChange,
         ),
         MomentsOverlayView(
           template: c.template,

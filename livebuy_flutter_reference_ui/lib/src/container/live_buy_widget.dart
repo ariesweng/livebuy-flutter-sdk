@@ -70,9 +70,15 @@ class LivebuyWidgetConfig {
   /// player swipe feed). Default: none.
   final void Function(List<LBVideoItem> videos)? onVideosChanged;
 
-  /// Per-card product overlay resolver. The Flutter core `LBVideoItem` has NO
-  /// `goods` field, so a real overlay can only come from the host here. Default:
-  /// live cards show NO overlay; the opted-in demo fixtures use the seed overlays.
+  /// Per-card product overlay resolver — an OPTIONAL OVERRIDE
+  /// (rb-flutter-video-linked-goods-auto-render). Omitted (the default, and what
+  /// every pre-existing call site passes) → the container derives the overlay
+  /// straight off each card's own core `LBVideoItem.goods` (parity iOS / Android;
+  /// `goods == null` → no overlay), or — while showing the opted-in demo fallback —
+  /// off the deterministic [WidgetSeeds.goodsFor] seeds. Supplied → takes FULL
+  /// precedence over `item.goods` for every card, including a host explicitly
+  /// returning `null` for a given item to hide its overlay. See
+  /// `lbWidgetResolvedGoodsFor` (`widget_data.dart`) for the exact resolution order.
   final WidgetGoods? Function(LBVideoItem item)? goodsFor;
 
   /// When the live `/sdk/widget` fetch returns nothing, show demo fixtures + a
@@ -298,10 +304,11 @@ class _LivebuyWidgetState extends State<LivebuyWidget> {
     final template = _template;
     if (template == null) return const SizedBox.shrink();
 
-    // The Flutter core `LBVideoItem` has no `goods` field: live cards show NO
-    // overlay unless the host supplies `goodsFor`; the opted-in demo uses the seeds.
-    final WidgetGoods? Function(LBVideoItem item)? goodsFor = widget.config.goodsFor ??
-        (_usingDemo ? WidgetSeeds.goodsFor : (LBVideoItem _) => null);
+    // Host override > demo seeds > default derivation off each card's own
+    // `item.goods` (rb-flutter-video-linked-goods-auto-render). See
+    // `lbWidgetResolvedGoodsFor` (`widget_data.dart`) for the full precedence.
+    final WidgetGoods? Function(LBVideoItem item) goodsFor =
+        lbWidgetResolvedGoodsFor(widget.config.goodsFor, usingDemo: _usingDemo);
 
     // The design composes the widget surface (granularity A). Default MinimalDesign = the
     // verbatim `WidgetOverlayView` (which dispatches by the bound template content mode, so

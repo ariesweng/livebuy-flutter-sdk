@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../reference_ui_theme.dart';
 import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
+import 'bag_glyph.dart';
+import 'cc_glyph.dart';
+import 'more_glyph.dart';
 import 'person_edit_glyph.dart';
 
 // LiveBottomBarView — family-1 player-shell LIVE bottom bar.
@@ -12,23 +15,31 @@ import 'person_edit_glyph.dart';
 // Flutter sibling of iOS `LiveBottomBarView.swift` / Android `LiveBottomBar.kt`.
 //   Design source: `design/templates/minimal/live-chrome.jsx` → `LBLiveBottomBar` (161-237).
 //
-// The LIVE-mode bottom bar. `screens.jsx` mode-branches the player chrome on
-// `isLive`: the LIVE screen renders this horizontal bottom bar while the side rail
-// (`OperationRailView`) is VOD-only (`!isLive`). The bar paints, left → right:
+// The live-chrome-family bottom bar. `screens.jsx` mode-branches the player chrome on
+// `usesLiveChrome = isLive || isFinishedLiveReplay`: the live-chrome-family screen renders this
+// horizontal bottom bar while the side rail (`OperationRailView`) is purely-VOD-only
+// (`!usesLiveChrome`, `rb-flutter-replay-live-chrome-parity`). The bar paints, left → right:
 //
 //   • a white shopping-bag button + cart badge (when `bagCount > 0`),
 //   • a flex "留言..." TAP-TARGET pill (NOT an inline text field — design `onComment`
-//     opens a sheet; the real composer is the host's),
-//   • a nickname button,
-//   • a share button,
-//   • an accent like (heart) button.
+//     opens a sheet; the real composer is the host's) — disabled「聊天室已關閉」in the
+//     `isFinishedLiveReplay` variant (see below),
+//   • a nickname button — a「更多」(more) button instead in the `isFinishedLiveReplay` variant,
+//   • a share button — a CC (字幕) toggle instead in the `isFinishedLiveReplay` variant,
+//   • an accent like (heart) button (unaffected by any variant).
 //
-// Comment entry ALWAYS available (prerecorded-live-bottom-bar-comment, Flutter parity to iOS):
-// this bar renders ONLY for a live broadcast (`isLive == true`, i.e. `liveStatus == 1`) — true
-// 回放/VOD uses the side rail. A live broadcast's chat is open regardless of playback position,
-// so the "留言..." pill and nickname button are NEVER collapsed on `isReplay`. The prior "replay
-// variant" (disabled "聊天室已關閉" + CC swap) is removed: `isReplay` was a playback-position
-// heuristic that mis-flags a 預錄直播 (finite-length HLS routed to IVS) and wrongly closed chat.
+// Comment entry ALWAYS available FOR A GENUINE LIVE BROADCAST (prerecorded-live-bottom-bar-
+// comment, Flutter parity to iOS): this bar renders for BOTH a live broadcast (`isLive == true`,
+// i.e. `liveStatus == 1`) and an already-finished live replay (`isFinishedLiveReplay == true`) —
+// true 純 VOD uses the side rail. A live broadcast's chat is open regardless of playback
+// position, so the "留言..." pill and nickname button are NEVER collapsed on `isReplay` (the
+// narrower, behind-live-edge DVR heuristic that mis-flags a 預錄直播 — finite-length HLS routed
+// to IVS — and would wrongly close chat if it drove this). `isFinishedLiveReplay` IS,
+// deliberately, a real reason to collapse the comment area + swap the leading/trailing slots
+// (`rb-flutter-replay-live-chrome-parity`, parity iOS `chatClosed`) — a genuinely-ended stream's
+// backend `commentsub` 404s, so the chat really is closed. The two flags are orthogonal and MUST
+// NOT be confused: `isReplay` (still `liveStatus == 1`, chat open) vs `isFinishedLiveReplay`
+// (stream over, chat closed).
 //
 // SUB-VIEW INPUT PATTERN (D-1/D-4): theme FIRST → snapshot values BY VALUE →
 // trailing optional callbacks (default no-op). Reads ONLY its passed-in values;
@@ -73,6 +84,9 @@ const double _badgeFontSize = 10; // fontSize 10, weight 800
 const double _badgeBorderWidth = 1.5; // 1.5px solid #fff border
 const double _commentFontSize = 13; // 留言... 13px left
 const String _commentPlaceholder = '留言...';
+/// 已結束直播回放 chat-closed 變體文字（design-literal，同 `_commentPlaceholder` 模式；
+/// `rb-flutter-replay-live-chrome-parity`，parity iOS `chatClosedPlaceholder`）。
+const String _chatClosedPlaceholder = '聊天室已關閉';
 
 /// The family-1 LIVE bottom bar surface. Renders the horizontal bag / comment /
 /// nickname / share / like row from `LBLiveBottomBar`. The comment entry is always
@@ -101,8 +115,30 @@ class LiveBottomBarView extends StatelessWidget {
   /// Bag-only variant flag (直播預告開場片頭 `introPlaying`): the bar collapses to JUST the
   /// shopping-bag + a trailing flex `Spacer` — comment / nickname / CC / share / like are ALL
   /// dropped. The minimal intro-MP4 chrome (rb-flutter parity to iOS `LiveBottomBarView(bagOnly:)`).
-  /// Takes PRECEDENCE over [isUpcoming] / [isReplay].
+  /// Takes PRECEDENCE over [isUpcoming] / [isReplay] / [isFinishedLiveReplay].
   final bool bagOnly;
+
+  /// Already-finished-live-replay flag (`rb-flutter-replay-live-chrome-parity`, parity iOS
+  /// `LiveBottomBarView.chatClosed`). Default `false` keeps every existing (LIVE / isReplay /
+  /// upcoming / bagOnly) call site byte-identical — this widget's existing 3 goldens
+  /// (`live-bottom-bar-{live,replay,upcoming}.png`) do not set this flag.
+  ///
+  /// `true` (fed `PlayerShellModel.isFinishedLiveReplay` — NOT the narrower core DVR [isReplay],
+  /// same call-site discipline as `showsPlaybackProgressBar`'s own `isReplay` parameter):
+  ///   - the flex comment area becomes a DISABLED "聊天室已關閉" pill (non-interactive; tap does
+  ///     NOT forward [onComment] — the finished stream's backend `commentsub` 404s, unlike an
+  ///     [isReplay] behind-live-edge broadcast whose chat stays genuinely open).
+  ///   - the leading slot (nickname's position) becomes a「更多」(more) button instead, forwarding
+  ///     [onMore] (a fresh, independent intent — NOT routed through [onNickname]).
+  ///   - the trailing slot (share's position) becomes a CC (字幕) toggle instead, forwarding the
+  ///     EXISTING [onToggleCC] — that field / its `player_shell_view.dart` call-site wiring
+  ///     already existed as pure source-compat dead weight (no `build()` branch ever rendered a
+  ///     button reading it); this is its first real rendering consumer, not a new field.
+  ///   - the like button is UNAFFECTED (still rendered, still forwards [onLike]) — a finished
+  ///     replay retains the ability to like, mirrored from iOS ground truth.
+  /// Takes precedence below [bagOnly] / [isUpcoming] (mirrors iOS `commentAreaKind` /
+  /// `leadingSlotKind` / `trailingActionKind` precedence exactly).
+  final bool isFinishedLiveReplay;
 
   final VoidCallback? onBag;
   final VoidCallback? onComment;
@@ -111,6 +147,13 @@ class LiveBottomBarView extends StatelessWidget {
   final VoidCallback? onLike;
   final VoidCallback? onToggleCC;
 
+  /// 「更多」(⋯) tap → host opens the collapsed-more sheet (only reachable when
+  /// [isFinishedLiveReplay] renders the leading slot as `MoreGlyph`; `rb-flutter-replay-live-
+  /// chrome-parity`). A fresh seam — NOT routed through [onNickname] (the leading slot's other
+  /// occupant) since the two are mutually exclusive by construction and carry unrelated intents.
+  /// `null` → inert (demo / snapshot).
+  final VoidCallback? onMore;
+
   const LiveBottomBarView({
     super.key,
     required this.theme,
@@ -118,12 +161,14 @@ class LiveBottomBarView extends StatelessWidget {
     required this.isReplay,
     this.isUpcoming = false,
     this.bagOnly = false,
+    this.isFinishedLiveReplay = false,
     this.onBag,
     this.onComment,
     this.onNickname,
     this.onShare,
     this.onLike,
     this.onToggleCC,
+    this.onMore,
   });
 
   @override
@@ -151,48 +196,89 @@ class LiveBottomBarView extends StatelessWidget {
           ),
           const SizedBox(width: _barGap),
           // bag-only variant (introPlaying intro MP4) — JUST the bag + a trailing flex Spacer.
-          // Takes precedence over every other variant: comment / nickname / CC / share / like
-          // are all dropped.
+          // Takes precedence over every other variant: comment / nickname / CC / more / share /
+          // like are all dropped.
           if (bagOnly)
             const Spacer()
           else ...[
-            // Flex comment area. Upcoming (slim) → just a flex Spacer (no chat before the
-            // stream starts); otherwise (LIVE — INCLUDING 預錄直播 where isReplay is mis-flagged
-            // true) → tap-target "留言...". The LIVE bottom bar only renders for a live broadcast
-            // (liveStatus == 1), whose chat is open regardless of playback position — so the comment
-            // entry is ALWAYS available and MUST NOT collapse to "聊天室已關閉" on isReplay
-            // (prerecorded-live-bottom-bar-comment). True 回放/VOD uses the side rail.
-            if (isUpcoming)
-              const Spacer()
-            else
-              Expanded(
-                child: _CommentPill(
-                  key: LbTestKeys.liveCommentPill,
-                  onTap: onComment,
+            // Flex comment area — variant resolved by the pure `liveBottomBarCommentAreaKind`:
+            //   • upcoming(slim) → a flex Spacer (no chat before the stream starts).
+            //   • isFinishedLiveReplay(回放) → disabled「聊天室已關閉」(rb-flutter-replay-live-
+            //     chrome-parity): the FINISHED live's chat room is closed (backend commentsub →
+            //     404). Distinct from a behind-edge `isReplay` (still liveStatus==1, chat OPEN).
+            //   • comment → the tap-target "留言..." (LIVE, incl. 預錄直播 mis-flagged isReplay).
+            switch (liveBottomBarCommentAreaKind(
+                bagOnly: bagOnly,
+                isUpcoming: isUpcoming,
+                isFinishedLiveReplay: isFinishedLiveReplay)) {
+              LiveBottomBarCommentAreaKind.upcomingSpacer => const Spacer(),
+              LiveBottomBarCommentAreaKind.chatClosed => Expanded(
+                  child: _ChatClosedPill(key: LbTestKeys.liveCommentPill),
                 ),
-              ),
+              LiveBottomBarCommentAreaKind.comment ||
+              LiveBottomBarCommentAreaKind.bagOnlySpacer =>
+                Expanded(
+                  child: _CommentPill(
+                    key: LbTestKeys.liveCommentPill,
+                    onTap: onComment,
+                  ),
+                ),
+            },
             const SizedBox(width: _barGap),
-            // Nickname button is dropped entirely in the upcoming variant (design gates it on
-            // `!upcoming`). Otherwise it ALWAYS shows — no longer swapped for a CC toggle on
-            // isReplay (a live broadcast's chat is open — prerecorded-live-bottom-bar-comment).
-            if (!isUpcoming) ...[
-              // 設定暱稱 改設計稿自繪 person-edit（人頭 + 鉛筆 badge），不再用 Material
-              // Icons.person（rb-align-nickname-icon-person-edit）。
-              _IconButton(
-                key: LbTestKeys.livePersonEdit,
-                tint: Colors.white,
-                onTap: onNickname,
-                child: PersonEditGlyph(color: Colors.white, size: _iconGlyphSize),
-              ),
-              const SizedBox(width: _barGap),
-            ],
-            // 分享 icon 統一改設計稿自繪三節點 ShareGlyph（rb-flutter-share-icon-design-align，問題 8）。
-            _IconButton(
-              key: LbTestKeys.liveShare,
-              tint: Colors.white,
-              onTap: onShare,
-              child: ShareGlyph(color: Colors.white, size: _iconGlyphSize),
-            ),
+            // Leading slot — NICKNAME in the normal LIVE variant, 更多 (more) in
+            // isFinishedLiveReplay (rb-flutter-replay-live-chrome-parity, design R32 parity iOS
+            // `LiveBottomBarView.leadingSlotKind`: More occupies the nickname slot's position),
+            // NOTHING in upcoming slim (design gates both on `!upcoming`) — resolved by the pure
+            // `liveBottomBarLeadingSlotKind`.
+            switch (liveBottomBarLeadingSlotKind(
+                bagOnly: bagOnly,
+                isUpcoming: isUpcoming,
+                isFinishedLiveReplay: isFinishedLiveReplay)) {
+              LiveBottomBarLeadingSlotKind.nickname => Row(children: [
+                  // 設定暱稱 改設計稿自繪 person-edit（人頭 + 鉛筆 badge），不再用 Material
+                  // Icons.person（rb-align-nickname-icon-person-edit）。
+                  _IconButton(
+                    key: LbTestKeys.livePersonEdit,
+                    tint: Colors.white,
+                    onTap: onNickname,
+                    child: PersonEditGlyph(color: Colors.white, size: _iconGlyphSize),
+                  ),
+                  const SizedBox(width: _barGap),
+                ]),
+              LiveBottomBarLeadingSlotKind.more => Row(children: [
+                  _IconButton(
+                    key: LbTestKeys.liveMore,
+                    tint: Colors.white,
+                    onTap: onMore,
+                    child: MoreGlyph(color: Colors.white, size: _iconGlyphSize),
+                  ),
+                  const SizedBox(width: _barGap),
+                ]),
+              LiveBottomBarLeadingSlotKind.none => const SizedBox.shrink(),
+            },
+            // Trailing slot — SHARE in every variant EXCEPT isFinishedLiveReplay, where design
+            // R32 moves the CC (字幕) toggle into this position (share itself moves INTO the
+            // 「更多」sheet instead — rb-flutter-replay-live-chrome-parity, parity iOS
+            // `trailingActionKind`). CC reads the EXISTING `onToggleCC` callback (already wired
+            // at the `player_shell_view.dart` call site as pure source-compat dead weight until
+            // now — this is its first real rendering consumer).
+            switch (liveBottomBarTrailingActionKind(
+                bagOnly: bagOnly,
+                isUpcoming: isUpcoming,
+                isFinishedLiveReplay: isFinishedLiveReplay)) {
+              LiveBottomBarTrailingActionKind.share => _IconButton(
+                  key: LbTestKeys.liveShare,
+                  tint: Colors.white,
+                  onTap: onShare,
+                  child: ShareGlyph(color: Colors.white, size: _iconGlyphSize),
+                ),
+              LiveBottomBarTrailingActionKind.cc => _IconButton(
+                  key: LbTestKeys.liveCC,
+                  tint: Colors.white,
+                  onTap: onToggleCC,
+                  child: CcGlyph(color: Colors.white, size: _iconGlyphSize),
+                ),
+            },
             const SizedBox(width: _barGap),
             _IconButton(
               key: LbTestKeys.liveHeart,
@@ -206,6 +292,63 @@ class LiveBottomBarView extends StatelessWidget {
     );
   }
 }
+
+// MARK: - Comment-area / leading-slot / trailing-slot variant (pure, unit-testable — no
+// rendering; rb-flutter-replay-live-chrome-parity, parity iOS `LiveBottomBarView`'s
+// `CommentAreaKind` / `LeadingSlotKind` / `TrailingActionKind` trio)
+
+/// Which thing the flex comment area draws. Pure decision of the three variant flags, extracted
+/// so the precedence is unit-testable without rendering (mirrors `PlayerShellView.resolveGestureEnd`
+/// discipline). `bagOnlySpacer` is unreachable at the `build()` call site (the `if (bagOnly)`
+/// branch is handled before this switch is ever consulted) but kept for a total, defensively-
+/// complete switch — matches iOS's own `bagOnlySpacer` case shape.
+enum LiveBottomBarCommentAreaKind { bagOnlySpacer, upcomingSpacer, chatClosed, comment }
+
+/// Resolve the comment-area variant. Precedence: `bagOnly` > `isUpcoming` > `isFinishedLiveReplay`
+/// > 正常留言. Pure (no I/O, no Flutter).
+LiveBottomBarCommentAreaKind liveBottomBarCommentAreaKind({
+  required bool bagOnly,
+  required bool isUpcoming,
+  required bool isFinishedLiveReplay,
+}) {
+  if (bagOnly) return LiveBottomBarCommentAreaKind.bagOnlySpacer;
+  if (isUpcoming) return LiveBottomBarCommentAreaKind.upcomingSpacer;
+  if (isFinishedLiveReplay) return LiveBottomBarCommentAreaKind.chatClosed;
+  return LiveBottomBarCommentAreaKind.comment;
+}
+
+/// Which affordance the LEADING slot (nickname's position) draws. Pure (unit-testable, no
+/// rendering) — mirrors `liveBottomBarCommentAreaKind`'s discipline.
+enum LiveBottomBarLeadingSlotKind { nickname, more, none }
+
+/// Resolve the leading slot's variant: `bagOnly` or `isUpcoming` → `none` (neither affordance
+/// applies); `isFinishedLiveReplay` → `more`; otherwise → `nickname` (normal LIVE). Pure.
+LiveBottomBarLeadingSlotKind liveBottomBarLeadingSlotKind({
+  required bool bagOnly,
+  required bool isUpcoming,
+  required bool isFinishedLiveReplay,
+}) {
+  if (bagOnly || isUpcoming) return LiveBottomBarLeadingSlotKind.none;
+  return isFinishedLiveReplay
+      ? LiveBottomBarLeadingSlotKind.more
+      : LiveBottomBarLeadingSlotKind.nickname;
+}
+
+/// Which affordance the TRAILING slot (share's position) draws. Pure (unit-testable, no
+/// rendering) — mirrors the two decisions above.
+enum LiveBottomBarTrailingActionKind { share, cc }
+
+/// Resolve the trailing slot's variant: `isFinishedLiveReplay` (and not `bagOnly`/`isUpcoming` —
+/// those two variants keep their own unrelated trailing affordance, `share`, unaffected by this
+/// swap) → `cc`; every other combination → `share` (unchanged). Pure.
+LiveBottomBarTrailingActionKind liveBottomBarTrailingActionKind({
+  required bool bagOnly,
+  required bool isUpcoming,
+  required bool isFinishedLiveReplay,
+}) =>
+    (!bagOnly && !isUpcoming && isFinishedLiveReplay)
+        ? LiveBottomBarTrailingActionKind.cc
+        : LiveBottomBarTrailingActionKind.share;
 
 // MARK: - Bag button (`LBLiveBottomBar` bag)
 
@@ -233,10 +376,9 @@ class _BagButton extends StatelessWidget {
               color: Colors.white,
               shape: BoxShape.circle,
             ),
-            child: Icon(
-              Icons.shopping_bag_outlined,
-              size: _bagIconGlyphSize * theme.fontScale,
+            child: BagGlyph(
               color: theme.accent,
+              size: _bagIconGlyphSize * theme.fontScale,
             ),
           ),
           if (bagCount > 0)
@@ -307,6 +449,34 @@ class _CommentPill extends StatelessWidget {
           _commentPlaceholder,
           style: TextStyle(color: Color(0xC7FFFFFF), fontSize: _commentFontSize),
         ),
+      ),
+    );
+  }
+}
+
+/// Disabled「聊天室已關閉」flex pill for the already-finished-live-replay variant
+/// (`rb-flutter-replay-live-chrome-parity`, parity iOS `chatClosedPill`) — a NON-interactive
+/// `Container` (NOT a `GestureDetector`), so a tap does nothing (no `onComment` → no composer, no
+/// backend `commentsub` 404 mis-fire). Dimmer than the active pill (text alpha 0x80 vs 0xC7,
+/// fainter capsule fill) to read as disabled. Reuses the SAME `LbTestKeys.liveCommentPill` key as
+/// the active pill (the two are mutually exclusive by construction — never both rendered at
+/// once) so an E2E scenario can locate "the comment area" regardless of variant.
+class _ChatClosedPill extends StatelessWidget {
+  const _ChatClosedPill({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: _iconSize,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      alignment: Alignment.centerLeft,
+      decoration: BoxDecoration(
+        color: _commentBackground.withValues(alpha: 0.6),
+        borderRadius: const BorderRadius.all(Radius.circular(999)),
+      ),
+      child: const Text(
+        _chatClosedPlaceholder,
+        style: TextStyle(color: Color(0x80FFFFFF), fontSize: _commentFontSize),
       ),
     );
   }

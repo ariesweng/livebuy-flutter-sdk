@@ -33,11 +33,13 @@ import 'widget_model.dart' show WidgetGoods;
 // REUSED PRIMITIVE: every grid cell is a shared `CarouselCardView` (the family-5
 // 9:16 card — LBPCarouselCard). This surface NEVER re-draws a card from scratch; it
 // only arranges `CarouselCardView`s into rows of TWO + draws the footer. The cell
-// width is a fixed half-column ([_cellWidth]) so the two columns split the fixed
-// snapshot canvas evenly (the design passes `width="100%"` to the card inside a
-// `repeat(2, 1fr)` grid). `CarouselCardView` takes an explicit `width`, so each cell
-// is handed the resolved half-column rather than a flexible cell (a flexible cell +
-// a fixed card width would fight / overflow), parity with the Android `cellWidth`.
+// width is a DYNAMIC half-column (`cellWidth`, measured via `LayoutBuilder` off the
+// LIVE container width — see `build()`) so the two columns split the container evenly
+// at ANY width (the design passes `width="100%"` to the card inside a `repeat(2, 1fr)`
+// grid). `CarouselCardView` takes an explicit `width`, so each cell is handed the
+// resolved half-column rather than a flexible cell (a flexible cell + a fixed card
+// width would fight / overflow), parity with the Android `cellWidth`
+// (`BoxWithConstraints`) / iOS `cellWidth(forContainerWidth:)` (`GeometryReader`).
 //
 // ⚠️ NO ListView / GridView / SingleChildScrollView in rendered content — the
 // reference-ui golden path renders lazy / scroll containers inconsistently (the
@@ -86,12 +88,16 @@ const double _gridGap = 10;
 /// real infinite scroll is host-driven via `onLoadMore`.
 const int _maxGridCards = 6;
 
-/// The per-cell half-column width. `CarouselCardView` uses a FIXED `width`, so we pin
-/// a concrete half-column rather than a flexible cell (a flexible cell + a fixed card
-/// width would fight). On the fixed 393-wide golden canvas the usable half-column is
-/// `(393 - _gridPadding*2 - _gridGap) / 2 ≈ 179.5` — parity with Android `cellWidth =
-/// 179.dp` / iOS `cellWidth(forContainerWidth:)`.
-const double _cellWidth = 179;
+/// The per-cell half-column width is DYNAMIC — derived from the LIVE container width
+/// via `LayoutBuilder` in [VideoShopGridView.build] (`cellWidth = ((containerWidth -
+/// _gridPadding*2 - _gridGap) / 2).clamp(0, double.infinity)`), NOT a value pinned to
+/// the fixed 393pt golden canvas. `CarouselCardView` uses a FIXED `width`, so each cell
+/// is handed the resolved half-column rather than a flexible cell (a flexible cell + a
+/// fixed card width would fight). Parity with iOS `cellWidth(forContainerWidth:)` and
+/// Android `VideoShopGridView.kt`'s `BoxWithConstraints`-derived `cellWidth`
+/// (`rb-flutter-grid-cell-width-responsive` / `rb-android-grid-cell-width-responsive`).
+/// On the 393pt golden canvas this evaluates to `(393 - _gridPadding*2 - _gridGap) / 2
+/// = 179.5` (formerly hard-coded as the truncated `179`).
 
 // MARK: - Fixed presentation strings
 
@@ -239,17 +245,31 @@ class VideoShopGridView extends StatelessWidget {
       width: double.infinity,
       color: theme.background,
       padding: const EdgeInsets.fromLTRB(_gridPadding, _gridPadding, _gridPadding, 0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 2-column grid: PLAIN Column of Row rows (TWO cards per row) — NEVER
-          // GridView. Each cell is handed the fixed half-column [_cellWidth] so the
-          // two columns split the canvas evenly; CarouselCardView fills its cell.
-          ..._gridRows(),
-          // Footer (載入更多影片... / 已顯示全部影片) — centered.
-          _footer(),
-        ],
+      // LayoutBuilder — Flutter's "measure then draw" primitive, the equivalent of iOS
+      // `GeometryReader` / Android `BoxWithConstraints` — measures the LIVE available
+      // width to derive the per-cell half-column. It sits as the `Container`'s `child`
+      // (i.e. AFTER the padding above is applied), so `constraints.maxWidth` here is
+      // already the padding-INSIDE width: the formula only needs to subtract
+      // `_gridGap` once (NOT `_gridPadding*2` again — that has already been consumed by
+      // the enclosing `Container.padding`).
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final cellWidth =
+              ((constraints.maxWidth - _gridGap) / 2).clamp(0.0, double.infinity);
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 2-column grid: PLAIN Column of Row rows (TWO cards per row) — NEVER
+              // GridView. Each cell is handed the dynamic half-column [cellWidth] so
+              // the two columns split the LIVE container width evenly; CarouselCardView
+              // fills its cell.
+              ..._gridRows(cellWidth),
+              // Footer (載入更多影片... / 已顯示全部影片) — centered.
+              _footer(),
+            ],
+          );
+        },
       ),
     );
   }
@@ -261,13 +281,13 @@ class VideoShopGridView extends StatelessWidget {
   // lazy/scroll blank-render trap forbids `GridView`. REUSES the shared
   // `CarouselCardView` primitive (never re-draws a card).
 
-  List<Widget> _gridRows() {
+  List<Widget> _gridRows(double cellWidth) {
     final rows = _rows;
     final widgets = <Widget>[];
     for (var i = 0; i < rows.length; i++) {
       // Each row holds up to TWO cells; the global (flat) card index of the row's
       // first cell is `i * 2` (so the per-cell E2E `gridCard(index)` keys are flat).
-      widgets.add(_gridRow(rows[i], i * 2));
+      widgets.add(_gridRow(rows[i], i * 2, cellWidth));
       // Inter-row gap (gridGap) between rows — NOT after the last row (the footer
       // owns its own top padding).
       if (i < rows.length - 1) {
@@ -278,11 +298,11 @@ class VideoShopGridView extends StatelessWidget {
   }
 
   /// One grid row: up to TWO shared `CarouselCardView` cells side by side, each taking
-  /// the fixed half-column [_cellWidth]. A trailing odd cell keeps the 2-col rhythm
-  /// with an invisible fixed spacer of the same half-column width. REUSES the shared
-  /// `CarouselCardView` primitive (never re-draws a card). Parity with iOS `gridRow`
-  /// / Android `GridRow`.
-  Widget _gridRow(List<LBVideoItem> row, int baseIndex) {
+  /// the dynamic half-column [cellWidth] (LIVE-container-derived — see [build]). A
+  /// trailing odd cell keeps the 2-col rhythm with an invisible spacer of the same
+  /// half-column width. REUSES the shared `CarouselCardView` primitive (never re-draws
+  /// a card). Parity with iOS `gridRow` / Android `GridRow`.
+  Widget _gridRow(List<LBVideoItem> row, int baseIndex, double cellWidth) {
     final children = <Widget>[];
     for (var i = 0; i < row.length; i++) {
       final item = row[i];
@@ -292,7 +312,7 @@ class VideoShopGridView extends StatelessWidget {
         theme: theme,
         item: item,
         goods: goodsFor?.call(item),
-        width: _cellWidth,
+        width: cellWidth,
         live: live,
         productCard: productCard,
         onTap: onTapVideo == null ? null : () => onTapVideo!(item),
@@ -301,7 +321,7 @@ class VideoShopGridView extends StatelessWidget {
     // Keep the 2-col grid rhythm when the final row has a single (odd) cell.
     if (row.length == 1) {
       children.add(const SizedBox(width: _gridGap));
-      children.add(const SizedBox(width: _cellWidth));
+      children.add(SizedBox(width: cellWidth));
     }
     return Row(
       mainAxisSize: MainAxisSize.max,

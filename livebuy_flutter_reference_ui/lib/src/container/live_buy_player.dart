@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatf
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:share_plus/share_plus.dart' show Share;
+import 'package:url_launcher/url_launcher.dart';
 // HIDE the deprecated `LivebuyPlayer` alias the core package still exports (→ `LivebuyPlayerCore`,
 // removed at v2.0): this reference-ui package defines the GOLDEN-NAME `LivebuyPlayer` (the
 // turnkey container), so importing both packages would otherwise be an ambiguous-import error.
@@ -9,6 +10,7 @@ import 'package:livebuy_flutter/livebuy_flutter.dart' hide LivebuyPlayer;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart';
 
 import '../reference_ui_theme.dart';
+import 'channel_chrome.dart';
 import 'chat_composer_bar.dart';
 import 'live_now_poll_controller.dart';
 import 'reference_ui_design.dart';
@@ -97,6 +99,12 @@ String productShareUrlString(String base, int? beginTime) {
 /// 頻道分享是否該呈現（dropin-player-default-share-sheet-flutter）：`shareUrl` 非空才呈現（空 → no-op，
 /// 不開空 sheet）。Pure 所以決策與測試共用一份。頻道級分享**不**附 `?t=`（與 [productShareUrlString] 區隔）。
 bool lbShouldPresentChannelShare(String shareUrl) => shareUrl.isNotEmpty;
+
+/// 聯絡商家開瀏覽器是否該呈現（dropin-service-link-default-browser-wiring-flutter）：`serviceLink`
+/// 非空才呈現（空 → no-op，不開空白頁，也不退回 `onTapRailItem`）。Pure 所以決策與測試共用一份，
+/// 比照同檔上方 [lbShouldPresentChannelShare] 的命名與模式。可呈現時由呼叫端再經
+/// `LBURLOpenPolicy.decide()` 裁決 in-app / external / 不可開。
+bool lbShouldPresentServiceLink(String serviceLink) => serviceLink.isNotEmpty;
 
 /// 留言 pill 預設 gating（純函式，與容器 `onComment` 共用一份；parity iOS / Android / RN 同名）：
 /// 暱稱**尚未選名**（`!isLoggedIn && displayName.isEmpty`）→ 回 `true`，容器先呈現 設定暱稱 modal；
@@ -503,11 +511,11 @@ class LivebuyPlayerConfig {
 
   /// 聯絡商家（`ContactMerchantModalView` 確認框「確定」之後的動作）
   /// (dropin-service-link-default-browser-flutter). host 設此 callback 完全覆蓋（自畫客服流程 /
-  /// 開瀏覽器）。DEFAULT: 目前**無**智慧預設——`shop.serviceLink` 在 production reference-ui 拿不到值
-  /// （`flutter-ui` 的 header/rail chrome 為 host-feeds 架構，`handleHeaderChrome()`/
-  /// `handleRailEnablement()` 目前生產環境未接，跟分享功能的 `shareUrl` 面臨同樣的既有限制——見
-  /// dropin-service-link-default-browser-flutter design.md）。未設此 callback 時 fall back 到既有
-  /// `onTapRailItem?.call(LBSideRailKind.serviceLink)`（維持現況行為不變，非破壞）。
+  /// 開瀏覽器，零變更）。DEFAULT (dropin-service-link-default-browser-wiring-flutter): 以容器對
+  /// `onChannelChange` 訂閱捕捉到的最近一次 `serviceLink` 經 `lbShouldPresentServiceLink` 判斷非空，
+  /// 再經 `LBURLOpenPolicy.decide()` 裁決後以 `url_launcher` 開啟（`inApp` →
+  /// `LaunchMode.inAppBrowserView`；`external` → `LaunchMode.externalApplication`；`decide()` 回
+  /// `null` 或 `serviceLink` 空 → no-op）。與同檔 `onShare` 的走線範式同構。
   final VoidCallback? onServiceLink;
 
   /// 商品列表列**縮圖**點擊 → 影片跳轉到該商品介紹時間（issue 5）. DEFAULT:
@@ -657,6 +665,17 @@ class LivebuyPlayerConfig {
   /// gates whether the row is drawn.
   final bool showFavorite;
 
+  /// Whether the PlayerHeader viewer-count badge is drawn at all
+  /// (rb-flutter-viewer-count-visibility-toggle, parity iOS / Android `showViewerCount`).
+  /// DEFAULT `true` — matches iOS/Android's own defaults exactly (unlike [showSubscribe] /
+  /// [showFavorite], there is NO "leaf true / container false" reversal here: this is a
+  /// pure host opt-OUT, not an opt-in chrome feature). `false` hides the viewer-count
+  /// badge even while `isLive == true` (including replay); the LIVE red pill and the
+  /// core / view-model `viewerCount` data pipeline (`channel.watchNum` →
+  /// `MomentState.viewerCount` → `DefaultPlayerHeaderState.viewerCount`) are unaffected —
+  /// this only gates whether `PlayerHeaderBarView` draws the badge.
+  final bool showViewerCount;
+
   /// MERCHANT capability gate for the player top bar's title MARQUEE
   /// (rb-flutter-marquee-title-scroll, parity iOS / Android `titleScroll`).
   ///
@@ -757,6 +776,7 @@ class LivebuyPlayerConfig {
     this.showStock,
     this.showSubscribe = false,
     this.showFavorite = false,
+    this.showViewerCount = true,
     this.titleScroll,
     this.design = const MinimalDesign(),
     this.onTogglePlayPause,
@@ -818,6 +838,9 @@ class LivebuyPlayerConfig {
       // collapsible presenter's re-composition" requirement as showStock above.
       showSubscribe: showSubscribe,
       showFavorite: showFavorite,
+      // rb-flutter-viewer-count-visibility-toggle — must likewise survive the collapsible
+      // presenter's re-composition (see the ⚠️ note above).
+      showViewerCount: showViewerCount,
       // rb-flutter-marquee-title-scroll — the merchant title-marquee gate must likewise
       // survive the collapsible presenter's re-composition.
       titleScroll: titleScroll,
@@ -944,6 +967,13 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// reads this instead of the live identity. Set on a successful 設定暱稱 submit; '' until then.
   String _guestNickname = '';
 
+  /// Latest channel `serviceLink`（dropin-service-link-default-browser-wiring-flutter，鏡射既有 RN
+  /// `serviceLinkRef.current = info.serviceLink`）：容器對 `LivebuyPlayerCore.onChannelChange` 的既有
+  /// 訂閱（`player-channel-chrome-wiring-reference-ui-flutter`）在轉發給 `forwardChannelChangeToTemplate`
+  /// 之外，額外把每次 tick 的 `info.serviceLink` 存這裡，供未設 `config.onServiceLink` 時的容器預設
+  /// （開瀏覽器）讀取。`''` 表示尚未收到任何 `onChannelChange`、或該頻道 shop 無 serviceLink。
+  String _lastServiceLink = '';
+
   late String _currentVideoId;
 
   /// No-template FALLBACK mute mirror. The single mute truth is `template.header.muted`
@@ -978,6 +1008,13 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// opens it; the scrim / close button dismisses it (re-openable). Parity iOS
   /// `ProductSheetsModel.listPresented` (default false) — no longer auto-presents over the video.
   bool _productListPresented = false;
+
+  /// Local mirror of `ProductSheetsOverlayView`'s aggregate "any product sheet presented" state
+  /// (rb-flutter-block-swipe-nav-when-sheet-open): the sheets container reports every
+  /// open/close via `onPresentationChange`, and we pass this down to `PlayerShellView` (via
+  /// the design context) so its swipe-to-switch-video gesture can gate on it. Wiring copied
+  /// verbatim from [_cleanMode] / [_moreMenuOpen] above. Default false (off).
+  bool _productSheetsPresented = false;
 
   /// Resolved core theme (`sdkConfig.theme`), fetched async in [initState]; null → minimal
   /// fallback (the resolver's default), the safe degradation until the fetch completes / if it
@@ -1186,39 +1223,68 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   @override
   Widget build(BuildContext context) {
     final theme = _resolveTheme();
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        LivebuyPlayerCore(
-          videoId: widget.videoId,
-          controller: _controller,
-          enablePiP: true,
-          // VOD-2 playback-progress DATA plane (rb-flutter-vod-playback-progress-bar) — was
-          // never wired before this change, so `template.playbackProgress` was dead in
-          // production regardless of any consuming pixel surface. Null-safe (`?.`) so a
-          // demo/golden run with no installed `LivebuyUI` template is a no-op, matching every
-          // other `LivebuyUI.playerTemplate?.` call site in this file.
-          onPlaybackProgressChange: (p) =>
-              LivebuyUI.playerTemplate?.handlePlaybackProgress(
-            position: p.position,
-            duration: p.duration,
-            isPlaying: p.isPlaying,
-            isReplay: p.isReplay,
+    // rb-flutter-player-material-ancestor — LivebuyPlayer is a public drop-in container that
+    // hosts may mount anywhere (a bare Stack sibling of Scaffold, Navigator.push, an
+    // OverlayEntry, …), so it MUST NOT rely on the caller happening to provide a `Material`
+    // ancestor. Without one, every descendant `Text` falls back to Flutter's debug style
+    // (yellow double underline) because `DefaultTextStyle` (normally supplied by `Material`)
+    // is missing. `MaterialType.transparency` paints no background/shadow of its own — it only
+    // supplies the ancestor context — so this MUST NOT change any existing pixel output.
+    return Material(
+      type: MaterialType.transparency,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          LivebuyPlayerCore(
+            videoId: widget.videoId,
+            controller: _controller,
+            enablePiP: true,
+            // VOD-2 playback-progress DATA plane (rb-flutter-vod-playback-progress-bar) — was
+            // never wired before this change, so `template.playbackProgress` was dead in
+            // production regardless of any consuming pixel surface. Null-safe (`?.`) so a
+            // demo/golden run with no installed `LivebuyUI` template is a no-op, matching every
+            // other `LivebuyUI.playerTemplate?.` call site in this file.
+            onPlaybackProgressChange: (p) =>
+                LivebuyUI.playerTemplate?.handlePlaybackProgress(
+              position: p.position,
+              duration: p.duration,
+              isPlaying: p.isPlaying,
+              isReplay: p.isReplay,
+            ),
+            // rb-flutter-subtitle-vtt-caption-display — per-channel VTT subtitle DATA plane. Was
+            // never wired before this change (`rb-flutter-subtitle-template-wiring` built
+            // `handleSubtitleChannelInfo` but nothing called it), so `template.subtitle.url` was
+            // dead in production. Extracted to a top-level function ([forwardSubtitleChangeToTemplate])
+            // rather than inlined so the forwarding itself is unit-testable without constructing
+            // this platform-view widget.
+            onSubtitleChange: (info) =>
+                forwardSubtitleChangeToTemplate(info, LivebuyUI.playerTemplate),
+            // player-channel-chrome-wiring-reference-ui-flutter — per-channel header chrome
+            // (title / hostName / shopLogo / shareUrl / isLive) + side-rail「聯繫商家」availability
+            // DATA plane. Was never wired before this change (`onChannelChange` existed on
+            // `LivebuyPlayerCore` since upcoming-intro-core-flutter, but nothing in this package
+            // called it), so `handleHeaderChrome` / `handleRailEnablement`'s `serviceLinkAvailable`
+            // were dead in production. Extracted to a top-level function
+            // ([forwardChannelChangeToTemplate]), parallel to [forwardSubtitleChangeToTemplate]
+            // above, for the same unit-testability reason (this widget cannot be constructed in a
+            // widget test — see [forwardSubtitleChangeToTemplate]'s doc). A SEPARATE named
+            // parameter from `onSubtitleChange` above — the two events fire independently off the
+            // core bridge and are NOT merged into one callback (design.md D3).
+            //
+            // dropin-service-link-default-browser-wiring-flutter：額外捕捉 `info.serviceLink` 到
+            // 容器 State 的 [_lastServiceLink]（鏡射 RN `serviceLinkRef.current = info.serviceLink`），
+            // 供下方 `onServiceLink` 預設讀取；`forwardChannelChangeToTemplate` 函式本體不變。
+            onChannelChange: (info) {
+              _lastServiceLink = info.serviceLink;
+              forwardChannelChangeToTemplate(info, LivebuyUI.playerTemplate);
+            },
           ),
-          // rb-flutter-subtitle-vtt-caption-display — per-channel VTT subtitle DATA plane. Was
-          // never wired before this change (`rb-flutter-subtitle-template-wiring` built
-          // `handleSubtitleChannelInfo` but nothing called it), so `template.subtitle.url` was
-          // dead in production. Extracted to a top-level function ([forwardSubtitleChangeToTemplate])
-          // rather than inlined so the forwarding itself is unit-testable without constructing
-          // this platform-view widget.
-          onSubtitleChange: (info) =>
-              forwardSubtitleChangeToTemplate(info, LivebuyUI.playerTemplate),
-        ),
-        // The WHOLE overlay (shell / feed-win / product-sheets / moments / gap-surfaces /
-        // composer) is composed by the resolved design (granularity A). Default MinimalDesign
-        // = the verbatim minimal composition (behavior unchanged); a host injects its own.
-        widget.config.design.playerOverlay(_overlayContext(theme)),
-      ],
+          // The WHOLE overlay (shell / feed-win / product-sheets / moments / gap-surfaces /
+          // composer) is composed by the resolved design (granularity A). Default MinimalDesign
+          // = the verbatim minimal composition (behavior unchanged); a host injects its own.
+          widget.config.design.playerOverlay(_overlayContext(theme)),
+        ],
+      ),
     );
   }
 
@@ -1245,8 +1311,16 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       composerController: _composer,
       nicknameController: _nickname,
       loginController: _login,
-      // Parity: the inline overlays never set `ProductSheetsOverlayView.live` → default false.
-      live: false,
+      // rb-flutter-product-sheets-live-images-wiring: this drop-in container is always a
+      // real host-runtime surface (never demo/golden), so product sheets MUST load real
+      // photos — matching this same function's `live: true` for `PlayerShellView` /
+      // `MomentsOverlayView` below (reference_ui_design.dart). The PRIOR `live: false` here
+      // (parity with the pre-`ReferenceUIDesign` inline overlays, which never set
+      // `ProductSheetsOverlayView.live` either) meant every product sheet — list / detail /
+      // restock / zoom — showed ONLY placeholders in production; this was a real bug in the
+      // shipped SDK, not a deliberate demo posture, present since product sheets first
+      // landed (predates this design-abstraction refactor).
+      live: true,
       // 商品 sheet 庫存文案的商家能力閘（rb-flutter-show-stock-caption-toggle）：原樣帶 host 注入的
       // raw `extensions.show_stock`，容器**不**自行讀 `sdkConfig`、**不**正規化（由 sheet 端的
       // `normalizeShowStock` 單一入口負責）。null（預設）→ 顯示，既有 host 零改動。
@@ -1256,6 +1330,10 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // showFavorite: true)` 顯式開啟——不接觸 core / sdkConfig，純 client 端渲染開關。
       showSubscribe: c.showSubscribe,
       showFavorite: c.showFavorite,
+      // PlayerHeader 觀看人數徽章顯示/隱藏（rb-flutter-viewer-count-visibility-toggle，parity
+      // iOS/Android `showViewerCount`）：純 by-value host 呈現旗標，預設 `true`，不接觸
+      // core / sdkConfig 的 viewerCount 資料管線，只 gate 渲染端。
+      showViewerCount: c.showViewerCount,
       // 標題跑馬燈的商家能力閘（rb-flutter-marquee-title-scroll）：原樣帶 host 注入的 raw
       // `extensions.video_title_scroll`，容器**不**自行讀 `sdkConfig`、**不**正規化（由
       // `PlayerHeaderBarView` 的 `normalizeTitleScroll` 單一入口負責）。null（預設）→ 溢出即捲，
@@ -1289,6 +1367,12 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       productListPresented: _productListPresented,
       onDismissProductList: () {
         if (_productListPresented) setState(() => _productListPresented = false);
+      },
+      // 商品 sheet 開啟時抑制上下滑動換片（rb-flutter-block-swipe-nav-when-sheet-open）：接線
+      // 比照上面既有 _cleanMode / _moreMenuOpen。
+      productSheetsPresented: _productSheetsPresented,
+      onProductSheetsPresentedChange: (v) {
+        if (v != _productSheetsPresented) setState(() => _productSheetsPresented = v);
       },
       onMinimize: c.onMinimize ?? _controller.minimize,
       onToggleMute: c.onToggleMute ?? _toggleMute,
@@ -1368,10 +1452,24 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
             final url = LivebuyUI.playerTemplate?.header.shareUrl ?? '';
             if (lbShouldPresentChannelShare(url)) Share.share(url);
           },
-      // 聯絡商家 override（dropin-service-link-default-browser-flutter）：原樣傳遞，不加任何智慧預設
-      // 運算（`shop.serviceLink` 生產環境拿不到值，見 design.md）。null → PlayerShellView 自己 fallback
-      // 到既有 onTapRailItem(serviceLink)。
-      onServiceLink: c.onServiceLink,
+      // 聯絡商家預設（dropin-service-link-default-browser-wiring-flutter，B 等義）：host 設了
+      // onServiceLink → 覆蓋（零變更）；未設 → 以 onChannelChange 捕捉到的最近一次 [_lastServiceLink]
+      // 經 lbShouldPresentServiceLink 判斷非空，再經 LBURLOpenPolicy.decide() 裁決：inApp →
+      // inAppBrowserView；external → externalApplication；decide() 回 null 或 serviceLink 空 → no-op
+      // （比照 flutter-ui/lib/src/default_template.dart 既有 _openResolvedUrl 的裁決 → 分流範式）。
+      onServiceLink: c.onServiceLink ??
+          () {
+            final serviceLink = _lastServiceLink;
+            if (!lbShouldPresentServiceLink(serviceLink)) return;
+            final decision = LBURLOpenPolicy.decide(serviceLink);
+            if (decision == null) return;
+            switch (decision.target) {
+              case LBURLOpenTarget.inApp:
+                launchUrl(decision.url, mode: LaunchMode.inAppBrowserView);
+              case LBURLOpenTarget.external:
+                launchUrl(decision.url, mode: LaunchMode.externalApplication);
+            }
+          },
       // 列縮圖 → seek 到商品介紹時間（issue 5）：beginTime null 不 seek。
       onSeekToProductIntro: c.onSeekToProductIntro ??
           (product) {
@@ -1667,4 +1765,95 @@ String guestNicknameSubmitErrorText(Object error) {
 /// `DefaultPlayerTemplate`, call this function, assert `template.subtitle.{available,url}`.
 void forwardSubtitleChangeToTemplate(LBSubtitleInfo info, DefaultPlayerTemplate? template) {
   template?.handleSubtitleChannelInfo(available: info.available, url: info.url);
+}
+
+// MARK: - Channel-change header chrome + rail service-link wiring
+// (player-channel-chrome-wiring-reference-ui-flutter)
+
+/// Forward the core's per-channel [LBPlayerChannelInfo] (fired by
+/// `LivebuyPlayerCore.onChannelChange`) into the bound [template]'s header chrome
+/// (`handleHeaderChrome`) and the side-rail「聯繫商家」availability
+/// (`handleRailEnablement`'s `serviceLinkAvailable`). `template == null` (no
+/// `LivebuyUI` installed — demo / golden / a host driving `LivebuyPlayerCore` bare)
+/// is a no-op. Parity iOS `DefaultPlayerTemplate.ingestChannel` / RN
+/// `container/LivebuyPlayer.tsx`'s `onChannelChange` handler
+/// (`player-channel-chrome-wiring-reference-ui-rn`).
+///
+/// 🔴 **Flutter-specific merge-safety (design.md Decision 1) — READ BEFORE EDITING.**
+/// UNLIKE RN's `handleRailEnablement(flags: Partial<LBSideRailEnablement>)` (a
+/// per-field merge — an omitted key is left untouched), Flutter's
+/// `DefaultPlayerTemplate.handleRailEnablement` / the underlying
+/// `DefaultOperationRail.handleEnablement` takes FOUR `required` parameters with NO
+/// defaults and OVERWRITES ALL FOUR on every call (`default_operation_rail.dart`).
+/// Porting RN's "just pass `serviceLinkAvailable`" shape verbatim would not even
+/// compile, and supplying a placeholder for the other three would SILENTLY CLOBBER
+/// state written by two OTHER call sites this same package already drives:
+///   - `DefaultTemplate.handleChatEnabled` — a mid-live `guest_comment` change
+///     relayed via `POLL_RECEIVED` (`template_attachment.dart`);
+///   - `DefaultTemplate.handleSubtitleChannelInfo` →
+///     `operationRail.handleSubtitleAvailable` — the PRE-EXISTING `onSubtitleChange`
+///     wiring right above this function ([forwardSubtitleChangeToTemplate]).
+/// So this function reads the template's CURRENT `chatEnabled` / `subtitleAvailable`
+/// / `guestEditAvailable` off its own public `operationRail.chatEnabled` getter and
+/// `operationRail.items` list, and passes them straight through UNCHANGED — only
+/// `serviceLinkAvailable` is actually driven by this event. `DefaultOperationRail
+/// .handleEnablement`'s own diff-then-notify means round-tripping an unchanged value
+/// back in is a genuine no-op (no spurious notification).
+///
+/// Extracted as a standalone top-level function — same rationale as
+/// [forwardSubtitleChangeToTemplate]: the container `LivebuyPlayer` cannot be
+/// constructed in a widget test (its `LivebuyPlayerController` rides a real per-view
+/// `MethodChannel` backed by a platform view), so an inline closure body at the
+/// `LivebuyPlayerCore(onChannelChange: ...)` call site would be unreachable by a
+/// unit test.
+void forwardChannelChangeToTemplate(
+    LBPlayerChannelInfo info, DefaultPlayerTemplate? template) {
+  if (template == null) return;
+  final chrome = deriveHeaderChromeFields(info);
+  template.handleHeaderChrome(
+    title: chrome.title,
+    hostName: chrome.hostName,
+    shopLogo: chrome.shopLogo,
+    shareUrl: chrome.shareUrl,
+    isLive: chrome.isLive,
+    isFinishedLiveReplay: chrome.isFinishedLiveReplay,
+  );
+  final rail = template.operationRail;
+  bool enabledFor(LBSideRailKind kind) =>
+      rail.items.firstWhere((i) => i.kind == kind).enabled;
+  template.handleRailEnablement(
+    // Read-then-pass-through — MUST NOT be a fixed default (see the 🔴 doc above).
+    chatEnabled: rail.chatEnabled,
+    subtitleAvailable: enabledFor(LBSideRailKind.subtitle),
+    // The ONE field this event actually drives.
+    serviceLinkAvailable: deriveServiceLinkAvailable(info.serviceLink),
+    guestEditAvailable: enabledFor(LBSideRailKind.guestNameEdit),
+  );
+  // product-list-wiring-reference-ui-flutter: forward the channel-load-time `goods`
+  // snapshot (product-list-bridge-core-flutter) into the existing `flutter-ui` public
+  // entry point that drives the「更多」product sheet / bag-count view-model — parity
+  // iOS/Android/RN's moment-state pipeline calling the equivalent `handleProducts`. No
+  // `active` (in-narration) product is derivable from this load-time-only projection
+  // (unlike the moment-state `narratingProduct` the other platforms have), so it is left
+  // at the method's own default (`null`) rather than guessed. `handleProducts` already
+  // diff-then-notifies internally, so repeated `channelChange` ticks with an unchanged
+  // `goods` list are a safe no-op.
+  template.handleProducts(info.goods);
+  // video-info-wiring-reference-ui-flutter: forward the「直播資訊」info-tab fields
+  // (title / publishAt / shopName / shopIntro / shopLogo) into the existing `flutter-ui`
+  // public entry point `handleInfo`, which drives `DefaultInfoTab` / `VideoInfoPanelView`
+  // — parity iOS/Android's `ingestChannel` making this exact call internally on every
+  // channel load (`DefaultPlayerTemplate.swift:715-716` / `DefaultPlayerTemplate.kt:1268`).
+  // Prior to this call, `handleInfo` had zero callers anywhere in `flutter` /
+  // `flutter-ui` / `flutter-reference-ui`, so the info-tab (including the shop-intro
+  // text a user reported as missing) stayed permanently at its empty-string constructor
+  // default. `handleInfo` already diff-then-notifies internally (parity `handleProducts`
+  // above), so repeated `channelChange` ticks with unchanged fields are a safe no-op.
+  template.handleInfo(
+    title: info.title,
+    publishAt: info.publishAt,
+    shopName: info.shopName,
+    shopIntro: info.shopIntro,
+    shopLogo: info.shopLogo,
+  );
 }

@@ -7,6 +7,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
         LBVariantGroup,
         LBQtyState;
 
+import '../reference_ui_image_url.dart';
 import '../reference_ui_theme.dart';
 import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
@@ -1766,6 +1767,284 @@ class ProductDetailSheet extends StatelessWidget {
   }
 }
 
+// MARK: - Scale-down + letterbox main-image layout
+//         (rb-flutter-product-detail-main-image-scale-down-letterbox)
+//
+// Replaces the main image's pre-existing fixed-168-tall `BoxFit.cover` (crop-to-fill)
+// box with a rule that NEVER crops and NEVER upscales: the image is shown at its
+// native pixel size scaled DOWN ONLY, uniformly, to fit within the container's width
+// and a height cap of `containerWidth * 2`; the container's own height then dynamically
+// equals the scaled image's height. Only applies when `live == true` AND the photo's
+// natural pixel size has actually been decoded — `live == false` (every existing golden
+// / demo fixture) and the in-flight / failed-load window keep the pre-existing fixed
+// 168-tall placeholder path byte-identical (see `_ScaleDownLetterboxFrame` below).
+
+/// The result of [computeScaleDownLetterboxSize] for one image.
+@immutable
+class ScaleDownLetterboxSize {
+  const ScaleDownLetterboxSize({
+    required this.scale,
+    required this.displayWidth,
+    required this.displayHeight,
+  });
+
+  /// `min(1, containerWidth / imageWidth, (containerWidth * 2) / imageHeight)`.
+  /// Always `<= 1` — the image is NEVER upscaled.
+  final double scale;
+
+  /// `imageWidth * scale` — always `<= containerWidth`.
+  final double displayWidth;
+
+  /// `imageHeight * scale` — always `<= containerWidth * 2`. This IS the main-image
+  /// container's dynamic height (the container is sized to exactly this, not the
+  /// other way around).
+  final double displayHeight;
+}
+
+/// Pure — computes the scale-down + letterbox layout for one image
+/// (`rb-flutter-product-detail-main-image-scale-down-letterbox`): scales
+/// [imageWidth] x [imageHeight] DOWN ONLY (the `1` floor in the `min(...)` below caps
+/// [ScaleDownLetterboxSize.scale] at `1`, so a small image is never blown up) so it fits
+/// within a box [containerWidth] wide and `containerWidth * 2` tall (the height cap),
+/// preserving aspect ratio — width and height share the exact SAME [ScaleDownLetterboxSize.scale],
+/// never distorted independently. Degenerate inputs (non-finite, zero, or negative
+/// [imageWidth] / [imageHeight] / [containerWidth]) return an all-zero result rather than
+/// NaN / Infinity, so a caller can never end up sizing a box to an invalid value.
+ScaleDownLetterboxSize computeScaleDownLetterboxSize({
+  required double imageWidth,
+  required double imageHeight,
+  required double containerWidth,
+}) {
+  if (!imageWidth.isFinite ||
+      !imageHeight.isFinite ||
+      !containerWidth.isFinite ||
+      imageWidth <= 0 ||
+      imageHeight <= 0 ||
+      containerWidth <= 0) {
+    return const ScaleDownLetterboxSize(scale: 0, displayWidth: 0, displayHeight: 0);
+  }
+  final double capHeight = containerWidth * 2;
+  double scale = 1.0;
+  final double widthScale = containerWidth / imageWidth;
+  if (widthScale < scale) scale = widthScale;
+  final double heightScale = capHeight / imageHeight;
+  if (heightScale < scale) scale = heightScale;
+  return ScaleDownLetterboxSize(
+    scale: scale,
+    displayWidth: imageWidth * scale,
+    displayHeight: imageHeight * scale,
+  );
+}
+
+/// TEST SEAM (`docs/unit-test-discipline.md` naming contract) — how
+/// [_ScaleDownLetterboxFrame] obtains an [ImageProvider] to resolve a URL's NATURAL
+/// pixel size. Defaults to the real [NetworkImage] (host runtime). Widget / golden
+/// tests override this to a zero-network, deterministic in-memory provider of a KNOWN
+/// pixel size so the scale-down + letterbox math can be exercised without a real
+/// network fetch. MUST NOT be mutated outside `test/`.
+@visibleForTesting
+ImageProvider Function(String url) scaleDownLetterboxImageProviderForTesting =
+    (String url) => NetworkImage(url);
+
+/// TEST SEAM — identifies the WHITE letterbox placeholder [_ScaleDownLetterboxFrame]'s
+/// resolved branch passes into `liveProductImage()` (verifier fix for the FAIL this
+/// change's first apply round shipped: `liveProductImage()` always paints its
+/// `placeholder` argument as the bottom layer of an internal `Stack`, filling the WHOLE
+/// frame — that argument, not the outer `ColoredBox(color: Colors.white)` the resolved
+/// branch also wraps around it, is what actually shows through any letterbox margin the
+/// scaled-down image leaves uncovered). Deliberately NOT an `lb_`-prefixed `LbTestKeys`
+/// entry — this is an internal rendering-structure probe, not a cross-platform E2E
+/// scenario id.
+@visibleForTesting
+const Key scaleDownLetterboxPlaceholderKeyForTesting =
+    Key('scale_down_letterbox_placeholder_test_only');
+
+/// Parse [s] into a non-empty http(s) [Uri], or `null` (empty / whitespace / non-http →
+/// no natural-size resolution attempted). Pure. Mirrors `sheet_scaffold.dart`'s private
+/// `_httpUri` (same validity rule — this file cannot see that library-private helper,
+/// so the check is duplicated rather than exported).
+Uri? _resolvableImageUri(String? s) {
+  final trimmed = referenceUiHttpsUpgraded(s?.trim());
+  if (trimmed.isEmpty) return null;
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) return null;
+  if (uri.scheme != 'http' && uri.scheme != 'https') return null;
+  return uri;
+}
+
+/// The main-image frame `_ProductPhotoGallery` builds for its CURRENTLY SELECTED page —
+/// implements the scale-down + letterbox rule
+/// (`rb-flutter-product-detail-main-image-scale-down-letterbox`):
+///
+/// - `live == false`, [url] blank/unparseable, or the real photo's natural pixel size
+///   has not (yet, or ever) been decoded: renders EXACTLY the pre-existing box this
+///   replaces — fixed [transitionalHeight] (168) tall, full width, `liveProductImage`'s
+///   placeholder-or-real-image gate at its DEFAULT `BoxFit.cover` (moot on this branch:
+///   no real image paints here, because natural size is unresolved).
+/// - `live == true` AND natural size IS resolved: the box becomes EXACTLY
+///   [computeScaleDownLetterboxSize]'s `displayHeight` tall (capped at
+///   `containerWidth * 2`), full width, on a white background, drawn `BoxFit.scaleDown`
+///   (never upscale, never crop, centered) — the box is pre-sized to the exact target,
+///   so `scaleDown` and `contain` paint identically here.
+///
+/// Natural size comes from resolving a SEPARATE [ImageStream] (design.md D1, route A) —
+/// `liveProductImage`'s own internal `Image.network` exposes no natural-size callback.
+/// Both streams resolve the same URL, so Flutter's [ImageCache] de-dupes the fetch (no
+/// extra network round trip). Listener lifecycle is torn down on [dispose] / URL change
+/// (`mounted` guard avoids `setState` after dispose — design.md Risks).
+class _ScaleDownLetterboxFrame extends StatefulWidget {
+  const _ScaleDownLetterboxFrame({
+    required this.live,
+    required this.url,
+    required this.placeholder,
+    required this.transitionalHeight,
+    required this.badge,
+  });
+
+  final bool live;
+  final String? url;
+  final Widget placeholder;
+
+  /// The pre-existing fixed height (168) used while `live == false`, [url] is blank, or
+  /// natural size hasn't resolved yet.
+  final double transitionalHeight;
+
+  /// Positioned bottom-right of the frame (the zoom badge) — follows the frame's
+  /// height, whether transitional or the post-resolve dynamic height.
+  final Widget badge;
+
+  @override
+  State<_ScaleDownLetterboxFrame> createState() => _ScaleDownLetterboxFrameState();
+}
+
+class _ScaleDownLetterboxFrameState extends State<_ScaleDownLetterboxFrame> {
+  ImageStream? _stream;
+  ImageStreamListener? _listener;
+  Size? _naturalSize;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ScaleDownLetterboxFrame oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.url != widget.url || oldWidget.live != widget.live) {
+      _naturalSize = null;
+      _resolve();
+    }
+  }
+
+  @override
+  void dispose() {
+    _detach();
+    super.dispose();
+  }
+
+  void _detach() {
+    final stream = _stream;
+    final listener = _listener;
+    if (stream != null && listener != null) {
+      stream.removeListener(listener);
+    }
+    _stream = null;
+    _listener = null;
+  }
+
+  void _resolve() {
+    _detach();
+    if (!widget.live) return;
+    final uri = _resolvableImageUri(widget.url);
+    if (uri == null) return;
+    final provider = scaleDownLetterboxImageProviderForTesting(uri.toString());
+    final stream = provider.resolve(const ImageConfiguration());
+    final listener = ImageStreamListener(
+      (ImageInfo info, bool synchronousCall) {
+        if (!mounted) return;
+        setState(() {
+          _naturalSize = Size(
+            info.image.width.toDouble(),
+            info.image.height.toDouble(),
+          );
+        });
+      },
+      // Decode / network failure: leave `_naturalSize` null — the transitional branch
+      // stays active, and `liveProductImage`'s own errorBuilder already keeps its
+      // placeholder visible underneath. No rethrow (matches `liveProductImage`'s
+      // existing swallow-on-error behavior).
+      onError: (Object exception, StackTrace? stackTrace) {},
+    );
+    stream.addListener(listener);
+    _stream = stream;
+    _listener = listener;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final natural = _naturalSize;
+    if (!widget.live || natural == null) {
+      return SizedBox(
+        height: widget.transitionalHeight,
+        width: double.infinity,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: liveProductImage(
+                live: widget.live,
+                url: widget.url,
+                placeholder: widget.placeholder,
+              ),
+            ),
+            widget.badge,
+          ],
+        ),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = computeScaleDownLetterboxSize(
+          imageWidth: natural.width,
+          imageHeight: natural.height,
+          containerWidth: constraints.maxWidth,
+        );
+        return ColoredBox(
+          color: Colors.white,
+          child: SizedBox(
+            height: size.displayHeight,
+            width: double.infinity,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: liveProductImage(
+                    live: widget.live,
+                    url: widget.url,
+                    // NOT `widget.placeholder` (the gradient/monogram chip) — this branch
+                    // only reaches here once a real natural size resolved, so what shows
+                    // through the scaled-down image's letterbox margin (and the brief
+                    // in-flight-loading window before the image itself paints) MUST be
+                    // plain white, matching the outer `ColoredBox`. See
+                    // [scaleDownLetterboxPlaceholderKeyForTesting]'s doc comment for why
+                    // this specific argument — not the outer wrapper — is what actually
+                    // renders here.
+                    placeholder: const ColoredBox(
+                      key: scaleDownLetterboxPlaceholderKeyForTesting,
+                      color: Colors.white,
+                    ),
+                    fit: BoxFit.scaleDown,
+                  ),
+                ),
+                widget.badge,
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 // MARK: - _ProductPhotoGallery — `.detail` main-photo multi-image gallery
 //         (rb-flutter-product-detail-image-gallery, design R34)
 //
@@ -1916,31 +2195,22 @@ class _ProductPhotoGalleryState extends State<_ProductPhotoGallery> {
       key: LbTestKeys.productGalleryMainImage,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),
-        child: SizedBox(
-          height: widget.height,
-          width: double.infinity,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: liveProductImage(
-                  live: widget.live,
-                  url: current,
-                  placeholder: _placeholder(26),
-                ),
-              ),
-              Positioned(
-                right: 10,
-                bottom: 10,
-                child: ZoomBadge(
-                  diameter: 32,
-                  discColor: const Color(0xD9FFFFFF), // white @ 0.85
-                  glyphColor: const Color(0xFF15131A),
-                  onTap: widget.onZoomImage == null
-                      ? null
-                      : () => widget.onZoomImage!(current),
-                ),
-              ),
-            ],
+        child: _ScaleDownLetterboxFrame(
+          live: widget.live,
+          url: current,
+          placeholder: _placeholder(26),
+          transitionalHeight: widget.height,
+          badge: Positioned(
+            right: 10,
+            bottom: 10,
+            child: ZoomBadge(
+              diameter: 32,
+              discColor: const Color(0xD9FFFFFF), // white @ 0.85
+              glyphColor: const Color(0xFF15131A),
+              onTap: widget.onZoomImage == null
+                  ? null
+                  : () => widget.onZoomImage!(current),
+            ),
           ),
         ),
       ),

@@ -219,6 +219,45 @@ class LBVariantGroup {
   int get hashCode => Object.hash(label, Object.hashAll(options));
 }
 
+/// One spec-option group's CASCADING purchasability snapshot
+/// (rb-flutter-variant-cascading-availability-template). `availableOptions[i]`
+/// corresponds to [LBVariantGroup.options]`[i]` (same order, same length) —
+/// `true` when choosing that value, together with whatever is CURRENTLY chosen
+/// in every OTHER group, still resolves to at least one `stock > 0` `LBSpec`.
+/// Read via [DefaultVariantPicker.optionAvailability] (instance getter) or the
+/// underlying pure `DefaultVariantPicker.optionAvailability(groups, selection,
+/// specifications)`, which returns one [LBVariantGroupAvailability] per
+/// `groups` entry, in the same order. Structurally identical to iOS
+/// `LBVariantGroupAvailability` (`DefaultProductSheet.swift:248-256`) / Android
+/// `data class LBVariantGroupAvailability` (`ProductSheetBehavior.kt:143`).
+///
+/// This is a PURE DERIVATION for host/reference-ui to decide which chips to
+/// grey out / disable, and how the not-yet-chosen groups should re-narrow once
+/// an earlier group is picked (multi-group "cascading" disable). It does NOT
+/// gate [DefaultVariantPicker.selectVariant] — the template still allows
+/// selecting any in-range option regardless of its availability flag; whether
+/// to block the tap in the UI is a reference-ui decision.
+@immutable
+class LBVariantGroupAvailability {
+  final int groupIndex;
+  final List<bool> availableOptions;
+
+  const LBVariantGroupAvailability({
+    required this.groupIndex,
+    required this.availableOptions,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      other is LBVariantGroupAvailability &&
+      other.groupIndex == groupIndex &&
+      listEquals(other.availableOptions, availableOptions);
+
+  @override
+  int get hashCode =>
+      Object.hash(groupIndex, Object.hashAll(availableOptions));
+}
+
 /// variant-picker view-model (D2). `groups` are mapped from `specOptions`;
 /// `selection` is template-owned (`groupIndex → optionIndex`); `selectedSpec` /
 /// `selectedSpecificationId` are RESOLVED from `specifications` by matching the
@@ -262,6 +301,31 @@ class DefaultVariantPicker extends ChangeNotifier {
   /// / RN `this._selectedSpec?.id`.
   String? get selectedSpecificationId => _resolveSelectedSpec()?.id;
 
+  /// Cascading purchasability snapshot for the CURRENT `_groups` / `_selection`
+  /// / `_specifications` (rb-flutter-variant-cascading-availability-template).
+  /// Read-through, recomputed on every access (no caching, no mutation, no
+  /// notification) — matches the [selectedSpec] getter pattern. See
+  /// [LBVariantGroupAvailability] / [_optionAvailability] (the underlying pure
+  /// static function) for the shape and algorithm.
+  ///
+  /// NOTE (deviation from tasks.md's literal identifier): design.md D3 /
+  /// iOS `optionAvailability` (computed property) + `optionAvailability(groups
+  /// :selection:specifications:)` (static func with argument labels) / Android
+  /// instance `optionAvailability` (property) + `Companion.optionAvailability`
+  /// (companion-object func) share the identifier `optionAvailability` across
+  /// an instance member and a static member because Swift disambiguates by
+  /// argument labels and Kotlin keeps companion-object members in a separate
+  /// namespace. Dart has NO such separation — a class MUST NOT declare an
+  /// instance member and a static member with the identical name
+  /// (`conflicting_static_and_instance` compile error). The underlying pure
+  /// function is therefore named [_optionAvailability] (private, mirroring the
+  /// file's existing `_specMatches` / `_specNameMatches` / `_resolveSelectedSpec`
+  /// private-helper convention — none of which are called directly from
+  /// outside this library either); the PUBLIC surface host/reference-ui and
+  /// tests actually read is this instance getter, `optionAvailability`.
+  List<LBVariantGroupAvailability> get optionAvailability =>
+      _optionAvailability(_groups, _selection, _specifications);
+
   /// True when the product HAS spec groups (host must choose). Drives the
   ///「請選規格」gate when [selectedSpec] is still null.
   bool get hasGroups => _groups.isNotEmpty;
@@ -301,28 +365,138 @@ class DefaultVariantPicker extends ChangeNotifier {
     // Build the selected option labels in group order; match against LBSpec.name
     // (backend spec name = the option values joined — existing LBSpec convention).
     final chosen = <String>[];
+    // Each chosen[g]'s OWN group's full option list — the `siblingOptions`
+    // that `_specNameMatches` needs to mask out longer same-group siblings
+    // (variant-sibling-substring-match-fix-template-flutter).
+    final siblingOptionsPerChosen = <List<String>>[];
     for (var g = 0; g < _groups.length; g++) {
       final optIdx = _selection[g];
       if (optIdx == null) return null;
       final opts = _groups[g].options;
       if (optIdx < 0 || optIdx >= opts.length) return null;
       chosen.add(opts[optIdx]);
+      siblingOptionsPerChosen.add(opts);
     }
     for (final spec in _specifications) {
-      if (_specMatches(spec.name, chosen)) return spec;
+      if (_specMatches(spec.name, chosen, siblingOptionsPerChosen)) return spec;
     }
     return null;
   }
 
-  /// A spec matches the chosen labels when every chosen label appears in the
-  /// spec name (tolerant of common joiners such as `/`, `,`, space — backend
-  /// concatenates option values). Order-independent containment match.
-  static bool _specMatches(String specName, List<String> chosen) {
+  /// A spec matches the chosen labels when EVERY chosen label passes the
+  /// precise sibling-masking match ([_specNameMatches]) against the spec name
+  /// — each `chosen[i]`'s own group's full option list is passed as its
+  /// `siblingOptions` (order-independent, one check per chosen label).
+  static bool _specMatches(
+    String specName,
+    List<String> chosen,
+    List<List<String>> siblingOptionsPerChosen,
+  ) {
     if (chosen.isEmpty) return false;
-    for (final label in chosen) {
-      if (!specName.contains(label)) return false;
+    for (var i = 0; i < chosen.length; i++) {
+      if (!_specNameMatches(specName, chosen[i], siblingOptionsPerChosen[i])) {
+        return false;
+      }
     }
     return true;
+  }
+
+  /// PURE (testable in isolation): precise sibling-masking matcher — mirrors
+  /// iOS `specNameMatches(_:value:siblingOptions:)`
+  /// (`DefaultProductSheet.swift:420-426`) / Android `specNameMatches`
+  /// (`ProductSheetBehavior.kt:158-161`) line-for-line
+  /// (variant-sibling-substring-match-fix-template-flutter,
+  /// ui-template-foundation/spec.md 第 1447 行「variant-picker 的 spec 名稱比對」).
+  ///
+  /// `LBSpec.name`'s multi-group join convention (what separator, if any, the
+  /// backend uses to concatenate e.g. a chosen color + a chosen size into one
+  /// spec name) has no documented/verified format anywhere in this repo, and
+  /// every existing fixture only exercises a single spec-option group — so
+  /// this deliberately does NOT assume any separator (unlike splitting `name`
+  /// into tokens by a guessed delimiter). Instead it stays substring-based
+  /// (like the code this replaces) but first MASKS OUT of `name` any other
+  /// option in [siblingOptions] (the full option list of `value`'s OWN group)
+  /// that is STRICTLY LONGER than `value` and itself contains `value` as a
+  /// substring — e.g. group `[S, XS]`: checking `value == "S"` against
+  /// `name == "XS"` first removes the sibling `"XS"` from `name` (leaving
+  /// `""`), so the leftover no longer contains `"S"` and the match correctly
+  /// fails. Checking `value == "XS"` finds no longer sibling containing
+  /// `"XS"` itself, so `name` is used as-is and the match correctly succeeds.
+  ///
+  /// Known simplification (shared with iOS/Android, not a Flutter-specific
+  /// gap): does not attempt to fully disambiguate pathological cases where
+  /// the SAME literal string is reused as an option value across two
+  /// DIFFERENT groups and also happens to collide as a substring in a spec
+  /// name.
+  static bool _specNameMatches(
+    String name,
+    String value,
+    List<String> siblingOptions,
+  ) {
+    final longerSiblings = siblingOptions.where(
+      (o) => o != value && o.length > value.length && o.contains(value),
+    );
+    final masked =
+        longerSiblings.fold(name, (acc, sibling) => acc.replaceAll(sibling, ''));
+    return masked.contains(value);
+  }
+
+  /// PURE (testable in isolation): for EVERY group in [groups], for EVERY
+  /// option value in that group, computes whether choosing that value —
+  /// together with whatever is CURRENTLY chosen ([selection]) in every OTHER
+  /// group — still resolves to at least one `stock > 0` `LBSpec`. Returns one
+  /// [LBVariantGroupAvailability] per `groups` entry, IN THE SAME ORDER, each
+  /// holding a `List<bool>` parallel to that group's `options`. Mirrors iOS
+  /// `DefaultVariantPicker.optionAvailability(groups:selection:specifications:)`
+  /// (`DefaultProductSheet.swift:445-464`) / Android
+  /// `DefaultVariantPicker.Companion.optionAvailability`
+  /// (`ProductSheetBehavior.kt:266-287`) line-for-line. Named `_optionAvailability`
+  /// (private, not the bare `optionAvailability` tasks.md's text uses) solely
+  /// because Dart — unlike Swift's argument-label overloading or Kotlin's
+  /// companion-object namespace — MUST NOT declare an instance member and a
+  /// static member with the identical identifier in one class; see the
+  /// [DefaultVariantPicker.optionAvailability] getter's doc comment for the
+  /// full rationale. This function's PUBLIC name for host/reference-ui/tests
+  /// is that instance getter.
+  ///
+  /// A group's OWN currently-chosen option is NOT held fixed when evaluating
+  /// that SAME group's own options — every option in a group (including the
+  /// one already selected) is re-checked against the OTHER groups' current
+  /// selections only. This means that once a combination becomes invalid
+  /// across two dimensions, BOTH groups' conflicting chips report
+  /// unavailable, not just the one just tapped — standard cascading-picker
+  /// UX. Callers that want a different policy (e.g. never flag the group's
+  /// own current selection) can special-case that themselves; this function
+  /// reports the full, unfiltered result.
+  ///
+  /// `groups.isEmpty` (no-spec product) → `[]` (nothing to render).
+  static List<LBVariantGroupAvailability> _optionAvailability(
+    List<LBVariantGroup> groups,
+    Map<int, int> selection,
+    List<LBSpec> specifications,
+  ) {
+    if (groups.isEmpty) return const [];
+    return List.generate(groups.length, (gi) {
+      final group = groups[gi];
+      // Values currently chosen in every OTHER group (this group's own
+      // selection is deliberately excluded — see doc comment above).
+      final otherChosen = <MapEntry<int, String>>[
+        for (var ogi = 0; ogi < groups.length; ogi++)
+          if (ogi != gi &&
+              selection[ogi] != null &&
+              selection[ogi]! >= 0 &&
+              selection[ogi]! < groups[ogi].options.length)
+            MapEntry(ogi, groups[ogi].options[selection[ogi]!]),
+      ];
+      final flags = group.options.map((value) {
+        final candidates = [...otherChosen, MapEntry(gi, value)];
+        return specifications.any((spec) =>
+            spec.stock > 0 &&
+            candidates.every((c) =>
+                _specNameMatches(spec.name, c.value, groups[c.key].options)));
+      }).toList();
+      return LBVariantGroupAvailability(groupIndex: gi, availableOptions: flags);
+    });
   }
 }
 

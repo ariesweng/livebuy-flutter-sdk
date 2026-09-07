@@ -4,6 +4,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import 'lock_glyph.dart';
 
 // AuthGateModalView — family-6 gap-surfaces surface 1 (「請先登入」auth-gate modal).
 //
@@ -280,7 +281,7 @@ class AuthGateModalView extends StatelessWidget {
           ),
         ],
       ),
-      child: const Icon(Icons.lock_outline, size: 26, color: Colors.white),
+      child: const LockGlyph(color: Colors.white, size: 26),
     );
   }
 

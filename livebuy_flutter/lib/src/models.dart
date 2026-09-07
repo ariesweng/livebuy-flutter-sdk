@@ -92,8 +92,10 @@ class LBConfigOptions {
 
   /// UI-only default: whether the `LivebuyPlayer` reference-ui collapse button
   /// closes the player directly instead of the two-step collapse → floating
-  /// card → X flow (`player-direct-close-button`). Default `false` (unchanged
-  /// two-step behavior).
+  /// card → X flow (`player-direct-close-button`). Default `true` (direct
+  /// close, skipping the floating card) — a deliberate, breaking UX default
+  /// change (`flutter-player-direct-close-button-default-true`); a host that
+  /// wants the old two-step behavior must explicitly pass `false`.
   ///
   /// This flag is consumed ENTIRELY by the pure-Dart `flutter-reference-ui`
   /// package — it has NO native iOS/Android SDK consumer (nothing plays or
@@ -116,7 +118,7 @@ class LBConfigOptions {
     this.enablePowerProfileAdaptation = true,
     this.enableStatReporting = true,
     this.environment = LBEnvironment.production,
-    this.enableDirectCloseButton = false,
+    this.enableDirectCloseButton = true,
   });
 }
 
@@ -968,6 +970,10 @@ class LBVideoItem {
   final String playbackurl;
   final String previewTime;
   final bool showStock;
+  /// 精選商品（video-linked-goods-core-flutter）；影片無連結商品時為 `null`. Bridge-relayed from
+  /// native `LBVideoItem.goods` (iOS `LBFeaturedGood?` / Android nullable `LBFeaturedGood`) — see
+  /// [LBFeaturedGood.fromMapOrNull] for the tolerant parsing rule.
+  final LBFeaturedGood? goods;
 
   const LBVideoItem({
     required this.id,
@@ -987,6 +993,7 @@ class LBVideoItem {
     required this.playbackurl,
     required this.previewTime,
     required this.showStock,
+    this.goods,
   });
 
   factory LBVideoItem.fromMap(Map<Object?, Object?> map) => LBVideoItem(
@@ -1007,32 +1014,108 @@ class LBVideoItem {
         playbackurl: (map['playbackurl'] as String?) ?? '',
         previewTime: (map['previewTime'] as String?) ?? '',
         showStock: (map['showStock'] as bool?) ?? false,
+        goods: LBFeaturedGood.fromMapOrNull(map['goods']),
       );
+}
+
+/// 影片連結精選商品（video-linked-goods-core-flutter）。Bridge-relayed from native
+/// `LBFeaturedGood` (iOS `Models/LBModels.swift` / Android `models/LBModels.kt`) — same seven
+/// fields, same types, cross-platform aligned.
+class LBFeaturedGood {
+  final String name;
+  final String pic;
+  final String price;
+  final String originalPrice;
+  final int soldOut;
+  final int stock;
+  final int status;
+
+  const LBFeaturedGood({
+    required this.name,
+    required this.pic,
+    required this.price,
+    required this.originalPrice,
+    required this.soldOut,
+    required this.stock,
+    required this.status,
+  });
+
+  /// Tolerant factory: [value] is the raw `map['goods']` from a bridge-relayed `LBVideoItem`
+  /// map. Returns `null` when [value] is not a usable `Map` shape (missing key, JSON `null`, or
+  /// the wrong type) rather than throwing — the nested `goods` map is optional and MUST NOT fail
+  /// the enclosing `LBVideoItem.fromMap` (CLAUDE.md "JSON decoder fallback" spirit, applied at
+  /// the bridge-map layer since Flutter never decodes the raw wire JSON itself). When [value] IS
+  /// a `Map`, missing or wrong-typed sub-fields degrade to safe per-field defaults rather than
+  /// nulling the whole object.
+  static LBFeaturedGood? fromMapOrNull(Object? value) {
+    if (value is! Map) return null;
+    // `is`-checks (not `as X?` casts) on purpose: `someWrongTypeValue as String?` THROWS for a
+    // non-null value of the wrong type (it only tolerates `null`, not type mismatches), which
+    // would defeat the "never throw" contract for a single malformed sub-field.
+    String str(Object? key) => value[key] is String ? value[key] as String : '';
+    int intOr(Object? key, int fallback) =>
+        value[key] is num ? (value[key] as num).toInt() : fallback;
+    return LBFeaturedGood(
+      name: str('name'),
+      pic: str('pic'),
+      price: str('price'),
+      originalPrice: str('originalPrice'),
+      soldOut: intOr('soldOut', 0),
+      stock: intOr('stock', 0),
+      status: intOr('status', 1),
+    );
+  }
 }
 
 // MARK: - Player channel info (upcoming-intro-core-flutter — channel 轉發 bridge)
 
 /// A LIGHTWEIGHT projection of the player's loaded `LBChannel`, forwarded from the
 /// native player view to the Dart host via the `onChannelChange` callback
-/// (upcoming-intro-core-flutter). It carries ONLY the fields the player-side
-/// upcoming (直播預告) chrome needs — it is NOT the full core `LBChannel` (no
-/// goods / shop / nav / spec). The host feeds these into the `flutter-ui` template's
-/// upcoming view-model (后续 `upcoming-intro-template-flutter`):
+/// (upcoming-intro-core-flutter; extended by
+/// player-channel-chrome-bridge-core-flutter, then product-list-bridge-core-flutter).
+/// It carries ONLY the fields the player-side upcoming (直播預告) / live chrome /
+/// product-bag needs — it is NOT the full core `LBChannel` (no nav / spec). The
+/// host feeds these into the `flutter-ui` template's upcoming view-model (后续
+/// `upcoming-intro-template-flutter`):
 ///
-///   • [publishAt]  — scheduled start (UTC+8 `"yyyy-MM-dd HH:mm:ss"`). Feeds
-///                    `DefaultUpcomingState.scheduledStartAt`.
-///   • [cover]      — video cover URL. The upcoming countdown background.
-///   • [start]      — opening MP4 (intro) URL (`channel.start`). Non-empty drives
-///                    the StartScreen splash + the upcoming `introPlaying` gate.
-///   • [liveStatus] — `0` = upcoming (直播預告), `1` = live, other = VOD. `-1` =
-///                    unknown (field absent) — NOT upcoming.
-///   • [title]      — channel title (convenience; the header chrome already has its
-///                    own host-fed source, so this is informational).
+///   • [publishAt]   — scheduled start (UTC+8 `"yyyy-MM-dd HH:mm:ss"`). Feeds
+///                     `DefaultUpcomingState.scheduledStartAt`.
+///   • [cover]       — video cover URL. The upcoming countdown background.
+///   • [start]       — opening MP4 (intro) URL (`channel.start`). Non-empty drives
+///                     the StartScreen splash + the upcoming `introPlaying` gate.
+///   • [liveStatus]  — `0` = upcoming (直播預告), `1` = live, other = VOD. `-1` =
+///                     unknown (field absent) — NOT upcoming.
+///   • [title]       — channel title (convenience; the header chrome already has its
+///                     own host-fed source, so this is informational).
+///   • [serviceLink] — shop service link (`channel.shop.service_link`).
+///   • [shopName]    — shop display name (`channel.shop.name`).
+///   • [shopLogo]    — shop logo URL (`channel.shop.logo`).
+///   • [shareUrl]    — channel share URL (`channel.share_url`).
+///   • [type]        — channel type (`channel.type`): `1` = VOD, `2` = live,
+///                     `3` = finished-live replay. `-1` = unknown (absent on
+///                     the wire). Feeds `isFinishedLiveReplay(type, liveStatus)`
+///                     downstream (`channel-type-bridge-core-flutter`).
+///   • [goods]       — the channel's primary sellable-product list
+///                     (`channel.goods`), unfiltered, channel-load-time snapshot
+///                     (`product-list-bridge-core-flutter`).
+///   • [shopIntro]   — shop introduction text (`channel.shop.intro`). May
+///                     legitimately be "" when a merchant left the store intro
+///                     blank (`channel-shop-intro-bridge-core-flutter`).
+///   • [guestComment] — raw `channel.guest_comment` permission flag (`0` =
+///                     restrict comment submission to logged-in members,
+///                     non-`0` = guests allowed). Fail-open default `1` when
+///                     absent, distinct from [type]/[liveStatus]'s `-1`-unknown
+///                     convention (`guest-comment-channel-bridge-core-flutter`).
+///                     Raw passthrough only — does NOT itself compute
+///                     `chatEnabled`; that derivation stays a
+///                     reference-ui/template-layer concern.
 ///
 /// `upcoming.active` itself does NOT need this projection — it is derivable from the
 /// already-bridged player state (`"awaitingLive"`); this projection supplies the
 /// REMAINING upcoming inputs (`scheduledStartAt` / `cover` / `introPlaying` /
-/// `hasStart`) that the player state alone cannot carry.
+/// `hasStart`) that the player state alone cannot carry, plus (as of
+/// player-channel-chrome-bridge-core-flutter) the shop/share chrome fields a
+/// host's upcoming/live UI needs.
 class LBPlayerChannelInfo {
   /// Scheduled start (`channel.publish_at`, UTC+8 `"yyyy-MM-dd HH:mm:ss"`). "" when
   /// absent. The host passes this verbatim to the template (it MUST NOT parse here).
@@ -1051,12 +1134,72 @@ class LBPlayerChannelInfo {
   /// Channel title (`channel.title`). "" when absent. Informational.
   final String title;
 
+  /// player-channel-chrome-bridge-core-flutter: shop service link
+  /// (`channel.shop.service_link`). "" when absent.
+  final String serviceLink;
+
+  /// player-channel-chrome-bridge-core-flutter: shop display name
+  /// (`channel.shop.name`). "" when absent.
+  final String shopName;
+
+  /// player-channel-chrome-bridge-core-flutter: shop logo URL
+  /// (`channel.shop.logo`). "" when absent.
+  final String shopLogo;
+
+  /// player-channel-chrome-bridge-core-flutter: channel share URL
+  /// (`channel.share_url`). "" when absent.
+  final String shareUrl;
+
+  /// channel-type-bridge-core-flutter: channel type (`channel.type`): `1` =
+  /// VOD, `2` = live, `3` = finished-live replay. `-1` = unknown (the field
+  /// was absent on the wire). Feeds `isFinishedLiveReplay(type, liveStatus)`
+  /// downstream — this projection only carries the raw value, it does not
+  /// evaluate the function itself.
+  final int type;
+
+  /// product-list-bridge-core-flutter: the channel's primary sellable-product
+  /// list (`channel.goods`), UNFILTERED, as it stood at the moment this
+  /// projection was built. Distinct from `channel.other_goods` (cross-video
+  /// recommendations — NOT carried by this projection). This is a
+  /// channel-LOAD-time snapshot only: it does NOT track the 5s
+  /// `/sdk/video/goods` poll's ongoing updates (that refresh path has no
+  /// Flutter bridge as of this change). Feeds a host's `handleProducts` /
+  /// product-bag UI. Default `const []`.
+  final List<LBProduct> goods;
+
+  /// channel-shop-intro-bridge-core-flutter: shop introduction text
+  /// (`channel.shop.intro`). "" when absent. May legitimately be "" when a
+  /// merchant left the store intro blank on the backend — a host MUST NOT
+  /// treat an empty value as evidence the bridge is broken.
+  final String shopIntro;
+
+  /// guest-comment-channel-bridge-core-flutter: raw `channel.guest_comment`
+  /// permission flag (`0` = restrict comment submission to logged-in
+  /// members, non-`0` = guests allowed). Default `1` (fail-open) when
+  /// absent — a DIFFERENT convention from [type]/[liveStatus]'s `-1`-unknown
+  /// sentinel, because this exact field already has an SDK-wide-established
+  /// fail-open default of `1` on both native core SDKs (a missing/dropped
+  /// `guest_comment` was once a live regression that silently disabled
+  /// guest chat entirely). This is a raw passthrough of the wire-level
+  /// flag only — it does NOT itself compute `chatEnabled`
+  /// (`live_status==1 && !(isGuest && guest_comment==0)`); that derivation
+  /// remains a reference-ui/template-layer concern.
+  final int guestComment;
+
   const LBPlayerChannelInfo({
     this.publishAt = '',
     this.cover = '',
     this.start = '',
     this.liveStatus = -1,
     this.title = '',
+    this.serviceLink = '',
+    this.shopName = '',
+    this.shopLogo = '',
+    this.shareUrl = '',
+    this.type = -1,
+    this.goods = const [],
+    this.shopIntro = '',
+    this.guestComment = 1,
   });
 
   /// Decode from the native `{"event":"channelChange", …}` EventChannel payload.
@@ -1070,6 +1213,25 @@ class LBPlayerChannelInfo {
         start: (map['start'] as String?) ?? '',
         liveStatus: _asLiveStatus(map['liveStatus']),
         title: (map['title'] as String?) ?? '',
+        serviceLink: (map['serviceLink'] as String?) ?? '',
+        shopName: (map['shopName'] as String?) ?? '',
+        shopLogo: (map['shopLogo'] as String?) ?? '',
+        shareUrl: (map['shareUrl'] as String?) ?? '',
+        // Reuses `_asLiveStatus`'s tri-state coercion (num → toInt, stringified
+        // Int → parse, else → -1): mechanically identical to `type`'s own
+        // decode needs, but an independent field — NOT a semantic link to
+        // `liveStatus` itself (channel-type-bridge-core-flutter).
+        type: _asLiveStatus(map['type']),
+        // product-list-bridge-core-flutter: reuses the existing `_asProductList`
+        // helper (also used by `LBPlaybackProgress.fromMap`) — missing/null/
+        // non-List → `[]`; non-Map entries skipped, not thrown on.
+        goods: _asProductList(map['goods']),
+        shopIntro: (map['shopIntro'] as String?) ?? '',
+        // guest-comment-channel-bridge-core-flutter: a NEW, dedicated helper —
+        // NOT `_asLiveStatus` — because that helper's `-1` fallback would be
+        // the wrong polarity for this field's SDK-wide-established "缺欄時
+        // fail-open" default (`1`).
+        guestComment: _asGuestComment(map['guestComment']),
       );
 }
 
@@ -1079,6 +1241,192 @@ int _asLiveStatus(Object? value) {
   if (value is num) return value.toInt();
   if (value is String) return int.tryParse(value) ?? -1;
   return -1;
+}
+
+/// Coerce `guestComment` to Int. Absent / unparseable → `1` (fail-open —
+/// guests allowed). Tolerates a num (native emit) OR a stringified Int
+/// (defensive). Deliberately a SEPARATE helper from [_asLiveStatus]: that
+/// helper's `-1` fallback means "unknown" for fields (`liveStatus`/`type`)
+/// with no pre-existing safe default, whereas `guest_comment` already has an
+/// SDK-wide-established fail-open default of `1` — reusing `_asLiveStatus`
+/// here would resurface the exact "missing guest_comment silently disables
+/// guest chat" regression class this field's `1` default exists to prevent
+/// (guest-comment-channel-bridge-core-flutter).
+int _asGuestComment(Object? value) {
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value) ?? 1;
+  return 1;
+}
+
+// MARK: - Player moment fields (player-moment-fields-bridge-core-flutter)
+
+/// Bridge-relayed projection of the native `LBNavItem` struct (iOS
+/// `Models/LBModels.swift` / Android `models/LBModels.kt`). Field-parity with
+/// the native type — this type previously did not exist in the Flutter core
+/// package (see design.md D5). Carried as [LBPlayerMomentInfo.nextItem].
+class LBNavItem {
+  /// Video ID. "" when absent.
+  final String id;
+
+  /// Video cover URL. "" when absent.
+  final String cover;
+
+  /// Video title. `null` when absent (native: "absent in prev[], present in
+  /// next[]" — this projection only ever carries `next[]`'s item, so in
+  /// practice this is populated, but the type stays optional to match the
+  /// native struct rather than force-unwrapping — design.md D6).
+  final String? title;
+
+  /// Raw second count (NOT a formatted string — contrast [LBHotItem.duration],
+  /// an intentional native type asymmetry). Default `0`.
+  final int duration;
+
+  /// Shop display name. "" when absent.
+  final String shopName;
+
+  /// Short preview-loop URL. "" when absent.
+  final String preview;
+
+  const LBNavItem({
+    this.id = '',
+    this.cover = '',
+    this.title,
+    this.duration = 0,
+    this.shopName = '',
+    this.preview = '',
+  });
+
+  /// Tolerant factory mirroring [LBFeaturedGood.fromMapOrNull]'s convention:
+  /// `is`-checks (not `as X?` casts) per field so a wrong-typed field degrades
+  /// to its default rather than throwing; a non-`Map` [value] (missing key,
+  /// JSON `null`, or the wrong type) degrades to `null` rather than failing
+  /// the enclosing decode.
+  static LBNavItem? fromMapOrNull(Object? value) {
+    if (value is! Map) return null;
+    String str(Object? key) => value[key] is String ? value[key] as String : '';
+    return LBNavItem(
+      id: str('id'),
+      cover: str('cover'),
+      title: value['title'] is String ? value['title'] as String : null,
+      duration: value['duration'] is num ? (value['duration'] as num).toInt() : 0,
+      shopName: str('shopName'),
+      preview: str('preview'),
+    );
+  }
+}
+
+/// Bridge-relayed projection of the native `LBHotItem` struct (iOS
+/// `Models/LBModels.swift` / Android `models/LBModels.kt`). Field-parity with
+/// the native type — this type previously did not exist in the Flutter core
+/// package (see design.md D5). Carried as [LBPlayerMomentInfo.hotItems].
+class LBHotItem {
+  /// Video ID. "" when absent.
+  final String id;
+
+  /// Video cover URL. "" when absent.
+  final String cover;
+
+  /// Video title. "" when absent.
+  final String title;
+
+  /// Pre-formatted display string, e.g. `"38:36"` — NOT a second count
+  /// (contrast [LBNavItem.duration], an intentional native type asymmetry —
+  /// no seconds parsing happens here, design.md D6). Default `''`.
+  final String duration;
+
+  /// Short preview-loop URL. "" when absent.
+  final String preview;
+
+  const LBHotItem({
+    this.id = '',
+    this.cover = '',
+    this.title = '',
+    this.duration = '',
+    this.preview = '',
+  });
+
+  /// Tolerant per-entry factory, same `is`-check-per-field convention as
+  /// [LBNavItem.fromMapOrNull]. [map] is assumed to already be a `Map` (list
+  /// coercion / non-Map-entry skipping happens in [_asHotItemList]).
+  factory LBHotItem.fromMap(Map<Object?, Object?> map) {
+    String str(Object? key) => map[key] is String ? map[key] as String : '';
+    return LBHotItem(
+      id: str('id'),
+      cover: str('cover'),
+      title: str('title'),
+      duration: str('duration'),
+      preview: str('preview'),
+    );
+  }
+}
+
+/// Coerce a raw `hotItems` wire value to `List<LBHotItem>`. Mirrors
+/// `_asProductList`'s convention: missing/null/non-`List` → `[]`; non-`Map`
+/// entries are skipped (not thrown on) rather than failing the whole decode.
+List<LBHotItem> _asHotItemList(Object? value) {
+  if (value is! List) return const [];
+  return value
+      .whereType<Map>()
+      .map((e) => LBHotItem.fromMap(Map<Object?, Object?>.from(e)))
+      .toList();
+}
+
+/// Deliberately narrow 6-field subset of the native `LBPlayerMomentState`
+/// aggregate (18 fields total — see design.md D2's field-by-field table for
+/// why only these 6 are bridged), forwarded from the native player view to
+/// the Dart host via the `onMomentStateChange` callback
+/// (`player-moment-fields-bridge-core-flutter`). NOT a full bridge of that
+/// aggregate — the other 12 fields each already have an established,
+/// independent Flutter derivation path (player-state string /
+/// `LBPlayerChannelInfo` / `LBPlaybackProgress.vodActiveProducts` /
+/// `subtitleChange` / config-driven visibility).
+///
+///   • [viewerCount]              — live viewer count. Default `0`.
+///   • [isSubscribed]             — live subscribe-state mirror (flips on
+///                                  subscribe success). Default `false`.
+///   • [autoNextCountdownActive]  — whether the end-screen auto-next
+///                                  countdown is currently running. Default
+///                                  `false`.
+///   • [autoNextRemainingSeconds] — seconds remaining in that countdown.
+///                                  Re-emitted every tick while active.
+///                                  Default `0`.
+///   • [nextItem]                 — the end-screen "up next" item
+///                                  ([LBNavItem]). `null` when absent.
+///   • [hotItems]                 — the end-screen "hot videos" list
+///                                  ([LBHotItem]). Default `const []`.
+class LBPlayerMomentInfo {
+  final int viewerCount;
+  final bool isSubscribed;
+  final bool autoNextCountdownActive;
+  final int autoNextRemainingSeconds;
+  final LBNavItem? nextItem;
+  final List<LBHotItem> hotItems;
+
+  const LBPlayerMomentInfo({
+    this.viewerCount = 0,
+    this.isSubscribed = false,
+    this.autoNextCountdownActive = false,
+    this.autoNextRemainingSeconds = 0,
+    this.nextItem,
+    this.hotItems = const [],
+  });
+
+  /// Decode from the native `{"event":"momentStateChange", …}` EventChannel
+  /// payload. Tolerant (parity with `LBPlayerChannelInfo.fromMap`): missing /
+  /// null / wrong-typed num fields → their Int default; missing / null /
+  /// wrong-typed bool fields → `false`; `nextItem` via
+  /// [LBNavItem.fromMapOrNull]; `hotItems` via [_asHotItemList].
+  factory LBPlayerMomentInfo.fromMap(Map<Object?, Object?> map) =>
+      LBPlayerMomentInfo(
+        viewerCount: (map['viewerCount'] as num?)?.toInt() ?? 0,
+        isSubscribed: (map['isSubscribed'] as bool?) ?? false,
+        autoNextCountdownActive:
+            (map['autoNextCountdownActive'] as bool?) ?? false,
+        autoNextRemainingSeconds:
+            (map['autoNextRemainingSeconds'] as num?)?.toInt() ?? 0,
+        nextItem: LBNavItem.fromMapOrNull(map['nextItem']),
+        hotItems: _asHotItemList(map['hotItems']),
+      );
 }
 
 // MARK: - Subtitle (rb-flutter-subtitle-channel-bridge-core — core bridge only)
@@ -1637,4 +1985,79 @@ class LBViewCartIntent {
       productId: productId is String ? productId : null,
     );
   }
+}
+
+// MARK: - Replay chat revealed (replay-chat-revealed-seam-core-flutter)
+
+/// A single chat comment, forwarded to the Dart host via
+/// [LivebuyPlayerCore.onReplayChatRevealed] (the `replayChatRevealed`
+/// `EventChannel` event) during finished-live replay playback.
+///
+/// Scoped to EXACTLY the 6 fields this seam's own spec contract enumerates
+/// (`replay-chat-revealed-seam-core-flutter`, mirrors the iOS/Android
+/// `onReplayChatRevealed` requirements' payload contract) — deliberately NOT
+/// the native SDKs' full 8-field `LBComment` struct (no `kind` / `isTop`; a
+/// later change can widen this if a real consumer needs them). Byte-identical
+/// field set to the existing `CHAT_HISTORY_LOADED` / `replayHistoryEventComments`
+/// comment wire shape, so a Dart consumer that already parses one can reuse
+/// the same mental model for the other.
+class LBComment {
+  final String text;
+  final String name;
+  final String color;
+
+  /// Admin reply. ⚠ By-design the backend passes the literal `{live_master}`
+  /// placeholder through unreplaced; host MUST substitute it with the
+  /// broadcaster name on display (parity with the native `LBComment.reply`
+  /// doc contract).
+  final String reply;
+
+  /// Wire key `reply_color`.
+  final String replyColor;
+
+  /// Playback offset seconds (distance from video start), NOT a Unix
+  /// timestamp. Kept as `String` (parity with the native `LBComment.time`
+  /// cross-platform-precision convention).
+  final String time;
+
+  const LBComment({
+    this.text = '',
+    this.name = '',
+    this.color = '',
+    this.reply = '',
+    this.replyColor = '',
+    this.time = '',
+  });
+
+  /// Tolerant decode: missing / null / wrong-type → `""` per field, never
+  /// throws (mirrors this file's `_asStringOr` convention).
+  factory LBComment.fromMap(Map<Object?, Object?> map) => LBComment(
+        text: _asStringOr(map['text'], ''),
+        name: _asStringOr(map['name'], ''),
+        color: _asStringOr(map['color'], ''),
+        reply: _asStringOr(map['reply'], ''),
+        replyColor: _asStringOr(map['reply_color'], ''),
+        time: _asStringOr(map['time'], ''),
+      );
+}
+
+/// Coerce a value to `List<LBComment>` (mirrors [_asProductList]). null /
+/// non-`List` → `[]`; each entry is decoded via [LBComment.fromMap]
+/// (non-`Map` entries are skipped, not thrown on). An empty input list
+/// decodes to `[]`, never `null` — the `replayChatRevealed` seam relies on
+/// this to forward its cleanup `[]` emits as-is (design D6).
+///
+/// PUBLIC (no leading underscore), unlike [_asProductList]/[_asSpecList]:
+/// those are only ever called from WITHIN this file (a containing model's
+/// own `fromMap`), whereas this helper is called directly from
+/// `livebuy_player.dart`'s `_handleEvent` switch — Dart's `_`-privacy is
+/// per-FILE, so a private symbol here would not be visible there. Mirrors
+/// the existing cross-file precedent [lbPlayerStateFromString] /
+/// [lbErrorFromMap] (both public, both called from `_handleEvent` too).
+List<LBComment> asCommentList(Object? value) {
+  if (value is! List) return const [];
+  return value
+      .whereType<Map>()
+      .map((e) => LBComment.fromMap(Map<Object?, Object?>.from(e)))
+      .toList();
 }

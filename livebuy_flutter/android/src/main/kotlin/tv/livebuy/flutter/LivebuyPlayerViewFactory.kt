@@ -26,8 +26,10 @@ import tv.livebuy.sdk.events.LBShareContext
 import tv.livebuy.sdk.events.LivebuyEventListener
 import tv.livebuy.sdk.models.LBAward
 import tv.livebuy.sdk.models.LBAwardClaimInput
+import tv.livebuy.sdk.models.LBComment
 import tv.livebuy.sdk.models.LBError
 import tv.livebuy.sdk.models.LBHotItem
+import tv.livebuy.sdk.models.LBNavItem
 import tv.livebuy.sdk.models.LBPlayerState
 import tv.livebuy.sdk.models.LBPollResponse
 import tv.livebuy.sdk.models.LBProduct
@@ -80,6 +82,18 @@ class LivebuyFlutterPlayerView(
     // no explicit reset needed at dispose().
     private var lastSubtitleChannelId: String? = null
 
+    // player-channel-chrome-bridge-core-flutter: last channel-chrome snapshot we emitted a
+    // `channelChange` payload for (ALL 9 projected fields, not just channel id — an upcoming→live
+    // `liveStatus` flip keeps the same id but IS a real change this event must still carry).
+    // Independent of `lastSubtitleChannelId` above — the two piggybacks do not share dedupe state.
+    private var lastChannelChromeSnapshot: ChannelChromeBridge.Snapshot? = null
+
+    // player-moment-fields-bridge-core-flutter: last moment-fields snapshot we emitted a
+    // `momentStateChange` payload for (ALL 6 projected fields). Independent of
+    // `lastChannelChromeSnapshot`/`lastSubtitleChannelId` above — none of these three dedupe
+    // mechanisms gate or suppress either of the others (design.md D4).
+    private var lastMomentFieldsSnapshot: MomentFieldsBridge.Snapshot? = null
+
     init {
         playerView.onStateChange = { state ->
             val raw = when (state) {
@@ -110,14 +124,45 @@ class LivebuyFlutterPlayerView(
                     )
                 }
             }
-        }
 
-        // NOTE: a `channelChange` reverse-event (lightweight LBChannel projection for
-        // upcoming chrome) was hand-stubbed here against a `LivebuyPlayerView.onChannelChange`
-        // hook that exists on NO platform SDK (iOS included) — it never compiled. Removed
-        // (flutter-bridge-build gate). If the host genuinely needs channel info pushed to
-        // Dart, add the `onChannelChange` hook to the Android/iOS SDK first (core + 4-platform
-        // parity), then re-wire the emit here.
+            // player-channel-chrome-bridge-core-flutter: piggyback on this ALREADY-EXISTING
+            // hook to read the ALREADY-PUBLIC `channel` property (no new native hook added, no
+            // android/livebuy/ change), independent of the subtitle piggyback above (own dedupe
+            // state — see `lastChannelChromeSnapshot` / `ChannelChromeBridge`). Unlike the iOS
+            // bridge's subtitle block, this Kotlin `?.let { }` scope function never returns from
+            // the enclosing `onStateChange` lambda, so placement relative to the subtitle block
+            // above does not matter here.
+            playerView.channel?.let { ch ->
+                val snapshot = ChannelChromeBridge.Snapshot(
+                    publishAt = ch.publishAt,
+                    cover = ch.cover,
+                    start = ch.start,
+                    liveStatus = ch.liveStatus,
+                    title = ch.title,
+                    serviceLink = ch.shop.serviceLink,
+                    shopName = ch.shop.name,
+                    shopLogo = ch.shop.logo,
+                    shareUrl = ch.shareUrl,
+                    type = ch.type,
+                    // product-list-bridge-core-flutter: reuses the existing
+                    // `productToMap` helper `onProductTap` already serializes
+                    // `LBProduct` with — no new wire shape.
+                    goods = ch.goods.map { productToMap(it) },
+                    // channel-shop-intro-bridge-core-flutter: shop introduction text.
+                    // May legitimately be "" (merchant left it blank).
+                    shopIntro = ch.shop.intro,
+                    // guest-comment-channel-bridge-core-flutter: raw permission flag
+                    // passthrough — does NOT compute `chatEnabled` here.
+                    guestComment = ch.guestComment,
+                )
+                if (ChannelChromeBridge.shouldEmit(snapshot, lastChannelChromeSnapshot)) {
+                    lastChannelChromeSnapshot = snapshot
+                    LivebuyEventHandler.emit(
+                        ChannelChromeBridge.payload(snapshot) + ("event" to "channelChange")
+                    )
+                }
+            }
+        }
 
         playerView.onProductTap = { product ->
             // product-bridge-data-core: emit the full field set (camelCase
@@ -183,8 +228,9 @@ class LivebuyFlutterPlayerView(
 
         // flutter-vod-playback-progress-core — VOD-1 playback-progress forward.
         // `LivebuyPlayerView.onPlaybackProgressChange` already exists natively
-        // (Android isReplay-slice parity), so this is a real hook (not the
-        // reverted onChannelChange situation above).
+        // (Android isReplay-slice parity), so this is a real hook (unrelated to the
+        // onStateChange-piggybacked channelChange/subtitleChange emits above, which read
+        // `channel` from the existing state-change hook instead of needing a dedicated one).
         // vod-narrating-products-core-flutter: additive `products` wire key — the
         // raw, unfiltered `channel.goods` snapshot (same source core's own
         // `vodActiveProducts(products:position:)` reads), serialized via the same
@@ -202,6 +248,51 @@ class LivebuyFlutterPlayerView(
                     "isPlaying" to progress.isPlaying,
                     "isReplay" to progress.isReplay,
                     "products" to (playerView.channel?.goods ?: emptyList()).map { productToMap(it) },
+                )
+            )
+        }
+
+        // player-moment-fields-bridge-core-flutter — a genuinely NEW, dedicated native hook
+        // assignment (design D1), not a piggyback: `onMomentStateChange` is itself the
+        // purpose-built hook, already firing on every real moment-state publish on Android.
+        // Scoped to exactly the 6 fields with a currently-starved Dart-side `flutter-ui`
+        // consumer (design D2) — the other 12 `LBPlayerMomentState` fields each already have an
+        // established, independent Flutter derivation path and are deliberately NOT bridged
+        // here. Whole-snapshot dedupe (design D4) so the high-frequency native publish (fires on
+        // subtitle toggles, chat-visibility flips, product-overlay refreshes — none of which are
+        // in our 6 fields) does not spam the EventChannel; a per-second countdown tick DOES
+        // re-emit because `autoNextRemainingSeconds` is itself part of the snapshot.
+        playerView.onMomentStateChange = { state ->
+            val snapshot = MomentFieldsBridge.Snapshot(
+                viewerCount = state.viewerCount,
+                isSubscribed = state.isSubscribed,
+                autoNextCountdownActive = state.autoNextCountdownActive,
+                autoNextRemainingSeconds = state.autoNextRemainingSeconds,
+                nextItem = state.nextItem,
+                hotItems = state.hotItems,
+            )
+            if (MomentFieldsBridge.shouldEmit(snapshot, lastMomentFieldsSnapshot)) {
+                lastMomentFieldsSnapshot = snapshot
+                LivebuyEventHandler.emit(
+                    MomentFieldsBridge.payload(snapshot) + ("event" to "momentStateChange")
+                )
+            }
+        }
+
+        // replay-chat-revealed-seam-core-flutter — direct closure subscription to the
+        // already-existing native seam `LivebuyPlayerView.onReplayChatRevealed` (no new
+        // native SDK hook, no android/livebuy/ change). Mirrors `onPlaybackProgressChange`
+        // above (NOT the `onStateChange` piggyback pattern used for
+        // channelChange/subtitleChange) because this seam's fire timing (progressive
+        // reveal / seek shrink / reset-to-[]) is driven by the native replay-timeline
+        // scheduler on its own event-driven schedule, independent of player-state ticks.
+        // Every native emit (including `[]` cleanup emits) is forwarded 1:1 — no
+        // re-derived timing logic, no new dedupe state on this side (design D1/D6).
+        playerView.onReplayChatRevealed = { comments ->
+            LivebuyEventHandler.emit(
+                mapOf(
+                    "event" to "replayChatRevealed",
+                    "comments" to comments.map { commentToMap(it) },
                 )
             )
         }
@@ -419,9 +510,9 @@ class LivebuyFlutterPlayerView(
                 "operationPanel_simulateGoodsTap" -> { playerView.operationPanelView.simulateGoodsTap(); result.success(null) }
                 "operationPanel_simulateChatToggleTap" -> { playerView.operationPanelView.simulateChatToggleTap(); result.success(null) }
                 "operationPanel_simulateLikeTap" -> { playerView.operationPanelView.simulateLikeTap(); result.success(null) }
-                "operationPanel_simulateShareTap" -> { playerView.operationPanelView.simulateShareTap(); result.success(null) }
+                "operationPanel_simulateShareTap" -> { result.success(playerView.operationPanelView.simulateShareTap()) }
                 "operationPanel_simulateSubtitleToggleTap" -> { playerView.operationPanelView.simulateSubtitleToggleTap(); result.success(null) }
-                "operationPanel_simulateServiceLinkTap" -> { playerView.operationPanelView.simulateServiceLinkTap(); result.success(null) }
+                "operationPanel_simulateServiceLinkTap" -> { result.success(playerView.operationPanelView.simulateServiceLinkTap()) }
                 "operationPanel_simulateMoreTap" -> { playerView.operationPanelView.simulateMoreTap(); result.success(null) }
                 "operationPanel_simulateGuestNameEditTap" -> { playerView.operationPanelView.simulateGuestNameEditTap(); result.success(null) }
                 "operationPanel_simulateSkipStartTap" -> { playerView.operationPanelView.simulateSkipStartTap(); result.success(null) }
@@ -429,7 +520,7 @@ class LivebuyFlutterPlayerView(
 
                 // VideoInfoPanel
                 "videoInfoPanel_simulateSubscribeTap" -> { playerView.videoInfoPanel.simulateSubscribeTap(); result.success(null) }
-                "videoInfoPanel_simulateServiceLinkTap" -> { playerView.videoInfoPanel.simulateServiceLinkTap(); result.success(null) }
+                "videoInfoPanel_simulateServiceLinkTap" -> { result.success(playerView.videoInfoPanel.simulateServiceLinkTap()) }
                 "videoInfoPanel_simulateShopTap" -> { playerView.videoInfoPanel.simulateShopTap(); result.success(null) }
                 "videoInfoPanel_simulateDismiss" -> { playerView.videoInfoPanel.simulateDismiss(); result.success(null) }
                 "videoInfoPanel_simulateTabChange" -> {
@@ -681,6 +772,48 @@ private fun productToMap(product: LBProduct): Map<String, Any?> {
     product.videoId?.let { payload["videoId"] = it }
     return payload
 }
+
+// replay-chat-revealed-seam-core-flutter — serialize an LBComment to the Flutter bridge
+// wire map for the `replayChatRevealed` event (mirrors `productToMap` above). Scoped to
+// EXACTLY the 6 fields this seam's spec contract enumerates (`text` / `name` / `color` /
+// `reply` / `reply_color` / `time`) — NOT the native SDK's full 8-field `LBComment` data
+// class (no `kind` / `isTop`, design D3), matching the existing `CHAT_HISTORY_LOADED`
+// comment wire shape's field naming.
+private fun commentToMap(c: LBComment): Map<String, Any> = mapOf(
+    "text" to c.text,
+    "name" to c.name,
+    "color" to c.color,
+    "reply" to c.reply,
+    "reply_color" to c.replyColor,
+    "time" to c.time,
+)
+
+// player-moment-fields-bridge-core-flutter — serialize LBNavItem/LBHotItem to the Flutter
+// bridge wire map for the `momentStateChange` event (mirrors `productToMap`'s style). `internal`
+// (not `private`) so `MomentFieldsBridge.payload(...)` — a separate file in this same package/
+// module — can call them: Kotlin's top-level `private` is FILE-scoped, not package-scoped, so a
+// `private` declaration here would be invisible from `MomentFieldsBridge.kt`.
+internal fun navItemToMap(item: LBNavItem): Map<String, Any?> {
+    val body = mutableMapOf<String, Any?>(
+        "id" to item.id,
+        "cover" to item.cover,
+        "duration" to item.duration,
+        "shopName" to item.shopName,
+        "preview" to item.preview,
+    )
+    // `title` omitted entirely when null (mirrors iOS's `lbNavItemToBody`'s `if let`
+    // omit-when-nil convention, design D6) — NOT present with an explicit null value.
+    item.title?.let { body["title"] = it }
+    return body
+}
+
+internal fun hotItemToMap(item: LBHotItem): Map<String, Any?> = mapOf(
+    "id" to item.id,
+    "cover" to item.cover,
+    "title" to item.title,
+    "duration" to item.duration,
+    "preview" to item.preview,
+)
 
 private fun lbProductFrom(map: Map<*, *>?): LBProduct? {
     // core `LBProduct.id: String` (7468cba6, cross-platform parity; JS Number-precision

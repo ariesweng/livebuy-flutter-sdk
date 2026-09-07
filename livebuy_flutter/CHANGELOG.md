@@ -6,12 +6,72 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
-（目前無待發項目——`2.0.2` 已於下方發布，三套件共用版號 lockstep。）
+（無 —— 目前累積內容已折入下方 `2.1.0`）
+
+## 2.1.0 - 2026-09-07
+
+> **三套件皆有實際內容變動**（lockstep）。自 `2.0.2` 以來累積 47 個 commit，主軸是「四端
+> 100% 像素 parity」補課政策的 Flutter 端批次，與 v4.14.0 iOS/Android 同源但版號軌獨立，
+> 存底稍晚才折版。**含 3 項本端自身 ⚠️ BREAKING**（詳見下方專節）。
+
+### Added
+
+- **core bridge 補齊欄位**（皆 additive、既有呼叫端不受影響）：`LBVideoItem.goods:
+  LBFeaturedGood?`（影片連結精選商品預覽，補齊與 iOS/Android core 的 parity，
+  video-linked-goods-core-flutter）、`onMomentStateChange` moment state 6 個欄位、
+  `channelChange` 的 `guestComment` / `channel.type` / `channel.goods` / `shop.intro` /
+  header chrome 4 個欄位（並復活先前被移除的原生 `channelChange` 發送）、
+  `performShare`/`performServiceLink` 攔截 Bool 透傳、`onReplayChatRevealed` 回放聊天揭露
+  seam。
+- **template 層**：規格連動可購性計算 `optionAvailability`、`loadingCover` 欄位暴露、用既有
+  `POLL_RECEIVED` `guest_comment` 推導 `guestEditAvailable`、VOD/回放時介紹中商品置頂到最前。
+- **reference-ui 首次接上真實資料**：點播間介紹面板 `handleInfo`（文字內容不再恆空）、商品
+  清單 `handleProducts`（商品袋不再顯示空清單）、直播回放版型統一判斷
+  `isFinishedLiveReplay`、播放器 header chrome + 側欄「聯繫商家」icon 隨頻道自動衍生。
+- **design R30/R32/R33/R34/R35/R36 四輪改版落地**：直播入口卡 2 秒緩衝、VOD 側欄購物袋 icon
+  比例校正、collapsible 縮小懸浮播放器修復、大批 icon 改自繪向量（bag/cart、登入鎖頭/中獎
+  禮物、送出/略過介紹/縮小 PiP、重試/換一批/斷網/版本過舊、側欄/聊天室、聊天回到最新箭頭、
+  商品明細按鈕）、開場影片播放期間抑制商品卡顯示、抽獎活動彈窗 CTA 移除已參加鎖定改可重複
+  點擊、商品列縮圖左上角編號徽章、VOD 商品列縮圖三態覆蓋層、商品明細主圖改絕不放大/不裁切、
+  widget 輪播卡片封面改 cover、聯絡商家「確定」未攔截時預設開瀏覽器。
+
+### Fixed
+
+- Android bridge 仍引用已改名 `LivebuyWidget` 符號修正；iOS plugin 透過 CocoaPods host 時的
+  SPM identity 衝突修復 + 補 iOS podspec；商品規格比對修正子字串誤配對 bug；carousel 卡片
+  標題行高改逐卡片實測，修正真實資料下的 1px overflow；`LivebuyPlayer`/縮小浮動預覽補
+  Material 祖先修復文字黃底線；播放器頂欄/底部安全區、開場片頭底部購物袋列被乾淨模式擋住等
+  多處版位修正。
+
+### ⚠️ BREAKING
+
+- **`enableDirectCloseButton` 全域預設值 `false → true`**（core，
+  `flutter-player-direct-close-button-default-true`）——與 iOS/Android/RN 同批對等變更，行為
+  面 BREAKING、非源碼相容面：既有呼叫端不帶此參數仍可編譯，但未指定時的有效值改變（右上角
+  關閉鈕從「收合」變成「直接關閉」）。
+- **`LiveBottomBarView` 組裝條件新增 `&& !_isScrubbing` 閘門**（reference-ui，
+  `rb-flutter-replay-live-chrome-parity`）——直播回放版型統一後才會出現的新情境（已結束直播
+  回放同時具備 VOD 式進度條與 LIVE 底部 bar），對齊 iOS 既有 `!isScrubbing` 閘門避免拖曳進度
+  條時兩者重疊；原提案標注「行為新增，非既有行為破壞」。
+- **商品明細相簿 `onZoomImage` callback 簽章變動**（reference-ui，
+  `rb-flutter-product-detail-image-gallery`）——現有生產呼叫端僅 `product_sheets_view.dart`
+  兩處，爆炸半徑限定在本 change 自己會動的檔案內。
+
+> ⚠️ **事後補記（2.0.2 CHANGELOG 遺漏）**：`2.0.2` 實際上也包含
+> `rb-flutter-carousel-card-pin-viewers-duration-removal`（VOD/回放輪播卡時長徽章移除，
+> commit `8fcf6c3b`，2026-09-04 14:41，早於 `2.0.2` 版號 bump commit `92d40ee7`）與
+> `rb-flutter-activity-sheet-cta-repeatable`（抽獎活動彈窗 `ActivitySheetView` 內部 API 變動，
+> commit `0fd582ec`，2026-09-03 13:49）兩項 reference-ui-internal ⚠️ BREAKING——這兩項當時已
+> 隨 `2.0.2` 真實發布，但 `2.0.2` 的 CHANGELOG 段落聚焦在 xsmartlive 回報的 3 個 bug 修復，
+> 未一併記載。本補記不改變 `2.0.2` 版號、不重新發版。
 
 ## 2.0.2 - 2026-09-04
 
 > **三套件皆有實際內容變動**（與 `2.0.1` 只有 reference-ui 動不同）。源自外部 Flutter host
 > （xsmartlive）對 mirror repo `v2.0.1` 的整合缺陷回報，逐項查證後修復。
+>
+> ⚠️ 事後補記（見上方 `2.1.0` 段首）：本版實際上也包含 2 項 reference-ui-internal BREAKING
+> （VOD/回放輪播卡時長徽章移除、`ActivitySheetView` 內部 API 變動），當時未記載。
 
 ### Fixed
 

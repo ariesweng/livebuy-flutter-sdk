@@ -3,9 +3,10 @@ import 'package:livebuy_flutter/livebuy_flutter.dart' show LBProduct;
 
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
-import 'shop_bag_glyph.dart';
+import 'cart_fill_glyph.dart';
 import 'product_row.dart';
 import 'product_row_overlay.dart';
+import 'search_glyph.dart';
 import 'sheet_header_close_button.dart';
 import 'sheet_scaffold.dart';
 
@@ -160,6 +161,16 @@ class ProductListSheet extends StatefulWidget {
   /// 當下播放秒數（replay 用）——對照每個商品的 `[beginTime, endTime]` 判「介紹中」。Default 0。
   final int playbackPosition;
 
+  /// 縮圖左上角編號徽章（design R35，rb-flutter-product-row-number-badge）的**後端原始順序**商品
+  /// 清單——`ProductSheetsModel.productsBackendOrder`（鏡射 view-model
+  /// `DefaultProductOverlayState.products`，未依介紹中重排），與 [products]（顯示用、介紹中優先）
+  /// 是不同來源、互不影響。每列以 `productRowNumberBadgeIndex(mode:productId:
+  /// backendOrderProductIds:)` 算出該商品在此清單中的 1-based 位置傳給 [ProductRow.index]；`mode
+  /// == ProductRowMode.vod` 恆回傳 `null`（VOD 不顯示徽章）。Default `const []`（既有呼叫點 /
+  /// golden 省略 → `indexOf` 恆落空回 `null`，不畫任何徽章節點，渲染 byte-identical）。Parity iOS
+  /// / Android / RN.
+  final List<LBProduct> backendOrderProducts;
+
   /// Host-wired 明細鈕 / 商品名 tap → FULL browse sheet. The container forwards this to its
   /// host-wired `onProductTap`, which the host wires to core
   /// `LivebuyPlayer.simulateProductTap(product)`. Default no-op so demo / golden
@@ -210,6 +221,7 @@ class ProductListSheet extends StatefulWidget {
     this.introducingProductIds = const {},
     this.mode,
     this.playbackPosition = 0,
+    this.backendOrderProducts = const [],
     this.onOpenProduct,
     this.onQuickAdd,
     this.onSeekToIntro,
@@ -247,6 +259,9 @@ class _ProductListSheetState extends State<ProductListSheet> {
         : widget.products
             .where((p) => p.name.toLowerCase().contains(q))
             .toList();
+    // 編號徽章（design R35）的後端原始順序 id 清單——迴圈外預算一次，避免每列重複 map。
+    final backendOrderIds =
+        widget.backendOrderProducts.map((p) => p.id).toList(growable: false);
 
     // Top-rounded bottom-sheet shell (`LBPBottomSheet` borderRadius 20 20 0 0). The
     // grab handle + 銷售商品 header PIN at top, the 查看購物車 CTA PINS at bottom, and only
@@ -327,6 +342,13 @@ class _ProductListSheetState extends State<ProductListSheet> {
                         endTime: product.endTime,
                         position: widget.playbackPosition,
                       );
+                      // 縮圖左上角編號徽章（design R35）：VOD 恆 null，否則算該商品在後端原始
+                      // 順序清單中的 1-based 位置。
+                      final numberIndex = productRowNumberBadgeIndex(
+                        mode: effectiveMode,
+                        productId: product.id,
+                        backendOrderProductIds: backendOrderIds,
+                      );
                       return [
                         ProductRow(
                           rowIndex: i,
@@ -335,6 +357,8 @@ class _ProductListSheetState extends State<ProductListSheet> {
                           live: widget.live,
                           showPlay: overlay.showPlay,
                           isIntroducing: overlay.showIntroducing,
+                          mode: effectiveMode,
+                          index: numberIndex,
                           showShare: overlay.showShare,
                           onOpenProduct: widget.onOpenProduct,
                           onQuickAdd: widget.onQuickAdd,
@@ -412,6 +436,15 @@ class _SheetHeader extends StatelessWidget {
         children: [
           // Leading 32-wide search button — taps expand the search field
           // (rb-flutter-product-list-search，問題 2). No longer decorative.
+          //
+          // Glyph (rb-flutter-product-list-search-icon-parity): a self-drawn
+          // `SearchGlyph` vector (parity Android `SearchGlyph` 17dp / iOS SF
+          // Symbol `magnifyingglass` 17pt at this call site), replacing the
+          // plain-text emoji `'🔍'`. Size 17 (not the design token's literal
+          // `size={20}`) matches the ALREADY-ESTABLISHED iOS/Android ground
+          // truth at this exact call site (both independently chose 17, not
+          // design's 20) — true cross-platform parity here means matching
+          // what iOS/Android actually render, not the design literal.
           GestureDetector(
             key: LbTestKeys.productSearchButton,
             behavior: HitTestBehavior.opaque,
@@ -420,13 +453,7 @@ class _SheetHeader extends StatelessWidget {
               width: 32,
               height: 32,
               child: Center(
-                child: Text(
-                  '🔍',
-                  style: TextStyle(
-                    color: theme.text,
-                    fontSize: 15 * theme.fontScale,
-                  ),
-                ),
+                child: SearchGlyph(color: theme.text, size: 17),
               ),
             ),
           ),
@@ -456,7 +483,7 @@ class _SheetHeader extends StatelessWidget {
 
 // MARK: - Expanded search header (`LBPSheetHeader` 展開態, parity iOS/Android)
 
-/// bgSunken 膠囊（🔍 + TextField「搜尋商品名稱」）+ 取消 accent 文字鈕。清除（x）鈕已移除——
+/// bgSunken 膠囊（`SearchGlyph` + TextField「搜尋商品名稱」）+ 取消 accent 文字鈕。清除（x）鈕已移除——
 /// 取消已同時收合搜尋列並清空 query，單獨的清除鈕是多餘的（rb-search-bar-cancel-only）。
 class _SearchHeader extends StatelessWidget {
   final ReferenceUITheme theme;
@@ -487,9 +514,11 @@ class _SearchHeader extends StatelessWidget {
               ),
               child: Row(
                 children: [
-                  Text('🔍',
-                      style: TextStyle(
-                          color: _textDim, fontSize: 14 * theme.fontScale)),
+                  // Glyph (rb-flutter-product-list-search-icon-parity): a
+                  // self-drawn `SearchGlyph` vector (parity Android
+                  // `SearchGlyph` 16dp / iOS SF Symbol `magnifyingglass` 16pt
+                  // at this call site), replacing the plain-text emoji `'🔍'`.
+                  SearchGlyph(color: _textDim, size: 16),
                   const SizedBox(width: 8),
                   Expanded(
                     child: TextField(
@@ -612,9 +641,10 @@ class _CartCTAFooter extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.max,
                 children: [
-                  // rb-flutter-cart-cta-shopbag-glyph: design `LBPCartCTA` uses the white outline
-                  // `shopBag` (full handle ring + mouth line), NOT the multicolor 🛍 emoji.
-                  ShopBagGlyph(color: const Color(0xFFFFFFFF), size: 20 * theme.fontScale),
+                  // rb-flutter-icon-parity-cart-cta-retirement: design `LBPCartCTA` uses the
+                  // white filled `cartFill` (basket + hook handle + 2 wheels) — `shopBag` is
+                  // retired (2026-08-25 redesign: bag silhouette wasn't legible at this size).
+                  CartFillGlyph(color: const Color(0xFFFFFFFF), size: 20 * theme.fontScale),
                   const SizedBox(width: 10),
                   Text(
                     _cartLabel,

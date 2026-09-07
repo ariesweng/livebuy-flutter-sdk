@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/material.dart' show Material, MaterialType;
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem, LivebuySDK;
 
@@ -372,61 +373,79 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final containerSize = Size(constraints.maxWidth, constraints.maxHeight);
-        return Stack(
-          children: [
-            // KEEP-ALIVE full player: mounted the whole time `video != null`. Minimize only HIDES
-            // it (Opacity 0 + IgnorePointer) so playback continues + restore is an instant resume.
-            Positioned.fill(
-              child: IgnorePointer(
-                ignoring: _isMinimized,
-                child: Opacity(
-                  opacity: _isMinimized ? 0 : 1,
-                  child: LivebuyPlayer(videoId: v.id, config: _composedConfig),
+        // rb-flutter-player-material-ancestor-fix — this `Stack` has TWO sibling branches
+        // (the full-screen player below, and the minimized floating-preview card further
+        // down); `LivebuyPlayer` guarantees its OWN `Material` ancestor internally
+        // (rb-flutter-player-material-ancestor), but that only covers the first branch. The
+        // floating-preview-card branch (`config.design.floatingPlayerCard`, default
+        // `FloatingWidgetView` reusing `CarouselCardView`) is a SEPARATE sibling, not a
+        // descendant of `LivebuyPlayer`'s `Material`, so it still falls back to Flutter's
+        // debug style (yellow double underline on every `Text`) whenever
+        // `CollapsibleLivebuyPlayer` itself is mounted outside any host-provided `Material`
+        // ancestor (e.g. a `Stack` sibling of `Scaffold` — the reported bug). Wrapping the
+        // WHOLE `Stack` here covers both branches. `MaterialType.transparency` paints no
+        // background/shadow of its own — it only supplies the ancestor context — so this
+        // MUST NOT change any existing pixel output (nesting under `LivebuyPlayer`'s own
+        // `Material`, or under a host-provided one, is a no-op either way).
+        return Material(
+          type: MaterialType.transparency,
+          child: Stack(
+            children: [
+              // KEEP-ALIVE full player: mounted the whole time `video != null`. Minimize only
+              // HIDES it (Opacity 0 + IgnorePointer) so playback continues + restore is an
+              // instant resume.
+              Positioned.fill(
+                child: IgnorePointer(
+                  ignoring: _isMinimized,
+                  child: Opacity(
+                    opacity: _isMinimized ? 0 : 1,
+                    child: LivebuyPlayer(videoId: v.id, config: _composedConfig),
+                  ),
                 ),
               ),
-            ),
 
-            // Bottom-right floating preview while minimized. Draggable (clamped on-screen);
-            // a tap restores, the close button clears.
-            if (_isMinimized)
-              Positioned(
-                right: _floatingInset.dx - (_committedOffset.dx + _dragTranslation.dx),
-                bottom: _floatingInset.dy - (_committedOffset.dy + _dragTranslation.dy),
-                child: GestureDetector(
-                  onPanUpdate: (d) => setState(() => _dragTranslation += d.delta),
-                  onPanEnd: (_) => setState(() {
-                    _committedOffset = clampFloatingOffset(
-                      committed: _committedOffset,
-                      translation: _dragTranslation,
-                      cardSize: _cardSize,
-                      containerSize: containerSize,
-                      inset: _floatingInset,
-                    );
-                    _dragTranslation = Offset.zero;
-                  }),
-                  child: _MeasureSize(
-                    onChange: (size) => _cardSize = size,
-                    // The floating preview card is composed by the resolved design (granularity
-                    // A). Default MinimalDesign = the verbatim `FloatingWidgetView`; a host
-                    // injects its own via `config.design`.
-                    child: widget.config.design.floatingPlayerCard(
-                      FloatingCardContext(
-                        theme: widget.theme,
-                        // The SWITCHED video (rb-flutter-collapsible-player-track-switch): an
-                        // in-place switch updates `_shownVideo` so the card shows the switched
-                        // video, not the entry `v`.
-                        video: _shownVideo ?? v,
-                        // A genuine live session → load the real cover (parity with iOS
-                        // `LivebuyPlayerPresenter` `FloatingCardContext(live: true)`).
-                        live: true,
-                        onTap: (_) => _restore(),
-                        onClose: _close,
+              // Bottom-right floating preview while minimized. Draggable (clamped on-screen);
+              // a tap restores, the close button clears.
+              if (_isMinimized)
+                Positioned(
+                  right: _floatingInset.dx - (_committedOffset.dx + _dragTranslation.dx),
+                  bottom: _floatingInset.dy - (_committedOffset.dy + _dragTranslation.dy),
+                  child: GestureDetector(
+                    onPanUpdate: (d) => setState(() => _dragTranslation += d.delta),
+                    onPanEnd: (_) => setState(() {
+                      _committedOffset = clampFloatingOffset(
+                        committed: _committedOffset,
+                        translation: _dragTranslation,
+                        cardSize: _cardSize,
+                        containerSize: containerSize,
+                        inset: _floatingInset,
+                      );
+                      _dragTranslation = Offset.zero;
+                    }),
+                    child: _MeasureSize(
+                      onChange: (size) => _cardSize = size,
+                      // The floating preview card is composed by the resolved design
+                      // (granularity A). Default MinimalDesign = the verbatim
+                      // `FloatingWidgetView`; a host injects its own via `config.design`.
+                      child: widget.config.design.floatingPlayerCard(
+                        FloatingCardContext(
+                          theme: widget.theme,
+                          // The SWITCHED video (rb-flutter-collapsible-player-track-switch): an
+                          // in-place switch updates `_shownVideo` so the card shows the switched
+                          // video, not the entry `v`.
+                          video: _shownVideo ?? v,
+                          // A genuine live session → load the real cover (parity with iOS
+                          // `LivebuyPlayerPresenter` `FloatingCardContext(live: true)`).
+                          live: true,
+                          onTap: (_) => _restore(),
+                          onClose: _close,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         );
       },
     );

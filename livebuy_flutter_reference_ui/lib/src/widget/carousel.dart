@@ -316,7 +316,7 @@ class CarouselView extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: SizedBox(
-          height: _cardHeight(context),
+          height: _cardHeight(context, cards),
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -344,7 +344,7 @@ class CarouselView extends StatelessWidget {
         child: Stack(
           children: [
             // Text-free height sizer — drives the row height only (= card height).
-            SizedBox(height: _cardHeight(context), width: cardWidth),
+            SizedBox(height: _cardHeight(context, cards), width: cardWidth),
             // The clipped full-width row on top.
             Positioned.fill(
               child: ClipRect(
@@ -368,61 +368,103 @@ class CarouselView extends StatelessWidget {
   /// sizer (whose `OverflowBox` reports zero height upward) — so it MUST track what the
   /// card actually lays out. Mirrors `CarouselCardView`'s `Column`: `width*16/9` thumb +
   /// 8 gap + the title line's REAL measured height ([_titleLineHeight]) (+ its 8 gap +
-  /// the below slot, which sits UNDER the title — design R17). Takes [context] because
-  /// [_titleLineHeight] needs it (see that getter's doc for why).
-  double _cardHeight(BuildContext context) =>
-      cardWidth * 16.0 / 9.0 + 8 + _belowSlotExtent + _titleLineHeight(context);
+  /// the below slot, which sits UNDER the title — design R17). [cards] is the exact list
+  /// of items this row is about to render (`_cardRow`'s own `cards` local — turnkey
+  /// `scrollable` → all `videos`, windowed → the capped `_visible` slice) — [_titleLineHeight]
+  /// needs the REAL titles, not just the theme (see that method's doc for why).
+  double _cardHeight(BuildContext context, List<LBVideoItem> cards) =>
+      cardWidth * 16.0 / 9.0 +
+      8 +
+      _belowSlotExtent +
+      _titleLineHeight(context, cards);
 
-  /// The title line's REAL rendered height, measured with a `TextPainter` laid out
-  /// against the EXACT SAME EFFECTIVE style `CarouselCardView._title()` paints with —
-  /// replaces the former hand-tuned estimate `12 * theme.fontScale * 1.34`
-  /// (rb-flutter-carousel-card-height-cjk-overflow-fix). `TextPainter` is the same
-  /// text-layout primitive `RenderParagraph` (which backs every `Text` widget) uses
-  /// internally, so a `TextPainter` laid out with an identical EFFECTIVE style reports
-  /// the SAME line height Flutter will actually paint — for whatever font the system
-  /// selects (Latin, or a CJK fallback such as iOS PingFang / Android Noto Sans CJK,
-  /// whose line-height metrics commonly exceed the old `× 1.34` estimate that was
-  /// hand-tuned against Latin/Roboto only).
+  /// The title line's REAL rendered height — the MAX, across every [cards] item this row
+  /// is about to render, of a `TextPainter` measurement laid out against the item's OWN
+  /// real `item.title` text, with the EXACT SAME effective style + `maxLines` / `ellipsis`
+  /// / width constraint `CarouselCardView._title()` paints with. Supersedes the
+  /// rb-flutter-carousel-card-height-cjk-overflow-fix approach of measuring a FIXED
+  /// synthetic 2-glyph probe string (`'字A'`) instead of each row's own real content
+  /// (rb-flutter-carousel-card-title-height-overflow-followup).
+  ///
+  /// **Why the fixed-probe approach (the prior fix) was still not sound, found by a real
+  /// repro**: that fix's own reasoning — "a mixed CJK+ASCII probe captures the taller of
+  /// whatever font this app/device selects for CJK text vs. the Latin font" — assumed a
+  /// line's tallest font run is always one of exactly two candidates (Latin, or THE ONE
+  /// CJK fallback font `字` happens to resolve to). A real backend title
+  /// (`舉杯低卡蒟蒻凍☺︎`, `bsuqqM`, verified 2026-09-05 against a real `/sdk/widget` shop)
+  /// disproved that assumption: it mixes CJK ideographs (which `字` DOES represent) with a
+  /// trailing pictograph/symbol codepoint (`☺` + a variation selector) that Flutter's font
+  /// fallback resolves to a DIFFERENT actual font than the probe ever exercises — so on a
+  /// real device that font's line-height metric can still exceed the 2-glyph probe's
+  /// measurement, even though the probe already "covers CJK." Reproduced live in
+  /// `flutter/example` on an iOS Simulator: `RenderFlex#... A RenderFlex overflowed by
+  /// 1.00 pixels on the bottom` on EXACTLY this item's `CarouselCardView`'s `Column`
+  /// (`carousel_card.dart:318`) — the 2nd visible card in the row, matching the field
+  /// report — while every OTHER card in the SAME row, sharing the SAME formula-derived
+  /// row height, did NOT overflow. That per-card asymmetry is the tell: the gap is not
+  /// "this app's ambient font is CJK-taller than Latin" (which would affect every card in
+  /// the row identically, since they all share one row-height constant) — it is "THIS
+  /// SPECIFIC card's specific title glyphs happen to select a font the probe's fixed
+  /// glyph set never includes." No FIXED probe string, however cleverly chosen, can rule
+  /// this out for every future title / script / symbol / emoji a shop might type — the
+  /// only measurement that is provably always tall enough is one taken against each row's
+  /// OWN actual titles.
+  ///
+  /// **The fix**: measure every VISIBLE card's real `item.title` (not a stand-in) and take
+  /// the max — this is no longer an estimate that could, in principle, miss some future
+  /// glyph/font combination; it is the literal same measurement `RenderParagraph` performs
+  /// for that exact string, so it is definitionally never wrong for content this row is
+  /// actually about to paint. The only class of mismatch this fix cannot see coming is a
+  /// LATER content swap onto the SAME already-built row without a rebuild — which cannot
+  /// happen here, because `CarouselView` is a `StatelessWidget` and `_cardHeight` recomputes
+  /// from the current `videos`/`cards` on every rebuild the host causes (a new page loaded,
+  /// a model update, etc.), never leaving a stale sizer paired with fresh content.
   ///
   /// EFFECTIVE, not merely byte-identical `TextStyle` VALUES: `Text()` resolves its
   /// painted style as `DefaultTextStyle.of(context).style.merge(style)` (Flutter's own
   /// `Text.build`) — `CarouselCardView.titleTextStyle(theme)` deliberately leaves
   /// `fontFamily` unset so it inherits whatever font the host/ambient `DefaultTextStyle`
   /// provides, exactly like every other `Text()` in this file. A raw `TextPainter` given
-  /// that SAME style object with no context merge does NOT get that ambient font —
-  /// empirically confirmed during apply (a bare, unmerged `TextPainter` measured a
-  /// SHORTER line than the real painted title under this repo's test-host
-  /// `DefaultTextStyle(fontFamily: 'Roboto')` wrapper, reproducing a genuine
-  /// `RenderFlex` "BOTTOM OVERFLOWED" overflow — the exact failure class this change
-  /// exists to eliminate, just triggered by a style mismatch instead of a magic
-  /// multiplier). So this getter merges with `DefaultTextStyle.of(context).style`
-  /// first, mirroring `Text.build` exactly, before measuring.
+  /// that SAME style object with no context merge does NOT get that ambient font
+  /// (empirically confirmed during the original apply — see git history). So this method
+  /// merges with `DefaultTextStyle.of(context).style` first, mirroring `Text.build` exactly,
+  /// before measuring.
   ///
-  /// The probe string mixes one CJK glyph and one ASCII glyph (`'字A'`) rather than any
-  /// specific card's real title: `_cardHeight` is a PER-ROW constant shared by every
-  /// visible card (computed before any specific card's `item.title` script is known,
-  /// and a single row can mix Latin/CJK titles), so it cannot literally probe with the
-  /// real text. Flutter selects a fallback font per script run within the same line,
-  /// and a line's box height is driven by the tallest metrics among the fonts used on
-  /// that line — so this mixed probe captures the taller of "whatever font this
-  /// app/device selects for CJK text" vs. "the Latin font," conservatively covering
-  /// either script without needing to enumerate every script the SDK might render.
+  /// `maxLines: 1` + `ellipsis: '…'`, laid out at `maxWidth: cardWidth` — mirrors
+  /// `_title()`'s own `Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, ...)`
+  /// inside its `SizedBox(width: width, ...)` exactly (`RichText`/`Text.build` sets these
+  /// same two `TextPainter` params whenever `overflow: TextOverflow.ellipsis` is given), so
+  /// a title long enough to actually truncate is measured under the SAME constraint it will
+  /// really be painted under, not an unconstrained single line.
   ///
   /// `textScaler: TextScaler.noScaling` is pinned here — the SAME isolation the title
   /// `Text()` pins (rb-flutter-carousel-card-title-height-overflow) — so this
   /// measurement stays immune to the host environment's ambient `MediaQuery` text
-  /// scale, just like the real title paint, keeping both isolation axes (host
-  /// text-scale, and now font-fallback/script) consistent.
-  double _titleLineHeight(BuildContext context) {
+  /// scale, just like the real title paint.
+  double _titleLineHeight(BuildContext context, List<LBVideoItem> cards) {
     final TextStyle effectiveStyle = DefaultTextStyle.of(context)
         .style
         .merge(CarouselCardView.titleTextStyle(theme));
-    final painter = TextPainter(
-      text: TextSpan(text: '字A', style: effectiveStyle),
-      textDirection: TextDirection.ltr,
-      textScaler: TextScaler.noScaling,
-    )..layout();
-    return painter.height;
+    double maxHeight = 0;
+    for (final item in cards) {
+      // Defensive: substitute a single space for an empty title so this measurement
+      // never depends on whether a zero-length TextSpan reports a font-metric-driven
+      // line box on every engine/version (this repo's own test harness DOES report a
+      // normal non-zero height for an empty TextSpan, so this has not been observed to
+      // matter here — it costs nothing and removes the question).
+      final String probe = item.title.isEmpty ? ' ' : item.title;
+      final painter = TextPainter(
+        text: TextSpan(text: probe, style: effectiveStyle),
+        textDirection: TextDirection.ltr,
+        textScaler: TextScaler.noScaling,
+        maxLines: 1,
+        ellipsis: '…',
+      )..layout(maxWidth: cardWidth);
+      if (painter.height > maxHeight) {
+        maxHeight = painter.height;
+      }
+    }
+    return maxHeight;
   }
 
   /// Extra vertical extent contributed by the `product_card == 'below'` slot: the row's

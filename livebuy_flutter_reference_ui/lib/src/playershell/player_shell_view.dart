@@ -1,6 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart' show Colors, Icons;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/material.dart' show Colors;
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBProduct;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
@@ -11,6 +13,7 @@ import '../testing/lb_test_keys.dart';
 import 'now_introducing_carousel.dart';
 import '../reference_ui_theme.dart';
 import 'caption_overlay_view.dart';
+import 'contact_glyph.dart';
 import 'contact_merchant_modal.dart';
 import 'detail_glyph.dart';
 import 'heart_burst.dart';
@@ -149,7 +152,25 @@ SwipeNavFallbackAction resolveSwipeNavFallback(bool hasAdjacentVideo) =>
 /// established precedent `allowsHoldToPause(isLive:)` (iOS `rb-ios-live-hold-pause-suppress`,
 /// Android `allowsHoldToPause`) — gate on the strict `isLive`, MUST NOT use a broader flag
 /// that also covers `isFinishedLiveReplay`. Unit-testable without a gesture.
-bool allowsSwipeNav(bool isLive) => !isLive;
+///
+/// [sheetsPresented] (rb-flutter-block-swipe-nav-when-sheet-open) is an ADDITIONAL,
+/// independently-ANDed exclusion — `= !isLive && !sheetsPresented` — added on top of the
+/// original `isLive`-only gate: a swipe over the video area MUST NOT switch/close the video
+/// while the sibling `ProductSheetsOverlayView` is covering it with ANY product sheet/modal
+/// (list drawer / detail-or-restock / zoom lightbox / cart-needs-login gate / variant-select
+/// prompt — see `anyProductSheetPresented` in `product_sheets_view.dart`), mirroring this
+/// gate's own established "swipe still fully consumed by the enclosing `GestureDetector`, just
+/// never dispatched" shape (see `_handleSwipeEnded`'s doc comment). Purely additive: the two
+/// conditions are ORed at the call site (`!isLive || sheetsPresented` blocks), neither
+/// replaces the other. Default `false` keeps this function's SOLE existing call site
+/// (`_handleSwipeEnded`, before this change) — and any other caller — byte-identical unless it
+/// opts in. This is a DEFENSIVE gate, not a fix for a confirmed reproducible bug: none of the
+/// five sheet/modal surfaces' own `GestureDetector`s register a vertical-drag recognizer (nor
+/// does `BottomSheetPresenter`'s full-bleed scrim, which only wires `onTap`), so a vertical
+/// swipe starting over one of them is not itself claimed and could otherwise still be won by
+/// this file's `VerticalDragGestureRecognizer` underneath.
+bool allowsSwipeNav(bool isLive, {bool sheetsPresented = false}) =>
+    !isLive && !sheetsPresented;
 
 /// Which half of the video area a video-area gesture landed in (rb-flutter-gesture-clean-mode-v2,
 /// design `screens.jsx:256`'s `zone = x < rect.width/2 ? 'rw' : 'ff'`). Drives both the
@@ -258,6 +279,30 @@ bool showsPlaybackProgressBar({
 }) =>
     isMain && !isUpcoming && (!isLive || isReplay);
 
+/// PURE: the extra bottom inset for the `PlaybackProgressBarView`'s outer `Positioned` slot
+/// (rb-flutter-player-shell-bottom-safearea), so the EXPANDED transport bar clears the system
+/// bottom safe area (home indicator / Android gesture bar) while the IDLE thin line stays flush
+/// to the physical screen edge — design `screens.jsx:387-394` (idle) deliberately omits any
+/// safe-area term, `screens.jsx:420-424` (expanded) uses
+/// `Math.max(0, safeArea.bottom - (platform==='android'?8:0))`. [expanded] MUST feed the SAME
+/// boolean passed to `PlaybackProgressBarView.scrubBarExpanded` at the call site
+/// (`_scrubBarExpanded || _cleanMode`) — `expanded == false` ignores [safeAreaBottom] entirely
+/// and always returns `0`. [isAndroid] MUST feed `defaultTargetPlatform ==
+/// TargetPlatform.android` (a device/OS fact, not `Theme.of(context).platform`, which a host app
+/// could override for unrelated gesture-convention reasons). Result is never negative. Scope:
+/// this slot ONLY — the other bottom-pinned player-shell chrome (clean-mode exit button, floating
+/// bag, VOD side rail, LIVE bottom bar) is unaffected and out of scope for this function (see
+/// design.md Non-Goals). Unit-testable without a widget.
+double progressBarBottomSafeAreaInset(
+  double safeAreaBottom, {
+  required bool expanded,
+  required bool isAndroid,
+}) {
+  if (!expanded) return 0;
+  final adjusted = safeAreaBottom - (isAndroid ? 8.0 : 0.0);
+  return adjusted < 0 ? 0 : adjusted;
+}
+
 /// PURE: whether `LiveNowPillView` should be composed (rb-flutter-live-now-pill, design
 /// `claude-design-sync.md` R28 / `components.md` `LBLiveNowPill`). Parity iOS `showsLiveNowPill`
 /// (post `fix-ios-live-now-pill-active-live-leak`) / Android (post round-2 correction) / RN —
@@ -301,15 +346,17 @@ bool showsLiveNowPill({
 /// PURE: whether `CaptionOverlayView` should be mounted (rb-flutter-subtitle-vtt-caption-display,
 /// design `sdk-components.jsx` `LBPCaptionOverlay`). `= !isLive && !introPlaying && subtitleEnabled
 /// && captionText.isNotEmpty` — parity Android `shouldShowCaptionOverlay`'s four core conditions
-/// (`!usesLiveChrome && !introPlaying && subtitleEnabled && captionText.isNotEmpty()`), EXCEPT the
-/// first argument here is [isLive] (`PlayerShellView`'s own existing LIVE/VOD branch predicate),
-/// **not** iOS/Android's `usesLiveChrome = isLive || isFinishedLiveReplay` — Flutter's shell never
-/// retrofit that unification (see `showsPlaybackProgressBar`'s own doc comment above and
-/// design.md Decision 2); this caption gate deliberately mounts under the SAME existing `!isLive`
-/// branch as `_buildNowIntroducing`, not a stricter one. The caller additionally ANDs
-/// `!_isScrubbing && !_cleanMode` at the `_buildContent` call site (mirrors Android's own
-/// `shouldShowCaptionOverlay(...) && !isScrubbing` call-site split) — those two are NOT baked into
-/// this function. Unit-testable without a widget.
+/// (`!usesLiveChrome && !introPlaying && subtitleEnabled && captionText.isNotEmpty()`). The
+/// parameter is still literally named [isLive] (unchanged, source-compat) but
+/// `rb-flutter-replay-live-chrome-parity` retargets its call site to feed the caller-computed
+/// `usesLiveChrome = m.isLive || m.isFinishedLiveReplay` (`PlayerShellView.usesLiveChrome`,
+/// parity iOS/Android) instead of the previously-narrow `m.isLive` — see `showsPlaybackProgressBar`'s
+/// own doc comment above for the sibling `isReplay` call-site discipline, and this change's
+/// design.md D1 for the full derivation; this caption gate now mounts under the SAME
+/// `!usesLiveChrome` branch as `_buildNowIntroducing` (VOD-only chrome), not the previously-looser
+/// `!isLive` one. The caller additionally ANDs `!_isScrubbing && !_cleanMode` at the
+/// `_buildContent` call site (mirrors Android's own `shouldShowCaptionOverlay(...) && !isScrubbing`
+/// call-site split) — those two are NOT baked into this function. Unit-testable without a widget.
 bool shouldShowSubtitleCaption({
   required bool isLive,
   required bool introPlaying,
@@ -368,6 +415,18 @@ class PlayerShellView extends StatefulWidget {
   /// `true` — this WIDGET's own default keeps existing call sites unchanged; the turnkey
   /// container flips it off by default via `LivebuyPlayerConfig.showSubscribe`.
   final bool showSubscribe;
+
+  /// Whether the PlayerHeader viewer-count badge is drawn at all
+  /// (rb-flutter-viewer-count-visibility-toggle, parity iOS / Android `showViewerCount`).
+  /// Forwarded verbatim to BOTH `PlayerHeaderBarView` call sites below (LIVE/VOD main
+  /// branch AND the upcoming/直播預告 branch), same forwarding discipline as
+  /// [titleScroll] / [showSubscribe] — even though the upcoming branch's `isLive` is
+  /// always `false` (so the badge gate is always inert there), omitting the forward
+  /// would leave that call site silently depending on `PlayerHeaderBarView`'s own
+  /// default rather than this widget's resolved value. Default `true` — matches
+  /// iOS/Android's own default exactly (a pure host opt-OUT, unlike [showSubscribe]'s
+  /// opt-in reversal).
+  final bool showViewerCount;
 
   /// MERCHANT capability gate for the top-bar title marquee — the RAW
   /// `extensions.video_title_scroll` wire value (rb-flutter-marquee-title-scroll, parity
@@ -489,6 +548,20 @@ class PlayerShellView extends StatefulWidget {
   /// upcoming SLIM bar is unaffected.
   final bool composerPresented;
 
+  /// Whether ANY product sheet/modal is currently presented by the sibling
+  /// `ProductSheetsOverlayView` (rb-flutter-block-swipe-nav-when-sheet-open) — list drawer /
+  /// detail-or-restock / zoom lightbox / cart-needs-login gate / variant-select prompt (see
+  /// `anyProductSheetPresented` in `product_sheets_view.dart`). Fed into [allowsSwipeNav]'s
+  /// `sheetsPresented` argument at `_handleSwipeEnded`'s call site — `true` blocks the vertical
+  /// swipe-to-switch-video / close-on-empty gesture (both directions), mirroring the existing
+  /// `isLive`-in-progress gate's shape (the swipe is still fully consumed by the enclosing
+  /// `GestureDetector`, just never dispatched). Container-mirrored (`MinimalDesign.playerOverlay`
+  /// forwards `PlayerOverlayContext.productSheetsPresented`, itself mirrored from
+  /// `ProductSheetsOverlayView.onPresentationChange` — see that container's own doc comment).
+  /// Default `false` → every existing call site / golden baseline (which never sets this)
+  /// unaffected.
+  final bool sheetsPresented;
+
   /// Whether another live broadcast is CURRENTLY detected (rb-flutter-live-now-pill) — feeds
   /// [showsLiveNowPill]'s `hasLiveNow` argument. Container-resolved (`LivebuyPlayerConfig
   /// .shopId`-driven `LiveNowPollController.liveNow != null`); the shell itself does not poll.
@@ -547,6 +620,7 @@ class PlayerShellView extends StatefulWidget {
     this.onToggleMute,
     this.onToggleSubscribe,
     this.showSubscribe = true,
+    this.showViewerCount = true,
     this.titleScroll,
     this.showCloseIcon = false,
     this.onTapRailItem,
@@ -565,6 +639,7 @@ class PlayerShellView extends StatefulWidget {
     this.onCleanModeChange,
     this.onMoreMenuOpenChange,
     this.composerPresented = false,
+    this.sheetsPresented = false,
     this.hasLiveNow = false,
     this.onGoLive,
     this.onTogglePlayPause,
@@ -838,12 +913,14 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// modal not drawn → existing goldens unchanged.
   bool _contactMerchantPresented = false;
 
-  /// Whether the closed-chat finished-replay rail's「更多」sheet is presented
-  /// (rb-flutter-live-replay-more-menu-and-video-info-live-copy, design R32). Opened by
-  /// `OperationRailView.onTapMore` (only reachable when `m.isFinishedLiveReplay`); its two
-  /// actions each close this THEN forward to the existing `_handleRailTap(share / serviceLink)`
-  /// — same pattern as [_contactMerchantPresented] / [_infoPanelOpen]. Default `false` → sheet
-  /// not drawn → existing goldens unchanged.
+  /// Whether the closed-chat finished-replay「更多」sheet is presented (originally
+  /// rb-flutter-live-replay-more-menu-and-video-info-live-copy, design R32). Opened by
+  /// `LiveBottomBarView.onMore` (only reachable when `m.isFinishedLiveReplay` renders that
+  /// variant's leading「更多」slot — `rb-flutter-replay-live-chrome-parity` moved the trigger
+  /// here from the now-component-level-only `OperationRailView.onTapMore`; the sheet's own
+  /// mechanism is unchanged). Its two actions each close this THEN forward to the existing
+  /// `_handleRailTap(share / serviceLink)` — same pattern as [_contactMerchantPresented] /
+  /// [_infoPanelOpen]. Default `false` → sheet not drawn → existing goldens unchanged.
   bool _moreMenuOpen = false;
 
   /// Set the「更多」sheet open state AND report it up via
@@ -1040,6 +1117,11 @@ class _PlayerShellViewState extends State<PlayerShellView> {
       isReplay: m.isFinishedLiveReplay,
     );
 
+    // rb-flutter-player-shell-bottom-safearea: shared by BOTH the progress-bar slot's `bottom`
+    // inset (`progressBarBottomSafeAreaInset`) and `PlaybackProgressBarView.scrubBarExpanded`
+    // below — declared once here so the two call sites can never drift out of sync.
+    final progressBarExpanded = _scrubBarExpanded || _cleanMode;
+
     // rb-flutter-live-now-pill display gate — reuses the SAME `isMainPlaybackPhase` local as
     // `showsProgressBar` above (see `showsLiveNowPill`'s doc comment for why an independent
     // `isLive` exclusion is still required on top of it).
@@ -1052,6 +1134,15 @@ class _PlayerShellViewState extends State<PlayerShellView> {
       cleanMode: _cleanMode,
       isScrubbing: _isScrubbing,
     );
+
+    // live-chrome 家族 — 真直播（`isLive`）或已結束直播回放（`isFinishedLiveReplay`）。兩者套用
+    // 相同的 LIVE 版型（LIVE 疊層 chrome + LIVE 底部 bar + 聊天 feed）；純 VOD 點播（兩旗標皆
+    // false）走 VOD 版型（side rail + 浮動袋 + now-introducing 輪播）。回放版型對齊直播當下
+    // （rb-flutter-replay-live-chrome-parity，parity iOS `PlayerShellView.usesLiveChrome` /
+    // Android `usesLiveChrome`）。純 VOD（兩旗標皆 false）與純 LIVE（`isLive == true`,
+    // `isFinishedLiveReplay == false`，兩者互斥）下 `usesLiveChrome` 與先前窄義 `m.isLive` 逐位元
+    // 相等 — 這是本 change 對既有純 VOD / 純 LIVE golden 零回歸的數學基礎。
+    final usesLiveChrome = m.isLive || m.isFinishedLiveReplay;
 
     return Stack(
       children: [
@@ -1110,12 +1201,15 @@ class _PlayerShellViewState extends State<PlayerShellView> {
           ),
         ),
 
-        // Surface 4 — now-introducing surface. LIVE → the full-bleed LiveOverlayChromeView
-        // (announce / pinned card / host caption / gesture hints). VOD → the now-introducing
-        // carousel (below) instead. intro 片頭 (introPlaying) → neither (the opening MP4 is not
-        // yet live). Parity iOS/Android: LIVE → LiveOverlayChromeView, VOD → NowIntroducingCarousel
-        // (mutually exclusive branches).
-        if (m.isLive)
+        // Surface 4 — now-introducing surface. live-chrome 家族（真直播 OR 已結束直播回放，
+        // usesLiveChrome） → the full-bleed LiveOverlayChromeView (announce / pinned card /
+        // host caption / gesture hints). 純 VOD → the now-introducing carousel (below) instead.
+        // intro 片頭 (introPlaying) → neither (the opening MP4 is not yet live). Parity
+        // iOS/Android: usesLiveChrome → LiveOverlayChromeView, VOD → NowIntroducingCarousel
+        // (mutually exclusive branches, rb-flutter-replay-live-chrome-parity — was narrow
+        // `m.isLive`, now the two-flag union so an already-finished live replay also wears the
+        // LIVE overlay chrome instead of being misrouted into the VOD branch below).
+        if (usesLiveChrome)
           Positioned.fill(
             child: LiveOverlayChromeView(
               theme: theme,
@@ -1124,15 +1218,33 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               // pinnedProducts 原樣傳遞、不受 _cleanMode 影響（保留釘選卡）。
               announceText: _cleanMode ? '' : m.announceText,
               showGestureHints: !_cleanMode,
-              // LIVE 全部介紹中商品（多件 narrate_status==2）→ 釘選卡多商品輪播 + 分頁點；空時 fallback
-              // 單一 pinnedProduct 一元清單（問題 7, rb-flutter-live-now-introducing-carousel）。
+              // 釘選卡來源依窄義 m.isLive 分流（rb-flutter-replay-live-chrome-parity，parity iOS）：
+              //   真直播（m.isLive） → livePinnedProducts（多件 narrate_status==2 輪播 + 分頁點；
+              //     空時 fallback 單一 pinnedProduct 一元清單，問題 7,
+              //     rb-flutter-live-now-introducing-carousel）。
+              //   已結束直播回放（!m.isLive，此時 usesLiveChrome 已保證 isFinishedLiveReplay）→
+              //     vodActiveProducts（時間軸窗格 [beginTime,endTime) 含 playhead，與 VOD
+              //     now-introducing 輪播同一資料源；回放無即時 narrate_status==2，改用後端介紹
+              //     時間窗）。
               // 再依本地已關閉的釘選商品 id 過濾（rb-flutter-live-pinned-card-dismiss，鏡像 VOD 的
-              // _dismissedVodProductIds 過濾；_dismissedLivePinnedIds 預設空 → 原樣、golden 不變）。
-              pinnedProducts:
-                  visiblePinnedProducts(m.livePinnedProducts, _dismissedLivePinnedIds),
+              // _dismissedVodProductIds 過濾；_dismissedLivePinnedIds 預設空 → 原樣、golden 不變），
+              // 同一個 dismiss set 涵蓋兩個來源分支。
+              pinnedProducts: visiblePinnedProducts(
+                  m.isLive ? m.livePinnedProducts : m.vodActiveProducts,
+                  _dismissedLivePinnedIds),
               // live-pinned-card-image-radius: load the real product photo only over a
               // live video surface (false / demo → placeholder, golden byte-stable).
               live: widget.live,
+              // autoFadeGestureHints-gesture-hint-fade: 手勢提示出現 3.5 秒後自動淡出，僅在真實內容
+              // （非 demo / snapshot 佔位）時啟用。驅動值同源同值 widget.live（**不是** m.isLive —
+              // 兩者語意不同，parity Android `PlayerShellView.kt` 的 `autoFadeGestureHints = live`）。
+              autoFadeGestureHints: widget.live,
+              // 真直播 vs 已結束直播回放的視覺子分流（rb-flutter-replay-live-chrome-parity，parity
+              // iOS `LiveOverlayChromeView.isLive`）：釘選卡「介紹中」徽章判斷（isLive==false 時一律
+              // 視為介紹中）與長按 2 倍速快轉手勢提示（僅 isLive==false 時顯示，見
+              // `_handleLongPressStart` / `isSeekable` — 回放 isSeekable 恆為 true，真直播恆為
+              // false）皆依此分流，預設 true 保證省略時既有呼叫端 byte-identical。
+              isLive: m.isLive,
               onTapPinnedProduct: widget.onTapPinnedProduct,
               // 釘選卡右上角 X → 逐商品本地隱藏（rb-flutter-live-pinned-card-dismiss，鏡像 VOD 的
               // onDismiss → _dismissedVodProductIds.add）。close chip 的巢狀 GestureDetector 消費點擊、
@@ -1162,58 +1274,79 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // -progress-bar precedent). `effectiveCaption` is resolved HERE (not cached in state) —
         // it is a cheap synchronous lookup over `_subtitleCues`, recomputed every rebuild from
         // the current `m.playbackPosition`, parity iOS/Android `activeCue(cues, at: position)`.
-        ..._buildSubtitleCaption(m, theme),
+        ..._buildSubtitleCaption(m, theme, usesLiveChrome),
 
         // Surfaces 1 + 2 — top bar pinned top, side rail pinned trailing.
         Column(
           children: [
-            PlayerHeaderBarView(
-              theme: theme,
-              title: m.title,
-              hostName: m.hostName,
-              shopLogo: m.shopLogo,
-              viewerCount: m.viewerCount,
-              isSubscribed: m.isSubscribed,
-              // LIVE pill ⟺ isLive && !isReplay; viewer count ⟺ isLive. Replay
-              // (scrubbed behind live edge) keeps the count but drops the pill
-              // (design `hideLivePill = isReplay`). Both flags already on the model.
-              isLive: m.isLive,
-              isReplay: m.isReplay,
-              live: widget.live,
-              onMinimize: widget.onMinimize,
-              onToggleSubscribe: widget.onToggleSubscribe,
-              showSubscribe: widget.showSubscribe,
-              // Merchant title-marquee gate, raw pass-through (rb-flutter-marquee-title-scroll).
-              // The sibling `_buildUpcoming` header below MUST forward the same value.
-              titleScroll: widget.titleScroll,
-              // host pill tap → toggle the info panel (parity iOS onTapHostBadge — the only
-              // opener now that the rail no longer carries a `more` pill).
-              onTapHostBadge: () => _setInfoPanel(!_infoPanelOpen),
-              // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：隱藏 host pill、保留 minimize 鈕
-              // 原位（design.md D3）。upcoming 分支（下方 `_buildUpcoming`）維持不傳（預設 false）——
-              // `_cleanMode` 在該分支結構上不可達。
-              hideHostPill: _cleanMode,
-              // 右上角按鈕圖示 minimize ↔ close（rb-flutter-player-direct-close-button），純呈現
-              // by-value 旗標轉發，比照 titleScroll / showSubscribe 的既有轉發慣例。
-              showCloseIcon: widget.showCloseIcon,
-              // 乾淨模式限定靜音鈕（rb-flutter-gesture-clean-mode-v2）：補回單擊切靜音手勢退役後
-              // 的操作管道，沿用既有 `widget.onToggleMute` host-wired seam，只是觸發手勢從「影片
-              // 區單擊」改成「點頂列這顆鈕」。`_cleanMode == false` 時 `onToggleMute` 傳 null →
-              // 鈕不渲染、不佔位，既有非乾淨模式 baseline byte-identical。
-              muted: m.muted,
-              onToggleMute: _cleanMode ? widget.onToggleMute : null,
+            // rb-flutter-player-header-safearea: the header MUST avoid the system top
+            // safe-area (status bar / notch / Dynamic Island) — Flutter has no implicit
+            // safe-area inheritance the way SwiftUI does, so without this the header
+            // painted from `top: 0` and collided with the system status bar on devices
+            // with a real inset. `bottom: false` — only the TOP inset is relevant here;
+            // this Column's other content (the VOD side rail Row below) must not be
+            // affected. `PlayerHeaderBarView` itself is NOT modified — the wrap lives
+            // ONLY at this call site. See the SAME wrap in `_buildUpcoming` below; both
+            // MUST stay identical.
+            SafeArea(
+              bottom: false,
+              child: PlayerHeaderBarView(
+                theme: theme,
+                title: m.title,
+                hostName: m.hostName,
+                shopLogo: m.shopLogo,
+                viewerCount: m.viewerCount,
+                isSubscribed: m.isSubscribed,
+                // live-chrome 家族（真直播 OR 已結束直播回放）皆餵 isLive: usesLiveChrome → header
+                // 畫 viewer-count（回放套 LIVE 版型，rb-flutter-replay-live-chrome-parity，parity
+                // iOS/Android). LIVE pill ⟺ isLive && !isReplay; viewer count ⟺ isLive
+                // (usesLiveChrome). 兩種回放皆隱 LIVE 膠囊：behind-edge replay（m.isReplay，鏡像
+                // playbackProgress.isReplay）與 finished-live replay（m.isFinishedLiveReplay，已結束
+                // 直播）——後者非正在直播，顯紅 LIVE 會誤導，但兩者都保留 viewer-count（design
+                // `hideLivePill = isReplay`，這裡的 isReplay 引數把兩種回放都併進去）。
+                isLive: usesLiveChrome,
+                isReplay: m.isReplay || m.isFinishedLiveReplay,
+                live: widget.live,
+                onMinimize: widget.onMinimize,
+                onToggleSubscribe: widget.onToggleSubscribe,
+                showSubscribe: widget.showSubscribe,
+                // PlayerHeader 觀看人數徽章顯示/隱藏（rb-flutter-viewer-count-visibility-toggle，
+                // parity iOS/Android showViewerCount）。The sibling `_buildUpcoming` header below
+                // MUST forward the same value (see this field's own doc comment).
+                showViewerCount: widget.showViewerCount,
+                // Merchant title-marquee gate, raw pass-through (rb-flutter-marquee-title-scroll).
+                // The sibling `_buildUpcoming` header below MUST forward the same value.
+                titleScroll: widget.titleScroll,
+                // host pill tap → toggle the info panel (parity iOS onTapHostBadge — the only
+                // opener now that the rail no longer carries a `more` pill).
+                onTapHostBadge: () => _setInfoPanel(!_infoPanelOpen),
+                // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：隱藏 host pill、保留 minimize 鈕
+                // 原位（design.md D3）。upcoming 分支（下方 `_buildUpcoming`）維持不傳（預設 false）——
+                // `_cleanMode` 在該分支結構上不可達。
+                hideHostPill: _cleanMode,
+                // 右上角按鈕圖示 minimize ↔ close（rb-flutter-player-direct-close-button），純呈現
+                // by-value 旗標轉發，比照 titleScroll / showSubscribe 的既有轉發慣例。
+                showCloseIcon: widget.showCloseIcon,
+                // 乾淨模式限定靜音鈕（rb-flutter-gesture-clean-mode-v2）：補回單擊切靜音手勢退役後
+                // 的操作管道，沿用既有 `widget.onToggleMute` host-wired seam，只是觸發手勢從「影片
+                // 區單擊」改成「點頂列這顆鈕」。`_cleanMode == false` 時 `onToggleMute` 傳 null →
+                // 鈕不渲染、不佔位，既有非乾淨模式 baseline byte-identical。
+                muted: m.muted,
+                onToggleMute: _cleanMode ? widget.onToggleMute : null,
+              ),
             ),
             const Spacer(),
-            // Side rail is VOD-ONLY chrome (design screens.jsx gates `LBPSideRail`
-            // on `!isLive`). In LIVE the bottom bar (below) replaces it — the two
-            // are mutually exclusive by mode. Suppressed only during the intro 片頭
-            // (introPlaying) and the VOD OPENING sequence (`startPhase` loading/splash) —
-            // design `showMainChrome` hides VOD chrome there; from `buffering` onward the
-            // rail shows (no-intro VOD: channel loaded, rail enablement set, header filled),
-            // so it appears alongside the header instead of waiting for the first frame
+            // Side rail is purely-VOD-ONLY chrome (design screens.jsx gates `LBPSideRail`
+            // on `!isLive`, extended here to `!usesLiveChrome` — rb-flutter-replay-live-chrome-
+            // parity). In live-chrome family (真直播 OR 已結束直播回放) the bottom bar (below)
+            // replaces it — the two are mutually exclusive by mode. Suppressed only during the
+            // intro 片頭 (introPlaying) and the VOD OPENING sequence (`startPhase`
+            // loading/splash) — design `showMainChrome` hides VOD chrome there; from `buffering`
+            // onward the rail shows (no-intro VOD: channel loaded, rail enablement set, header
+            // filled), so it appears alongside the header instead of waiting for the first frame
             // (`done`). Header is kept throughout (rb-flutter-vod-rail-show-on-buffering,
             // parity to iOS rb-ios-vod-rail-show-on-buffering).
-            if (!m.isLive && !m.introPlaying && m.startPhase != LBPStartPhase.loading && m.startPhase != LBPStartPhase.splash && !_isScrubbing && !_cleanMode)
+            if (!usesLiveChrome && !m.introPlaying && m.startPhase != LBPStartPhase.loading && m.startPhase != LBPStartPhase.splash && !_isScrubbing && !_cleanMode)
               Row(
                 children: [
                   const Spacer(),
@@ -1235,12 +1368,14 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                       heartBurstTick: m.heartBurstTick,
                       muted: m.muted,
                       onTapItem: _handleRailTap,
-                      // rb-flutter-live-replay-more-menu-and-video-info-live-copy: this rail
-                      // is what actually renders for a closed-chat finished replay (`!m.isLive`
-                      // covers `isFinishedLiveReplay` too — `LiveBottomBarView` never composes
-                      // for it). Collapse share/serviceLink into the「更多」sheet only then.
-                      isFinishedLiveReplay: m.isFinishedLiveReplay,
-                      onTapMore: () => _setMoreMenuOpen(true),
+                      // rb-flutter-replay-live-chrome-parity: this rail's `isFinishedLiveReplay`
+                      // / `onTapMore` collapsed-more-pill capability is now component-level ONLY
+                      // (see `OperationRailView`'s own doc comment) — this call site MUST NOT
+                      // feed it anymore, because the `!usesLiveChrome` gate above guarantees
+                      // `m.isFinishedLiveReplay == false` whenever this block actually renders
+                      // (usesLiveChrome = isLive || isFinishedLiveReplay). The real「更多」entry
+                      // for a closed-chat finished replay is now `LiveBottomBarView.onMore`
+                      // (see its call site below).
                     ),
                   ),
                 ],
@@ -1250,9 +1385,10 @@ class _PlayerShellViewState extends State<PlayerShellView> {
 
         // Floating shopping bag (design LBPBagButton, iOS FloatingBagButtonView): a SEPARATE
         // affordance from the side rail, anchored low (bottom 16) — distinct from the rail
-        // (bottom 68, rb-flutter-gesture-clean-mode-v2 — was 80). VOD-main chrome only. Tap →
+        // (bottom 68, rb-flutter-gesture-clean-mode-v2 — was 80). Purely-VOD-main chrome only
+        // (rb-flutter-replay-live-chrome-parity: `!usesLiveChrome`, was `!m.isLive`). Tap →
         // open the product list (_handleRailTap(goods)).
-        if (!m.isLive && !m.introPlaying && m.startPhase != LBPStartPhase.loading && m.startPhase != LBPStartPhase.splash && !_isScrubbing && !_cleanMode)
+        if (!usesLiveChrome && !m.introPlaying && m.startPhase != LBPStartPhase.loading && m.startPhase != LBPStartPhase.splash && !_isScrubbing && !_cleanMode)
           Align(
             alignment: Alignment.bottomRight,
             child: Padding(
@@ -1283,46 +1419,85 @@ class _PlayerShellViewState extends State<PlayerShellView> {
             child: _CleanModeExitButton(onTap: () => setState(() => _cleanMode = false)),
           ),
 
-        // LIVE bottom bar — surfaces the design's `LBLiveBottomBar` at the bottom in
-        // LIVE mode OR the intro 片頭 (introPlaying) (VOD-main uses the side rail above
-        // instead). introPlaying → the BAG-ONLY variant (just the bag). Pinned bottom, over
-        // the live overlay chrome and below the info-panel modal. bag / share / like /
-        // nickname / CC route through the existing `onTapRailItem` host wiring by
-        // kind; 留言 raises the dedicated `onComment` intent. Hidden while the opaque 留言 composer
-        // is up (composerPresented) so the two do not overlap (parity iOS hide-bottom-bar).
-        if ((m.isLive || m.introPlaying) && !widget.composerPresented && !_cleanMode)
+        // LIVE bottom bar — surfaces the design's `LBLiveBottomBar` at the bottom in the
+        // live-chrome family (真直播 OR 已結束直播回放, usesLiveChrome) OR the intro 片頭
+        // (introPlaying) (純 VOD uses the side rail above instead). introPlaying → the BAG-ONLY
+        // variant (just the bag). Pinned bottom, over the live overlay chrome and below the
+        // info-panel modal. bag / share / like / nickname / CC route through the existing
+        // `onTapRailItem` host wiring by kind; 留言 raises the dedicated `onComment` intent.
+        // Hidden while the opaque 留言 composer is up (composerPresented) so the two do not
+        // overlap (parity iOS hide-bottom-bar).
+        // `!_cleanMode` scope is narrowed to ONLY the `usesLiveChrome` branch (rb-flutter-intro-
+        // cleanmode-bottombar-fix, parity iOS `usesLiveChrome && !cleanMode` —
+        // rb-flutter-replay-live-chrome-parity lands the target formula, was narrow `m.isLive`):
+        // `_cleanMode` does NOT auto-reset across an in-place video switch, so a viewer who
+        // entered clean mode on the PREVIOUS video would otherwise lose this bar entirely on the
+        // NEXT video's intro preroll (nothing left but the skip-intro button) — clean mode's
+        // intent is to hide the "live-chrome family in progress" chrome, not the opening-MP4
+        // chrome.
+        // `&& !_isScrubbing` (rb-flutter-replay-live-chrome-parity, parity iOS's own
+        // `!isScrubbing` gate on this same bar): unifying `usesLiveChrome` means an already-
+        // finished-live replay now simultaneously qualifies for BOTH this bar AND the VOD-style
+        // `PlaybackProgressBarView` (`showsPlaybackProgressBar`'s `!isLive` term is unaffected by
+        // this change and stays true for a finished replay) — a combination that could not occur
+        // before this change (a genuinely-live broadcast never shows the progress bar). Without
+        // this guard, dragging the replay's progress bar would leave this bar visibly overlapping
+        // the expanded transport bar. Reuses the SAME `_scrubBarExpanded` / `_scrubChromeLift`
+        // released-but-still-held lift the VOD side rail / floating bag / now-introducing
+        // carousel already apply — no new mechanism.
+        if (((usesLiveChrome && !_cleanMode) || m.introPlaying) && !widget.composerPresented && !_isScrubbing)
           Align(
             alignment: Alignment.bottomCenter,
-            child: LiveBottomBarView(
-              theme: theme,
-              bagCount: m.bagCount,
-              isReplay: m.isReplay,
-              bagOnly: m.introPlaying,
-              onBag: () => _handleRailTap(LBSideRailKind.goods),
-              onComment: widget.onComment,
-              // 暱稱鈕 → 容器本地呈現 設定暱稱 modal（onNickname；parity）；未接時退回 rail 路徑
-              // （demo / standalone）。
-              onNickname: widget.onNickname ??
-                  () => _handleRailTap(LBSideRailKind.guestNameEdit),
-              onShare: () => _handleRailTap(LBSideRailKind.share),
-              // 真 like（host exit）+ 即時飄心 burst（rb-flutter-live-bottom-heart-burst，問題 5）。
-              onLike: () {
-                _handleRailTap(LBSideRailKind.like);
-                setState(() => _liveHeartTick++);
-              },
-              onToggleCC: () => _handleRailTap(LBSideRailKind.subtitle),
+            child: Padding(
+              padding: EdgeInsets.only(
+                  bottom: _scrubBarExpanded ? _scrubChromeLift : 0.0),
+              child: LiveBottomBarView(
+                theme: theme,
+                bagCount: m.bagCount,
+                isReplay: m.isReplay,
+                bagOnly: m.introPlaying,
+                // 已結束直播回放的獨立變體（rb-flutter-replay-live-chrome-parity，parity iOS
+                // `chatClosed`）：留言區改 disabled「聊天室已關閉」、暱稱鈕換「更多」、分享鈕位置換
+                // CC 切換。`isUpcoming`/`bagOnly` 優先序高於此旗標（widget 內部已處理）。
+                isFinishedLiveReplay: m.isFinishedLiveReplay,
+                onBag: () => _handleRailTap(LBSideRailKind.goods),
+                onComment: widget.onComment,
+                // 暱稱鈕 → 容器本地呈現 設定暱稱 modal（onNickname；parity）；未接時退回 rail 路徑
+                // （demo / standalone）。
+                onNickname: widget.onNickname ??
+                    () => _handleRailTap(LBSideRailKind.guestNameEdit),
+                onShare: () => _handleRailTap(LBSideRailKind.share),
+                // 真 like（host exit）+ 即時飄心 burst（rb-flutter-live-bottom-heart-burst，問題 5）。
+                onLike: () {
+                  _handleRailTap(LBSideRailKind.like);
+                  setState(() => _liveHeartTick++);
+                },
+                onToggleCC: () => _handleRailTap(LBSideRailKind.subtitle),
+                // 「更多」(⋯) → 開啟既有「更多」選單 sheet（rb-flutter-replay-live-chrome-parity）：
+                // 觸發來源從側欄的 onTapMore 搬到這裡（見上方 OperationRailView 呼叫處的說明），
+                // 重用同一個 _moreMenuOpen state + BottomSheetPresenter + 選單內容，機制不變。只在
+                // isFinishedLiveReplay 變體實際渲染「更多」按鈕時才可觸達。
+                onMore: () => _setMoreMenuOpen(true),
+              ),
             ),
           ),
 
         // LIVE 底部 bar 愛心 burst（rb-flutter-live-bottom-heart-burst，問題 5）：錨於底部 bar 愛心
         // （trailing-most 鈕）上方。introPlaying（bag-only，無愛心）不畫。靜止態不畫 → golden 中立。
         // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）追加 `&& !_cleanMode`。
-        // `|| m.isFinishedLiveReplay` 條款是 rb-flutter-live-double-tap-like-replay-extend（已
+        // `(m.isLive || m.isFinishedLiveReplay)` 數值上等於 `usesLiveChrome`（rb-flutter-replay-
+        // live-chrome-parity 起）：此子句原本是 rb-flutter-live-double-tap-like-replay-extend（已
         // retired，見「Flutter player-shell LIVE 模式雙擊影片區送愛心」REMOVED Requirement）留下的
-        // 歷史殘留——雙擊送愛心整段退役後，已結束直播回放已無任何路徑會遞增 `_liveHeartTick`（回放走
-        // VOD 側欄 chrome，不組出 `LiveBottomBarView`，故沒有 `onLike` 入口），此子句目前恆為
-        // no-op（不畫任何東西），保留不動不影響行為，MUST NOT 誤讀為「回放仍有送愛心入口」。
-        if ((m.isLive || m.isFinishedLiveReplay) && !_cleanMode)
+        // 歷史殘留，當時已結束直播回放走 VOD 側欄 chrome、不組出 `LiveBottomBarView`，沒有 `onLike`
+        // 入口，故此子句先前恆為 no-op。本 change 讓 `LiveBottomBarView` 的 `isFinishedLiveReplay`
+        // 變體保留愛心按鈕（`onLike` 現在可達），此子句從 no-op 變成真實生效——效果本身（乾淨模式下
+        // 隱藏愛心 burst）未變，只是現在真的有東西可以隱藏。`&& !_isScrubbing` 追加理由同上方
+        // `LiveBottomBarView` 的組裝條件（iOS 對應的 heart-burst 是巢狀在同一個 `!isScrubbing`
+        // guard 內的 sibling，Flutter 這裡是平行的獨立 `if`，故需要在這裡也顯式追加，避免拖曳進度條
+        // 時愛心 burst 浮在已隱藏的底部 bar 上方、失去錨點）；位置維持 `bottom: 64` 不加
+        // `_scrubChromeLift`——burst 本身是瞬時動畫（觸發後自行淡出），與其餘常駐 chrome 的
+        // 「放開後停留提升」語意不同，不需要跟著底部 bar 一起上移。
+        if (usesLiveChrome && !_cleanMode && !_isScrubbing)
           Positioned(
             right: 18,
             bottom: 64,
@@ -1359,7 +1534,19 @@ class _PlayerShellViewState extends State<PlayerShellView> {
             key: const ValueKey('lb-playback-progress-bar-slot'),
             left: 0,
             right: 0,
-            bottom: 0,
+            // rb-flutter-player-shell-bottom-safearea: EXPANDED state lifts the slot clear of
+            // the system bottom safe area (home indicator / Android gesture bar); IDLE state
+            // stays flush to the physical bottom edge (`0`) regardless of the ambient safe area
+            // — see the design formula in `progressBarBottomSafeAreaInset`'s doc comment. Only
+            // THIS slot is affected; the other 4 bottom-pinned player-shell elements are
+            // unchanged (design.md Non-Goals). `context` here is `_buildContent`'s own method
+            // parameter — MediaQuery is already an ancestor by the time this executes, no nested
+            // `Builder` needed.
+            bottom: progressBarBottomSafeAreaInset(
+              MediaQuery.of(context).padding.bottom,
+              expanded: progressBarExpanded,
+              isAndroid: defaultTargetPlatform == TargetPlatform.android,
+            ),
             child: PlaybackProgressBarView(
               theme: theme,
               position: m.playbackPosition,
@@ -1369,7 +1556,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：強制展開為完整 transport 列
               // （對齊設計稿 `scrubVisible || cleanMode`）；`isScrubbing` 不受影響 —— 拖曳時長
               // 讀數只綁真實拖曳，乾淨模式強制展開時 MUST NOT 顯示讀數。
-              scrubBarExpanded: _scrubBarExpanded || _cleanMode,
+              scrubBarExpanded: progressBarExpanded,
               onTogglePlayPause: widget.onTogglePlayPause,
               // PlayerShellModel already knows the current duration — enrich the leaf's raw
               // `(seconds)` report with it before forwarding host-ward (design.md: `liveStatus`
@@ -1461,11 +1648,12 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 ),
         ),
 
-        // 「更多」選單 sheet（rb-flutter-live-replay-more-menu-and-video-info-live-copy，design
-        // R32）：`OperationRailView.onTapMore` 開（僅 `m.isFinishedLiveReplay` 時可達）。內容為
-        // 分享 + 客服兩個可互動格（各自轉發到既有 `_handleRailTap` chokepoint）+ 2 個逐字對齊設計稿
-        // 的隱藏佔位格（見 `_RailMoreMenuSheet`）。用既有 [BottomSheetPresenter]，不需要
-        // `LBSheetScaffold` 的拖曳縮放/關閉（內容固定小尺寸）。
+        // 「更多」選單 sheet（design R32；rb-flutter-replay-live-chrome-parity 起觸發來源改為
+        // `LiveBottomBarView.onMore`——僅 `m.isFinishedLiveReplay` 時該 bar 渲染出「更多」按鈕才可
+        // 達，取代先前的 `OperationRailView.onTapMore`，機制本身不變）。內容為分享 + 客服兩個可互動
+        // 格（各自轉發到既有 `_handleRailTap` chokepoint）+ 2 個逐字對齊設計稿的隱藏佔位格（見
+        // `_RailMoreMenuSheet`）。用既有 [BottomSheetPresenter]，不需要 `LBSheetScaffold` 的拖曳
+        // 縮放/關閉（內容固定小尺寸）。
         BottomSheetPresenter(
           open: _moreMenuOpen,
           sheetKey: const ValueKey('rail-more-open'),
@@ -1565,12 +1753,19 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// `!_isScrubbing && !_cleanMode` (mirrors Android's own call-site AND split — those two flags
   /// are NOT baked into the pure gate function), and anchors bottom-center, lifted
   /// [_scrubChromeLift] while released-but-still-held (parity `_buildNowIntroducing`'s own lift).
+  /// [usesLiveChrome] (rb-flutter-replay-live-chrome-parity) feeds [shouldShowSubtitleCaption]'s
+  /// `isLive` argument — the pure function's own parameter name is unchanged (its doc comment
+  /// already anticipated this: "Flutter's shell never retrofit that unification" no longer
+  /// holds), only the value fed at THIS call site changed from the narrow `m.isLive` to the
+  /// caller-computed `usesLiveChrome = m.isLive || m.isFinishedLiveReplay`, so the caption
+  /// mounts under the SAME `!usesLiveChrome` branch as `_buildNowIntroducing` (VOD-only chrome).
   /// Returns `[]` (drawn nothing) when the gate is not satisfied.
-  List<Widget> _buildSubtitleCaption(PlayerShellModel m, ReferenceUITheme theme) {
+  List<Widget> _buildSubtitleCaption(
+      PlayerShellModel m, ReferenceUITheme theme, bool usesLiveChrome) {
     final effectiveCaption =
         VTTSubtitleParser.activeCue(_subtitleCues, m.playbackPosition)?.text ?? '';
     final shows = shouldShowSubtitleCaption(
-          isLive: m.isLive,
+          isLive: usesLiveChrome,
           introPlaying: m.introPlaying,
           subtitleEnabled: m.subtitleEnabled,
           captionText: effectiveCaption,
@@ -1618,29 +1813,39 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // for upcoming). The minimize / subscribe lambdas forward as usual.
         Column(
           children: [
-            PlayerHeaderBarView(
-              theme: theme,
-              title: m.title,
-              hostName: m.hostName,
-              shopLogo: m.shopLogo,
-              viewerCount: m.viewerCount,
-              isSubscribed: m.isSubscribed,
-              isLive: false,
-              isReplay: false,
-              live: widget.live,
-              onMinimize: widget.onMinimize,
-              onToggleSubscribe: widget.onToggleSubscribe,
-              showSubscribe: widget.showSubscribe,
-              // Merchant title-marquee gate, raw pass-through (rb-flutter-marquee-title-scroll).
-              // Upcoming (直播預告) draws / measures / scrolls the title exactly like the main
-              // branch, so this MUST be forwarded here too — omitting it would let the header
-              // fall back to its own default and silently ignore the merchant setting.
-              titleScroll: widget.titleScroll,
-              // 右上角按鈕圖示 minimize ↔ close (rb-flutter-player-direct-close-button) — same
-              // forwarding discipline as titleScroll above: the upcoming header draws the
-              // SAME button, so omitting this here would silently drop the resolved icon on
-              // 直播預告 videos.
-              showCloseIcon: widget.showCloseIcon,
+            // rb-flutter-player-header-safearea: SAME top-safe-area wrap as the main
+            // branch above — MUST stay identical (`SafeArea(bottom: false, ...)`) so
+            // 直播預告 (upcoming) doesn't regress relative to the main chrome.
+            SafeArea(
+              bottom: false,
+              child: PlayerHeaderBarView(
+                theme: theme,
+                title: m.title,
+                hostName: m.hostName,
+                shopLogo: m.shopLogo,
+                viewerCount: m.viewerCount,
+                isSubscribed: m.isSubscribed,
+                isLive: false,
+                isReplay: false,
+                live: widget.live,
+                onMinimize: widget.onMinimize,
+                onToggleSubscribe: widget.onToggleSubscribe,
+                showSubscribe: widget.showSubscribe,
+                // PlayerHeader 觀看人數徽章顯示/隱藏（rb-flutter-viewer-count-visibility-toggle，
+                // parity iOS/Android showViewerCount）— 即使 upcoming 分支 isLive 恆為 false（旗標
+                // 在此分支無可見效果），仍須轉發，比照 titleScroll / showCloseIcon 既有紀律。
+                showViewerCount: widget.showViewerCount,
+                // Merchant title-marquee gate, raw pass-through (rb-flutter-marquee-title-scroll).
+                // Upcoming (直播預告) draws / measures / scrolls the title exactly like the main
+                // branch, so this MUST be forwarded here too — omitting it would let the header
+                // fall back to its own default and silently ignore the merchant setting.
+                titleScroll: widget.titleScroll,
+                // 右上角按鈕圖示 minimize ↔ close (rb-flutter-player-direct-close-button) — same
+                // forwarding discipline as titleScroll above: the upcoming header draws the
+                // SAME button, so omitting this here would silently drop the resolved icon on
+                // 直播預告 videos.
+                showCloseIcon: widget.showCloseIcon,
+              ),
             ),
           ],
         ),
@@ -1693,8 +1898,17 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// never reaches this method at all (`_buildUpcoming` composes no swipe detector); a
   /// finished-live replay already has `isLive == false` (mutually exclusive with `isLive`),
   /// so it falls through unaffected, same as ordinary VOD.
+  ///
+  /// **Product-sheet-open gate (rb-flutter-block-swipe-nav-when-sheet-open)**: [widget
+  /// .sheetsPresented] is ORed onto the SAME [allowsSwipeNav] call (`sheetsPresented:` named
+  /// arg) — this method also returns immediately for BOTH directions while the sibling
+  /// `ProductSheetsOverlayView` has ANY product sheet/modal open, same "gesture still consumed,
+  /// just never dispatched" shape as the live-in-progress gate above. See [allowsSwipeNav]'s
+  /// own doc comment for the full mechanism and why this is a defensive (not confirmed-bug) gate.
   void _handleSwipeEnded(double dy) {
-    if (!allowsSwipeNav(_model.isLive)) return;
+    if (!allowsSwipeNav(_model.isLive, sheetsPresented: widget.sheetsPresented)) {
+      return;
+    }
     if (dy <= -_swipeThreshold) {
       if (widget.onSwipeUp != null) {
         widget.onSwipeUp!.call();
@@ -1860,14 +2074,17 @@ class _CleanModeExitButton extends StatelessWidget {
   }
 }
 
-// MARK: - 更多選單 sheet (rb-flutter-live-replay-more-menu-and-video-info-live-copy)
+// MARK: - 更多選單 sheet (originally rb-flutter-live-replay-more-menu-and-video-info-live-copy)
 //
 // Design source: `design/templates/minimal/screens.jsx` `LBPPlayerScreen`'s `live_more` state
 // block (699-720) — a 4-slot row (分享 / 客服 / 2 hidden placeholders). Opened by
-// `OperationRailView.onTapMore` (only reachable when `PlayerShellModel.isFinishedLiveReplay`,
-// see `design.md` "架構落差查證" for why this lives on the side-rail's more pill and not
-// `LiveBottomBarView`). Presented via the shared [BottomSheetPresenter] — small fixed content,
-// no drag-resize / drag-dismiss needed (unlike `VideoInfoPanelView`'s `LBSheetScaffold`).
+// `LiveBottomBarView.onMore` (only reachable when `PlayerShellModel.isFinishedLiveReplay` makes
+// that bar render its「更多」leading slot — `rb-flutter-replay-live-chrome-parity` moved this
+// trigger here from the now-component-level-only `OperationRailView.onTapMore`, once
+// `usesLiveChrome` unification made the side rail unreachable for a closed-chat finished replay;
+// see this change's `design.md` D3). Presented via the shared [BottomSheetPresenter] — small
+// fixed content, no drag-resize / drag-dismiss needed (unlike `VideoInfoPanelView`'s
+// `LBSheetScaffold`).
 
 /// One slot in the「更多」sheet: a 40×40 circular icon chip (`rgba(204,204,204,0.8)`) + a 12px
 /// label below (design `sdk-components.jsx`-style action-list token, gap 8). `null` [onTap] AND
@@ -1956,7 +2173,7 @@ class _RailMoreMenuSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      key: LbTestKeys.railMoreSheet,
+      key: LbTestKeys.liveMoreSheet,
       borderRadius: const BorderRadius.only(
         topLeft: Radius.circular(20),
         topRight: Radius.circular(20),
@@ -1969,7 +2186,7 @@ class _RailMoreMenuSheet extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               _RailMoreMenuSlot(
-                slotKey: LbTestKeys.railMoreShare,
+                slotKey: LbTestKeys.liveMoreShare,
                 theme: theme,
                 // 分享 icon 改設計稿自繪實心三節點 ShareFillGlyph（rb-flutter-live-more-sheet-
                 // share-fill-icon，對齊 `Icons.shareFill`）——這顆「更多」sheet 的分享格子與既有
@@ -1985,11 +2202,12 @@ class _RailMoreMenuSheet extends StatelessWidget {
               ),
               const SizedBox(width: 20),
               _RailMoreMenuSlot(
-                slotKey: LbTestKeys.railMoreContact,
+                slotKey: LbTestKeys.liveMoreContact,
                 theme: theme,
-                icon: showContact
-                    ? Icon(Icons.chat_bubble, size: 20, color: theme.text)
-                    : null,
+                // 客服 icon 改設計稿自繪雙對話框+問號 ContactGlyph（rb-flutter-icon-parity-
+                // operation-rail-batch，取代 Material Icons.chat_bubble——parity 側欄
+                // serviceLink pill / VideoInfoPanel footer 兩處已同步改用的同一顆 ContactGlyph）。
+                icon: showContact ? ContactGlyph(color: theme.text, size: 20) : null,
                 label: showContact ? '客服' : null,
                 onTap: onContact,
               ),

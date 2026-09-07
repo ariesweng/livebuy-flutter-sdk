@@ -6,6 +6,7 @@ import '../productsheets/sheet_header_close_button.dart';
 import '../productsheets/sheet_scaffold.dart' show LBSheetScaffold, liveProductImage;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import 'contact_glyph.dart';
 
 // VideoInfoPanelView — family-1 player-shell surface 3 (info / notice panel).
 //
@@ -357,9 +358,10 @@ class VideoInfoPanelView extends StatelessWidget {
   //
   // The single bottom action button the design pins below the tab content regardless of tab
   // (`screens.jsx` `VideoInfoSheet`): a ghost「與商家一對一對話」. Full-width (padding 0 18 18).
-  // Forwards its host-wired intent and is still drawn (inert) when null. Glyph uses Material
-  // `Icons.*` (package convention; tofu in golden is the documented limitation — the label
-  // carries the meaning).
+  // Forwards its host-wired intent and is still drawn (inert) when null. Glyph is the self-drawn
+  // `ContactGlyph` (design `Icons.contact`, rb-flutter-icon-parity-operation-rail-batch — takes
+  // over from Material `Icons.chat_bubble_outline`; no tofu concern anymore since ContactGlyph is
+  // a vector CustomPainter, not a font glyph).
   //
   // rb-flutter-live-replay-more-menu-and-video-info-live-copy (design R32): the PRIMARY
   // 「前往商城首頁」button that used to sit above this one is REMOVED — per the user's 2026-09-03
@@ -381,7 +383,10 @@ class VideoInfoPanelView extends StatelessWidget {
           KeyedSubtree(
             key: LbTestKeys.infoFooterContact,
             child: _footerButton(
-              glyph: Icons.chat_bubble_outline,
+              // `primary: false` below always resolves `fg` to `theme.text` — this call
+              // site hardcodes that same color directly into the glyph (see `_footerButton`'s
+              // `glyph` dartdoc for why that duplication is an accepted, scoped trade-off).
+              glyph: ContactGlyph(color: theme.text, size: 16),
               label: _contactLabel,
               primary: false,
               onTap: onContactMerchant,
@@ -396,8 +401,20 @@ class VideoInfoPanelView extends StatelessWidget {
   /// vertical padding, 15 * fontScale / bold label, glyph + label, gap 8). Primary =
   /// accent fill + white; ghost = [_bgSunken] fill + theme text. Renders correctly
   /// (and inert) when [onTap] is null.
+  ///
+  /// [glyph] widened from `IconData` to `Widget` (rb-flutter-icon-parity-operation-rail-batch)
+  /// so the sole call site (`_footer()`, `primary: false`) can pass the self-drawn
+  /// `ContactGlyph` instead of a Material `Icon`. This is a private method with exactly one
+  /// call site in this file, so widening is scoped and low-risk — but it does mean the color
+  /// this method would otherwise compute as `fg` (`primary ? Colors.white : theme.text`) is no
+  /// longer applied to [glyph] automatically; the caller must bake the matching color into the
+  /// widget it passes. Today's single caller already hardcodes `primary: false`, so it passes
+  /// `theme.text` directly (see the call site's own comment) — this duplicates a currently-true
+  /// constant relationship, not a live dynamic coupling. If a second, `primary: true` call site
+  /// is ever added, its author must remember to pass a white-tinted glyph themselves; the type
+  /// system will not catch a mismatch. Documented here for future maintainers per design.md D3.
   Widget _footerButton({
-    required IconData glyph,
+    required Widget glyph,
     required String label,
     required bool primary,
     required VoidCallback? onTap,
@@ -415,7 +432,7 @@ class VideoInfoPanelView extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(glyph, size: 16, color: fg),
+            glyph,
             const SizedBox(width: 8),
             Text(
               label,
