@@ -9,6 +9,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
     show DefaultPlayerTemplate, LBInfoPanelTab, LBMiniCartPeek, LBPStartPhase, LBSideRailKind;
 
 import '../productsheets/bottom_sheet_presenter.dart';
+import '../productsheets/sheet_scaffold.dart';
 import '../testing/lb_test_keys.dart';
 import 'now_introducing_carousel.dart';
 import '../reference_ui_theme.dart';
@@ -113,7 +114,7 @@ export 'player_header_bar_view.dart' show normalizeTitleScroll;
 //       required ReferenceUITheme theme,
 //       required String announceText, LBProduct? pinnedProduct,
 //       String hostCaption = '', bool showGestureHints = true,
-//       VoidCallback? onTapPinnedProduct })
+//       ValueChanged<LBProduct>? onTapPinnedProduct })
 //
 // NOTE: Flutter's `LBInfoTabFields` carries NO `isSubscribed` (single truth lives
 // on the header) — VideoInfoPanelView takes `isSubscribed` as a SEPARATE arg (the
@@ -455,8 +456,10 @@ class PlayerShellView extends StatefulWidget {
   /// `simulate*`).
   final ValueChanged<LBSideRailKind>? onTapRailItem;
 
-  /// Host-wired pinned-product tap (host → core `simulateProductTap`).
-  final VoidCallback? onTapPinnedProduct;
+  /// Host-wired pinned-product tap — carries the tapped [LBProduct] (turnkey container
+  /// default: opens that product's detail sheet). `rb-flutter-pinned-card-tap-opens-detail`:
+  /// type widened from `VoidCallback?`.
+  final ValueChanged<LBProduct>? onTapPinnedProduct;
 
   /// Host-wired 頻道分享（rb-flutter-player-share-default-sheet, parity iOS rb-ios-live-share /
   /// rb-ios-vod-rail-share）。容器（`LivebuyPlayer` → `MinimalDesign`）注入的預設**含系統分享 fallback**
@@ -838,6 +841,37 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// 即時飄心回饋。靜止態（tick 不變）→ HeartBurst 不畫 → golden byte-identical。
   int _liveHeartTick = 0;
 
+  /// LIVE 底部 bar 讚鈕 liked（accent 亮色）狀態（`rb-flutter-live-like-burst-restyle`，design R37
+  /// `LBLiveBottomBar.liked` / `screens.jsx` 的 `liked` state）：`true` 短暫持續於
+  /// `resolveLiveLikeBurstPlan().likedDuration` 期間，過後自動回到 `false`（白色，`liked` 預設值）。
+  bool _liveLiked = false;
+
+  /// Pending liked→false revert timer（`rb-flutter-live-like-burst-restyle`）。每次點讚重新排程
+  /// （design `clearTimeout(likeActiveTimerRef.current)` 後重新 `setTimeout`），讓連續快速點讚延長
+  /// 亮色窗口，而非疊加多個 revert。
+  Timer? _likeLikedTimer;
+
+  /// 一次 LIVE 底部 bar 讚鈕點擊（`rb-flutter-live-like-burst-restyle`，design R37
+  /// `likeAnimation()`）：解析隨機 1-4 顆 burst 計畫（`resolveLiveLikeBurstPlan`），依
+  /// `spawnDelays` 錯開觸發 `_liveHeartTick` 遞增（每次遞增讓 `HeartBurst` 多飛一顆），並點亮讚鈕
+  /// （`_liveLiked`）`likedDuration` 之後自動熄滅。主分支 / upcoming-slim 分支的兩個 `onLike` 呼叫
+  /// 點共用這個單一入口（比照設計稿單一 `onLike={() => likeAnimation()}` 呼叫點）。
+  void _triggerLiveLikeBurst() {
+    final plan = resolveLiveLikeBurstPlan();
+    for (final delay in plan.spawnDelays) {
+      Future.delayed(delay, () {
+        if (!mounted) return;
+        setState(() => _liveHeartTick++);
+      });
+    }
+    setState(() => _liveLiked = true);
+    _likeLikedTimer?.cancel();
+    _likeLikedTimer = Timer(plan.likedDuration, () {
+      if (!mounted) return;
+      setState(() => _liveLiked = false);
+    });
+  }
+
   /// Timestamp of the previous SEEKABLE video-area tap (rb-flutter-gesture-clean-mode-v2).
   /// Feeds [isDoubleTapSeekHit] together with [_lastSeekTapZone]. `null` initially / after a
   /// video-area tap that misses the double-tap-seek window. Only read/written inside
@@ -1037,6 +1071,9 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     // tick timers so a fired callback never touches this unmounted state.
     _pendingCleanModeToggleTimer?.cancel();
     _speedModeTickTimer?.cancel();
+    // rb-flutter-live-like-burst-restyle — cancel the pending liked→false revert timer so a
+    // fired callback never touches this unmounted state.
+    _likeLikedTimer?.cancel();
     super.dispose();
   }
 
@@ -1460,6 +1497,8 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 // `chatClosed`）：留言區改 disabled「聊天室已關閉」、暱稱鈕換「更多」、分享鈕位置換
                 // CC 切換。`isUpcoming`/`bagOnly` 優先序高於此旗標（widget 內部已處理）。
                 isFinishedLiveReplay: m.isFinishedLiveReplay,
+                // 讚鈕亮色狀態（rb-flutter-live-like-burst-restyle，design R37）。
+                liked: _liveLiked,
                 onBag: () => _handleRailTap(LBSideRailKind.goods),
                 onComment: widget.onComment,
                 // 暱稱鈕 → 容器本地呈現 設定暱稱 modal（onNickname；parity）；未接時退回 rail 路徑
@@ -1467,10 +1506,12 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 onNickname: widget.onNickname ??
                     () => _handleRailTap(LBSideRailKind.guestNameEdit),
                 onShare: () => _handleRailTap(LBSideRailKind.share),
-                // 真 like（host exit）+ 即時飄心 burst（rb-flutter-live-bottom-heart-burst，問題 5）。
+                // 真 like（host exit）+ 隨機 1-4 顆錯開飄心 burst + 讚鈕短暫亮色（
+                // rb-flutter-live-bottom-heart-burst 起源，rb-flutter-live-like-burst-restyle 改版，
+                // design R37 `likeAnimation()`）。
                 onLike: () {
                   _handleRailTap(LBSideRailKind.like);
-                  setState(() => _liveHeartTick++);
+                  _triggerLiveLikeBurst();
                 },
                 onToggleCC: () => _handleRailTap(LBSideRailKind.subtitle),
                 // 「更多」(⋯) → 開啟既有「更多」選單 sheet（rb-flutter-replay-live-chrome-parity）：
@@ -1652,8 +1693,11 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // `LiveBottomBarView.onMore`——僅 `m.isFinishedLiveReplay` 時該 bar 渲染出「更多」按鈕才可
         // 達，取代先前的 `OperationRailView.onTapMore`，機制本身不變）。內容為分享 + 客服兩個可互動
         // 格（各自轉發到既有 `_handleRailTap` chokepoint）+ 2 個逐字對齊設計稿的隱藏佔位格（見
-        // `_RailMoreMenuSheet`）。用既有 [BottomSheetPresenter]，不需要 `LBSheetScaffold` 的拖曳
-        // 縮放/關閉（內容固定小尺寸）。
+        // `_RailMoreMenuSheet`）。用既有 [BottomSheetPresenter] 做 scrim + 滑入滑出；
+        // `_RailMoreMenuSheet` 自己內部另包一層 `LBSheetScaffold`（rb-flutter-live-more-sheet-
+        // drag-resize-parity）拿到跟其他四張 family-3 sheet 一致的拖曳把手 + 縮放/關閉手勢，`onDismiss`
+        // 與下面 `BottomSheetPresenter.onDismiss` 指向同一個 `_setMoreMenuOpen(false)`——鏡射
+        // `VideoInfoPanelView.onClose` 既有的雙寫接線模式。
         BottomSheetPresenter(
           open: _moreMenuOpen,
           sheetKey: const ValueKey('rail-more-open'),
@@ -1674,6 +1718,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                     _setMoreMenuOpen(false);
                     _handleRailTap(LBSideRailKind.serviceLink);
                   },
+                  onDismiss: () => _setMoreMenuOpen(false),
                 ),
         ),
 
@@ -1860,12 +1905,15 @@ class _PlayerShellViewState extends State<PlayerShellView> {
             bagCount: m.bagCount,
             isReplay: false,
             isUpcoming: true,
+            // 讚鈕亮色狀態（rb-flutter-live-like-burst-restyle，design R37）。
+            liked: _liveLiked,
             onBag: () => _handleRailTap(LBSideRailKind.goods),
             onShare: () => _handleRailTap(LBSideRailKind.share),
-            // 真 like（host exit）+ 即時飄心 burst（rb-flutter-live-bottom-heart-burst）。
+            // 真 like（host exit）+ 隨機 1-4 顆錯開飄心 burst + 讚鈕短暫亮色（
+            // rb-flutter-live-bottom-heart-burst 起源，rb-flutter-live-like-burst-restyle 改版）。
             onLike: () {
               _handleRailTap(LBSideRailKind.like);
-              setState(() => _liveHeartTick++);
+              _triggerLiveLikeBurst();
             },
           ),
         ),
@@ -2082,9 +2130,17 @@ class _CleanModeExitButton extends StatelessWidget {
 // that bar render its「更多」leading slot — `rb-flutter-replay-live-chrome-parity` moved this
 // trigger here from the now-component-level-only `OperationRailView.onTapMore`, once
 // `usesLiveChrome` unification made the side rail unreachable for a closed-chat finished replay;
-// see this change's `design.md` D3). Presented via the shared [BottomSheetPresenter] — small
-// fixed content, no drag-resize / drag-dismiss needed (unlike `VideoInfoPanelView`'s
-// `LBSheetScaffold`).
+// see this change's `design.md` D3). Presented via the shared [BottomSheetPresenter] for the
+// scrim + slide-in chrome, and (rb-flutter-live-more-sheet-drag-resize-parity) internally wraps
+// its own content in [LBSheetScaffold] — the SAME shared drag-resize/dismiss scaffold every
+// other family-3 sheet uses (`ProductListSheet` / `ProductDetailSheet` / `NotifyRestockSheet` /
+// `VideoInfoPanelView`) — matching the design reference's own `<LBPBottomSheet heightPct={30}>`
+// wrapper (`screens.jsx:699-720`), which carries `handle = true` as ITS OWN default. The
+// PRE-FIX code skipped `LBSheetScaffold` entirely (a bare `ClipRRect` + `ColoredBox`) on the
+// reasoning "small fixed content, no drag-resize / drag-dismiss needed" — that reasoning
+// predates checking the design reference, which wraps this sheet in the SAME shared component
+// as every other one; the pre-fix sheet had no grab handle and no drag-to-dismiss gesture at
+// all, a real, user-reported inconsistency against every other sheet in the app.
 
 /// One slot in the「更多」sheet: a 40×40 circular icon chip (`rgba(204,204,204,0.8)`) + a 12px
 /// label below (design `sdk-components.jsx`-style action-list token, gap 8). `null` [onTap] AND
@@ -2155,6 +2211,11 @@ class _RailMoreMenuSlot extends StatelessWidget {
 /// interactive icon+label form or the hidden placeholder form — mirrors
 /// `OperationRailView._presentationOrder`'s own `enabled`-gated visibility discipline, applied to
 /// the SAME two `LBSideRailKind`s this sheet collapsed off the rail.
+/// Grab-handle color for [_RailMoreMenuSheet] — `theme.surface.strokeStrong` in the design
+/// reference; matches `video_info_panel.dart`'s own private `_strokeStrong` verbatim.
+final Color _railMoreSheetStrokeStrong =
+    colorFromHex('#D8D5DE') ?? const Color(0xFFD8D5DE);
+
 class _RailMoreMenuSheet extends StatelessWidget {
   final ReferenceUITheme theme;
   final bool showShare;
@@ -2162,13 +2223,43 @@ class _RailMoreMenuSheet extends StatelessWidget {
   final VoidCallback? onShare;
   final VoidCallback? onContact;
 
+  /// Drag-to-dismiss forwarding (rb-flutter-live-more-sheet-drag-resize-parity) — mirrors
+  /// `VideoInfoPanelView.onClose`'s own call-site pattern: the caller wires this to the SAME
+  /// dismiss action (`_setMoreMenuOpen(false)`) as the outer `BottomSheetPresenter.onDismiss`,
+  /// so dragging this sheet's own grab handle down past the threshold closes it exactly like a
+  /// scrim tap does. `null` (default) → the drag still tracks visually but releasing past the
+  /// threshold is inert — matches [LBSheetScaffold.onDismiss]'s own no-op contract.
+  final VoidCallback? onDismiss;
+
   const _RailMoreMenuSheet({
     required this.theme,
     required this.showShare,
     required this.showContact,
     this.onShare,
     this.onContact,
+    this.onDismiss,
   });
+
+  /// Grab handle (36×4, rounded, `#D8D5DE` — design `theme.surface.strokeStrong`) — same
+  /// visual recipe every other family-3 sheet's own private `_grabHandle()` draws (e.g.
+  /// `VideoInfoPanelView._grabHandle()` / `_strokeStrong`), copied verbatim here since this
+  /// file has no shared grab-handle widget to import and `ReferenceUITheme` carries no
+  /// `strokeStrong` field of its own.
+  Widget _grabHandle() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8, bottom: 4),
+      child: Center(
+        child: Container(
+          width: 36,
+          height: 4,
+          decoration: BoxDecoration(
+            color: _railMoreSheetStrokeStrong,
+            borderRadius: BorderRadius.circular(99),
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2180,43 +2271,59 @@ class _RailMoreMenuSheet extends StatelessWidget {
       ),
       child: ColoredBox(
         color: theme.background,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _RailMoreMenuSlot(
-                slotKey: LbTestKeys.liveMoreShare,
-                theme: theme,
-                // 分享 icon 改設計稿自繪實心三節點 ShareFillGlyph（rb-flutter-live-more-sheet-
-                // share-fill-icon，對齊 `Icons.shareFill`）——這顆「更多」sheet 的分享格子與既有
-                // rail pill（`operation_rail.dart`）/ LiveBottomBarView 用的外框（stroked）版
-                // `ShareGlyph`（對齊 `Icons.share`）是不同的設計 token，不可混用；那兩處維持不變。
-                // 顏色 `theme.text`（design `screens.jsx:710` `theme.surface.text`，深色）——這顆
-                // sheet 坐在自己不透明的 `theme.background` 卡片上，不是疊在影片上，MUST NOT 套用
-                // 其他 rail pill 的固定白字慣例（那是「疊在影片上」的配色，這裡誤套過一次，已由獨立
-                // 驗證抓到並修正）。
-                icon: showShare ? ShareFillGlyph(color: theme.text, size: 20) : null,
-                label: showShare ? '分享' : null,
-                onTap: onShare,
-              ),
-              const SizedBox(width: 20),
-              _RailMoreMenuSlot(
-                slotKey: LbTestKeys.liveMoreContact,
-                theme: theme,
-                // 客服 icon 改設計稿自繪雙對話框+問號 ContactGlyph（rb-flutter-icon-parity-
-                // operation-rail-batch，取代 Material Icons.chat_bubble——parity 側欄
-                // serviceLink pill / VideoInfoPanel footer 兩處已同步改用的同一顆 ContactGlyph）。
-                icon: showContact ? ContactGlyph(color: theme.text, size: 20) : null,
-                label: showContact ? '客服' : null,
-                onTap: onContact,
-              ),
-              const SizedBox(width: 20),
-              _RailMoreMenuSlot(theme: theme),
-              const SizedBox(width: 20),
-              _RailMoreMenuSlot(theme: theme),
-            ],
+        // rb-flutter-live-more-sheet-drag-resize-parity: renders via the shared
+        // `LBSheetScaffold` — same grab-handle-drag-resize/dismiss every other family-3 sheet
+        // gets, and parity the design reference's own `<LBPBottomSheet heightPct={30}>` wrapper.
+        child: LBSheetScaffold(
+          heightFraction: 0.30,
+          onDismiss: onDismiss,
+          header: _grabHandle(),
+          body: Padding(
+            // rb-flutter-live-more-sheet-vertical-padding: top was 0 (missing) — design
+            // `screens.jsx` `padding: '20px 18px'` (CSS shorthand = 20 top/bottom, 18
+            // left/right) and both iOS (`LiveMoreSheetView.verticalPadding = 20`, applied via
+            // `.padding(.vertical, ...)` on the action row) and Android (`LiveMoreMenuSheet.kt`
+            // `padding(horizontal = 18.dp, vertical = 20.dp)`) already apply 20 on BOTH edges —
+            // Flutter was the only platform missing the top half, making the action row sit
+            // right up against the grab handle with visibly less breathing room.
+            padding: const EdgeInsets.fromLTRB(18, 20, 18, 20),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _RailMoreMenuSlot(
+                  slotKey: LbTestKeys.liveMoreShare,
+                  theme: theme,
+                  // 分享 icon 改設計稿自繪實心三節點 ShareFillGlyph（rb-flutter-live-more-sheet-
+                  // share-fill-icon，對齊 `Icons.shareFill`）——這顆「更多」sheet 的分享格子與既有
+                  // rail pill（`operation_rail.dart`）/ LiveBottomBarView 用的外框（stroked）版
+                  // `ShareGlyph`（對齊 `Icons.share`）是不同的設計 token，不可混用；那兩處維持不變。
+                  // 顏色 `theme.text`（design `screens.jsx:710` `theme.surface.text`，深色）——這顆
+                  // sheet 坐在自己不透明的 `theme.background` 卡片上，不是疊在影片上，MUST NOT 套用
+                  // 其他 rail pill 的固定白字慣例（那是「疊在影片上」的配色，這裡誤套過一次，已由獨立
+                  // 驗證抓到並修正）。
+                  icon: showShare ? ShareFillGlyph(color: theme.text, size: 20) : null,
+                  label: showShare ? '分享' : null,
+                  onTap: onShare,
+                ),
+                const SizedBox(width: 20),
+                _RailMoreMenuSlot(
+                  slotKey: LbTestKeys.liveMoreContact,
+                  theme: theme,
+                  // 客服 icon 改設計稿自繪雙對話框+問號 ContactGlyph（rb-flutter-icon-parity-
+                  // operation-rail-batch，取代 Material Icons.chat_bubble——parity 側欄
+                  // serviceLink pill / VideoInfoPanel footer 兩處已同步改用的同一顆 ContactGlyph）。
+                  icon: showContact ? ContactGlyph(color: theme.text, size: 20) : null,
+                  label: showContact ? '客服' : null,
+                  onTap: onContact,
+                ),
+                const SizedBox(width: 20),
+                _RailMoreMenuSlot(theme: theme),
+                const SizedBox(width: 20),
+                _RailMoreMenuSlot(theme: theme),
+              ],
+            ),
           ),
+          footer: const SizedBox.shrink(),
         ),
       ),
     );

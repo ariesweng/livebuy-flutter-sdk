@@ -578,12 +578,14 @@ final class LivebuyPlayerViewFactory: NSObject, FlutterPlatformViewFactory {
     }
 }
 
-// player-channel-chrome-bridge-core-flutter: the 13-field channel-chrome projection
+// player-channel-chrome-bridge-core-flutter: the 15-field channel-chrome projection
 // (channel-type-bridge-core-flutter added the 10th, `type`; product-list-bridge-core-flutter
 // added the 11th, `goods`; channel-shop-intro-bridge-core-flutter added the 12th,
 // `shopIntro`; guest-comment-channel-bridge-core-flutter added the 13th,
-// `guestComment`) compared as ONE value by the dedupe check below (not a single
-// channel id — see the piggyback block in `onStateChange` for why). Mirrors
+// `guestComment`; channel-diversion-bridge-core-flutter added the 14th, `diversion`;
+// rb-flutter-other-goods-channel-bridge-core added the 15th, `otherGoods`) compared as
+// ONE value by the dedupe check below (not a single channel id — see the piggyback
+// block in `onStateChange` for why). Mirrors
 // `react-native/ios/LivebuyRNBridge.swift`'s `ChannelInfoSnapshot` shape (fields here,
 // no subtitle fields; those stay in the separate `subtitleChange` piggyback
 // below, which has its own independent dedupe state).
@@ -615,6 +617,21 @@ private struct ChannelChromeSnapshot: Equatable {
     // from `ch.goods` via the existing `lbProductToBody(_:)` helper (see the emit
     // block below), NOT from this fingerprint.
     let goods: [GoodsFingerprint]
+    // channel-diversion-bridge-core-flutter: raw `channel.diversion` passthrough. The Flutter
+    // reference-ui container's default `onProductTap` needs this to call
+    // `DefaultPlayerTemplate.handleProductTap(product:diversion:)` correctly — without it every
+    // product tap fell through the dead `simulateProductTap` native round-trip (no Dart listener
+    // ever consumed the resulting `productTap` event), so the product-detail / add-to-cart /
+    // restock-notify sheets never opened for a `diversion == 0` channel, and a `diversion == 1`
+    // channel's purchase-page URL never opened either.
+    let diversion: Int
+    // rb-flutter-other-goods-channel-bridge-core: cross-video recommended products
+    // (`channel.other_goods`), a DIFFERENT list from `goods` above (which is the currently
+    // loaded channel's OWN sellable products). Reuses the SAME `GoodsFingerprint` dedupe
+    // projection `goods` uses — no new fingerprint type needed. The actual emitted wire
+    // payload is built separately from `ch.otherGoods` via the existing `lbProductToBody(_:)`
+    // helper (see the emit block below), NOT from this fingerprint.
+    let otherGoods: [GoodsFingerprint]
 
     init(_ channel: LBChannel) {
         publishAt = channel.publishAt
@@ -630,6 +647,8 @@ private struct ChannelChromeSnapshot: Equatable {
         goods = channel.goods.map(GoodsFingerprint.init)
         shopIntro = channel.shop.intro
         guestComment = channel.guestComment
+        diversion = channel.diversion
+        otherGoods = channel.otherGoods.map(GoodsFingerprint.init)
     }
 }
 
@@ -820,6 +839,15 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
                         // guest-comment-channel-bridge-core-flutter: raw permission
                         // flag passthrough — does NOT compute `chatEnabled` here.
                         "guestComment": ch.guestComment,
+                        // channel-diversion-bridge-core-flutter: raw passthrough, see
+                        // `ChannelChromeSnapshot.diversion`'s own doc comment.
+                        "diversion": ch.diversion,
+                        // rb-flutter-other-goods-channel-bridge-core: cross-video
+                        // recommended products — `other_goods[]` items are already
+                        // full `LBProduct` values, so this reuses the SAME
+                        // `lbProductToBody(_:)` helper `goods` above uses, no extra
+                        // API call needed.
+                        "otherGoods": ch.otherGoods.map { Self.lbProductToBody($0) },
                     ])
                 }
             }

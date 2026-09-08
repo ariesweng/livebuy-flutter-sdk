@@ -280,7 +280,9 @@ class ProductSheetsOverlayView extends StatefulWidget {
   final VoidCallback? onShare;
 
   /// Host-wired 商品列表列**縮圖**點擊 → 影片跳轉到該商品介紹時間（`LBProduct.beginTime`）。
-  /// 轉發給 `ProductListSheet.onSeekToIntro`；host 接到 core `seek(beginTime)`（issue 5）。Optional.
+  /// 轉發給 `ProductListSheet.onSeekToIntro`（經 [_handleSeekToProductIntro] 包裝）；host 接到
+  /// core `seek(beginTime)`（issue 5）。同一動作 SHALL 連動關閉商品列表抽屜
+  /// （rb-flutter-product-bag-seek-dismiss，見 [_handleSeekToProductIntro]）。Optional.
   final void Function(LBProduct product)? onSeekToProductIntro;
 
   /// Host-wired 商品列表列**分享鈕**點擊 → 系統分享，連結帶該商品介紹時間 `?t=beginTime`。
@@ -604,8 +606,10 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
               onOpenProduct: _handleOpenProduct,
               onQuickAdd: _handleQuickAdd,
               onNotifyRestock: _handleNotifyRestock,
-              // 列縮圖 → 影片跳轉到商品介紹時間（issue 5）；列分享鈕 → 系統分享帶 ?t=beginTime（issue 6）。
-              onSeekToIntro: widget.onSeekToProductIntro,
+              // 列縮圖 → 影片跳轉到商品介紹時間（issue 5），並連動關閉商品列表抽屜
+              // （rb-flutter-product-bag-seek-dismiss，parity iOS/Android/RN） — 見
+              // _handleSeekToProductIntro。列分享鈕 → 系統分享帶 ?t=beginTime（issue 6）。
+              onSeekToIntro: _handleSeekToProductIntro,
               onShareProduct: widget.onShareProduct,
               onOpenCart: _handleOpenCart,
               onClose: widget.onDismissList,
@@ -847,6 +851,30 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
   void _handleNotifyRestock(LBProduct product) {
     _actionMode = ProductSheetPresentation.restock;
     widget.onProductTap?.call(product);
+  }
+
+  /// 商品列表列**縮圖** tap → seek 到商品介紹時間，並**同時**關閉商品列表抽屜
+  /// (rb-flutter-product-bag-seek-dismiss, parity iOS `rb-ios-product-bag-seek-dismiss` /
+  /// Android `rb-android-product-bag-seek-dismiss` / RN `rb-rn-product-bag-seek-dismiss`).
+  /// Closes FIRST (same `widget.onDismissList` path as the header close button / scrim tap —
+  /// no second sheet-open flag), THEN forwards the seek — mirrors the existing call ORDER
+  /// iOS / RN already use (`onClose` before the seek forward).
+  ///
+  /// [ProductRow._playTap] (product_row.dart) already gates the
+  /// `rb-flutter-replay-never-introduced-tap-noop` sentinel — in that exception,
+  /// `ProductListSheet.onSeekToIntro` (this method) is never invoked at all, so the drawer
+  /// stays open with NO duplicate sentinel check needed here (single source of truth stays in
+  /// `ProductRow`). `widget.onSeekToProductIntro` being `null` (unwired demo/snapshot) does
+  /// NOT skip the dismiss — closing the drawer does not depend on whether the host wired the
+  /// seek forwarder, parity iOS/Android/RN.
+  ///
+  /// This close side effect is bound ONLY to this one entry point — every OTHER row
+  /// interaction (`_handleOpenProduct` / `_handleQuickAdd` / `_handleNotifyRestock` /
+  /// `widget.onShareProduct`, wired unchanged a few lines below in `_buildContent`) MUST NOT
+  /// dismiss the list drawer.
+  void _handleSeekToProductIntro(LBProduct product) {
+    widget.onDismissList?.call();
+    widget.onSeekToProductIntro?.call(product);
   }
 
   /// A sheet dismiss → clear the template's `productSheet.detail` (so a re-tap of the

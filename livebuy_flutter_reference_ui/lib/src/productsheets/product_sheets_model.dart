@@ -146,16 +146,32 @@ class ProductSheetsModel {
   // -- Surface 1: ProductList ← product-row thumbnail overlay mode (product-row-status-overlay) --
   //
   // Playback-mode signals for the row thumbnail overlay. Mirrored from the template
-  // `header.isLive` / `playbackProgress.isReplay` / `.position`. For demo instances
-  // (`template == null`) return false / false / 0 so [rowMode] is `null` → ProductList
-  // falls back to the real-frame `live` flag (goldens byte-identical). Parity iOS /
-  // Android / RN `ProductSheetsModel.isLive` / `isReplay` / `position`.
+  // `header.isLive` / `header.isFinishedLiveReplay` / `playbackProgress.position`. For demo
+  // instances (`template == null`) return false / false / 0 so [rowMode] is `null` →
+  // ProductList falls back to the real-frame `live` flag (goldens byte-identical). Parity
+  // iOS / Android / RN `ProductSheetsModel.isLive` / `isReplay` / `position`.
 
   /// LIVE/VOD flag (`header.isLive`). Demo → false.
   bool get isLive => template?.header.isLive ?? false;
 
-  /// Replay variant flag (`playbackProgress.isReplay`). Demo → false.
-  bool get isReplay => template?.playbackProgress.isReplay ?? false;
+  /// Finished-live-replay flag feeding [rowMode] (`header.isFinishedLiveReplay` —
+  /// `type == 3 || (type == 2 && liveStatus == 3)`; `default_moment_state.dart:463-481`).
+  /// Demo → false.
+  ///
+  /// rb-flutter-product-row-replay-flag-fix: was previously sourced from
+  /// `playbackProgress.isReplay` — the NARROWER core DVR concept (a stream that is STILL
+  /// actively live, `live_status == 1`, scrubbed behind the live edge). That flag is
+  /// orthogonal to "is this a finished-live replay video" and is NEVER `true` for a
+  /// finished-live video, so every finished-live-replay video's product list was silently
+  /// misclassified as VOD (`rowMode` fell through to `.vod`, dropping the「看講解」pill /
+  /// 「介紹中」banner / number badge that `.replay` mode draws). `header.isFinishedLiveReplay`
+  /// is the correct signal — `DefaultPlayerTemplate.productsIntroducingFirst`
+  /// (`flutter-ui/lib/src/default_template.dart:385-386`) already reads the same flag for the
+  /// pin-to-top decision; this getter now mirrors that same read for the row-overlay decision.
+  /// MUST NOT be re-sourced from `playbackProgress.isReplay` — that getter drives the
+  /// unrelated `PlayerShellModel.isReplay` (family-1 scrub-behind-edge chrome), a different
+  /// model with a different consumer, not this one.
+  bool get isReplay => template?.header.isFinishedLiveReplay ?? false;
 
   /// Current playhead seconds (`playbackProgress.position`). Demo → 0.
   double get position => template?.playbackProgress.position ?? 0;

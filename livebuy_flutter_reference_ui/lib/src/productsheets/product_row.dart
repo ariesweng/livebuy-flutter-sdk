@@ -9,7 +9,7 @@ import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
 import 'equalizer_glyph.dart';
 import 'hot_glyph.dart';
-import 'product_row_overlay.dart' show ProductRowMode;
+import 'product_row_overlay.dart' show ProductRowMode, isReplayNeverIntroduced;
 import 'product_status_badge.dart';
 import 'sheet_scaffold.dart';
 
@@ -143,7 +143,22 @@ class ProductRow extends StatelessWidget {
   /// 縮圖 / 播放 tap. `onPlayClick` set → independent handler (design R21 issue 1.3);
   /// unset → the existing seek-to-intro forwarding (byte-identical pre-extraction
   /// behavior for every existing `.row` call site).
+  ///
+  /// **Exception (rb-flutter-replay-never-introduced-tap-noop, parity iOS
+  /// `rb-ios-replay-never-introduced-tap-noop`)**: in `.replay` mode, a product whose
+  /// `[beginTime, endTime]` is the `[0, 0]` "never introduced" sentinel
+  /// ([isReplayNeverIntroduced]) has no real intro time to seek to — the tap is a
+  /// complete no-op (neither [onPlayClick] nor [onSeekToIntro] fires). Flutter's
+  /// product-list drawer is always-inline / host-managed (no `listPresented` flag at
+  /// this layer to close, unlike iOS's sheet) — this widget only owns the seek
+  /// forwarding, so the no-op is scoped to that. `.vod` / `.live` are unaffected even
+  /// when a product happens to have `beginTime == 0 && endTime == 0` — the sentinel is
+  /// `.replay`-only.
   void _playTap() {
+    if (mode == ProductRowMode.replay &&
+        isReplayNeverIntroduced(beginTime: product.beginTime, endTime: product.endTime)) {
+      return;
+    }
     final onPlay = onPlayClick;
     if (onPlay != null) {
       onPlay();
@@ -272,9 +287,13 @@ class ProductRow extends StatelessWidget {
                         // VOD "now" (mode == ProductRowMode.vod, design R36): full-bleed mask +
                         // centered equalizer, no text — replaces the existing bottom coral
                         // 介紹中 banner for VOD only. mode != vod keeps the existing banner
-                        // byte-identical. Same isIntroducing && !soldOut sold-out precedence
-                        // gate as the existing banner.
-                        if (isIntroducing && !soldOut)
+                        // byte-identical. Sold-out and introducing are INDEPENDENT — no
+                        // sold-out precedence gate (2026-09-07 user decision,
+                        // rb-flutter-product-row-soldout-introducing-visible — REVERSES the
+                        // prior `isIntroducing && !soldOut` exclusion for both this VOD mask
+                        // and the live/replay banner below; the design source
+                        // (`sdk-components.jsx`'s `introBadge`) never had a `!p.sold` gate).
+                        if (isIntroducing)
                           mode == ProductRowMode.vod
                               ? const _VodIntroducingMask()
                               : Positioned(

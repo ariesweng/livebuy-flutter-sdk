@@ -141,7 +141,10 @@ class PlayerOverlayContext {
   final VoidCallback onToggleMute;
   final VoidCallback onToggleSubscribe;
   final ValueChanged<LBSideRailKind> onTapRailItem;
-  final VoidCallback onTapPinnedProduct;
+
+  /// Carries the tapped [LBProduct] (turnkey container default: opens that product's detail
+  /// sheet). `rb-flutter-pinned-card-tap-opens-detail`: type widened from `VoidCallback`.
+  final ValueChanged<LBProduct> onTapPinnedProduct;
   final VoidCallback onComment;
 
   /// LIVE 底部 bar 暱稱按鈕 → 容器本地呈現 設定暱稱 modal（`nickname.present(false)`；parity）。

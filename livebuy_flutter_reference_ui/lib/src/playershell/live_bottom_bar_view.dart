@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../reference_ui_theme.dart';
@@ -140,6 +142,12 @@ class LiveBottomBarView extends StatelessWidget {
   /// `leadingSlotKind` / `trailingActionKind` precedence exactly).
   final bool isFinishedLiveReplay;
 
+  /// Like-icon lit (accent) state (`rb-flutter-live-like-burst-restyle`, design R37
+  /// `LBLiveBottomBar.liked` / `screens.jsx`'s `liked` state). Default `false` renders the like
+  /// icon WHITE (was unconditionally `theme.accent` before R37); the call site sets this `true`
+  /// for the duration of `resolveLiveLikeBurstPlan().likedDuration` after a tap, then reverts.
+  final bool liked;
+
   final VoidCallback? onBag;
   final VoidCallback? onComment;
   final VoidCallback? onNickname;
@@ -162,6 +170,7 @@ class LiveBottomBarView extends StatelessWidget {
     this.isUpcoming = false,
     this.bagOnly = false,
     this.isFinishedLiveReplay = false,
+    this.liked = false,
     this.onBag,
     this.onComment,
     this.onNickname,
@@ -283,7 +292,9 @@ class LiveBottomBarView extends StatelessWidget {
             _IconButton(
               key: LbTestKeys.liveHeart,
               icon: Icons.favorite,
-              tint: theme.accent,
+              // rb-flutter-live-like-burst-restyle (design R37): accent only while `liked`,
+              // white otherwise (was unconditionally accent before this change).
+              tint: liked ? theme.accent : Colors.white,
               onTap: onLike,
             ),
           ],
@@ -349,6 +360,54 @@ LiveBottomBarTrailingActionKind liveBottomBarTrailingActionKind({
     (!bagOnly && !isUpcoming && isFinishedLiveReplay)
         ? LiveBottomBarTrailingActionKind.cc
         : LiveBottomBarTrailingActionKind.share;
+
+// MARK: - Like-tap burst plan (rb-flutter-live-like-burst-restyle, design R37 `likeAnimation` /
+// `doAnimation`)
+//
+// Pure resolution of ONE press of THIS bar's like button: how many burst glyphs to spawn (1-4,
+// randomised unless [n] pins it — design `likeAnimation(n)`), how far apart to stagger them (300ms,
+// design `setTimeout(doAnimation, 300*i)`), and how long the button's `liked` (accent) tint should
+// hold before reverting to white (design `300*(count-1) + 2000`ms). Scoped to THIS bar's own
+// tap-triggered burst — the VOD side rail's `heartBurstTick` OBSERVATION path (`OperationRailView`)
+// is a DIFFERENT, unrelated call site that stays a strict "one tick increase → one burst" per its
+// own Requirement and MUST NOT gain this randomised multi-spawn behavior.
+
+/// One resolved like-tap burst plan.
+class LiveLikeBurstPlan {
+  /// Burst glyphs to spawn this tap, 1-4 (design `count = (n ?? random(0..3)) + 1`).
+  final int count;
+
+  /// Delay before each spawn — [count] entries, `300ms * index` (design
+  /// `setTimeout(doAnimation, 300*i)`).
+  final List<Duration> spawnDelays;
+
+  /// How long the like icon's `liked` (accent) tint should hold before reverting to white
+  /// (design `300*(count-1) + 2000`ms).
+  final Duration likedDuration;
+
+  const LiveLikeBurstPlan({
+    required this.count,
+    required this.spawnDelays,
+    required this.likedDuration,
+  });
+}
+
+const int _likeBurstMaxExtraCount = 3; // design `Math.floor(Math.random()*4)` → 0..3
+const Duration _likeBurstSpawnInterval = Duration(milliseconds: 300);
+const Duration _likeBurstBaseLikedDuration = Duration(milliseconds: 2000);
+
+/// Resolve one like-tap's burst plan. [n] mirrors design `likeAnimation(n)`'s optional forced
+/// count-minus-one (0-3, clamped); the real onLike call site always passes `null` (design's bare
+/// `likeAnimation()`), which draws uniformly from [random] (default `math.Random()`) — inject a
+/// seeded `math.Random(seed)` in tests for determinism.
+LiveLikeBurstPlan resolveLiveLikeBurstPlan({int? n, math.Random? random}) {
+  final raw = (n ?? (random ?? math.Random()).nextInt(_likeBurstMaxExtraCount + 1))
+      .clamp(0, _likeBurstMaxExtraCount);
+  final count = raw + 1;
+  final spawnDelays = [for (var i = 0; i < count; i++) _likeBurstSpawnInterval * i];
+  final likedDuration = _likeBurstSpawnInterval * (count - 1) + _likeBurstBaseLikedDuration;
+  return LiveLikeBurstPlan(count: count, spawnDelays: spawnDelays, likedDuration: likedDuration);
+}
 
 // MARK: - Bag button (`LBLiveBottomBar` bag)
 

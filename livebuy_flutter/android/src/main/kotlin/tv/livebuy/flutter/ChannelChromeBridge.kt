@@ -20,14 +20,15 @@ package tv.livebuy.flutter
 object ChannelChromeBridge {
 
     /**
-     * The 13 fields projected from a loaded `LBChannel` onto the `channelChange` wire payload.
+     * The 15 fields projected from a loaded `LBChannel` onto the `channelChange` wire payload.
      * Compared AS A WHOLE by [shouldEmit] — not just [liveStatus] or a channel id — so that any
      * single field change (most notably an upcoming→live `liveStatus` flip on the SAME channel)
      * is not silently dropped by a narrower id-only dedupe key. Unlike the iOS bridge's mirrored
-     * struct, [goods] can be dropped in here as a plain `List<Map<String, Any?>>` (the already
-     * wire-serialized product list, built via the existing `productToMap`) with no extra
-     * fingerprint type needed — Kotlin's `List`/`Map` already have correct structural `equals()`,
-     * so this `data class`'s auto-generated `equals()` compares [goods] correctly for free.
+     * struct, [goods] and [otherGoods] can be dropped in here as plain `List<Map<String, Any?>>`
+     * (the already wire-serialized product list, built via the existing `productToMap`) with no
+     * extra fingerprint type needed — Kotlin's `List`/`Map` already have correct structural
+     * `equals()`, so this `data class`'s auto-generated `equals()` compares both correctly for
+     * free.
      */
     data class Snapshot(
         val publishAt: String,
@@ -43,6 +44,20 @@ object ChannelChromeBridge {
         val goods: List<Map<String, Any?>>,
         val shopIntro: String,
         val guestComment: Int,
+        // channel-diversion-bridge-core-flutter: raw `channel.diversion` passthrough — the
+        // Flutter reference-ui container's default `onProductTap` needs this to call
+        // `DefaultPlayerTemplate.handleProductTap(product:diversion:)` correctly. Without it every
+        // product tap fell through the dead `simulateProductTap` native round-trip (no Dart
+        // listener ever consumed the resulting `productTap` event), so the product-detail /
+        // add-to-cart / restock-notify sheets never opened for a `diversion == 0` channel, and a
+        // `diversion == 1` channel's purchase-page URL never opened either.
+        val diversion: Int,
+        // rb-flutter-other-goods-channel-bridge-core: cross-video recommended products
+        // (`channel.other_goods`), a DIFFERENT list from [goods] above (which is the
+        // currently loaded channel's OWN sellable products). Same already-wire-serialized
+        // `List<Map<String, Any?>>` shape as [goods] (built via the existing `productToMap`),
+        // for the same free-structural-equals reason.
+        val otherGoods: List<Map<String, Any?>>,
     )
 
     /**
@@ -71,5 +86,7 @@ object ChannelChromeBridge {
         "goods" to snapshot.goods,
         "shopIntro" to snapshot.shopIntro,
         "guestComment" to snapshot.guestComment,
+        "diversion" to snapshot.diversion,
+        "otherGoods" to snapshot.otherGoods,
     )
 }

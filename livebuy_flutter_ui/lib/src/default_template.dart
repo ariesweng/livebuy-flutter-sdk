@@ -345,35 +345,45 @@ class DefaultPlayerTemplate {
   List<LBProduct> get liveActiveProducts =>
       productOverlay.products.where((p) => p.narrateStatus == 2).toList();
 
-  /// 商品清單「介紹中優先」排序，統一涵蓋 LIVE 與 VOD/回放
-  /// （rb-flutter-vod-product-list-introducing-order-template，parity iOS/Android同批次同設計）：
+  /// 商品清單「介紹中優先」排序，統一涵蓋 LIVE 與直播回放，**排除純 VOD**
+  /// （rb-flutter-vod-product-list-introducing-order-template 初版 + 本 change 訂正，parity
+  /// iOS/Android同批次同設計）：
   ///
   ///   • **LIVE**（[header].isLive == true）：原樣委派 [DefaultProductOverlayState
   ///     .productsIntroducingFirst]（既有單一 `narrate_status==2` active product 置頂邏輯，
   ///     行為不變）。
-  ///   • **VOD / 回放**（`isLive == false`）：把 [vodActiveProducts]（已依 beginTime 升冪排序
-  ///     好的「所有」`[beginTime,endTime)` 命中商品）整批移到清單最前，維持其既有順序；其餘
-  ///     商品維持 [productOverlay].products 的原始相對順序接在後面。[vodActiveProducts] 為空
-  ///     （無命中視窗；開場影片播放中時 [vodActiveProducts] 內部讀的
-  ///     `productOverlay.products` / `playbackProgress.position` 皆已被既有介紹中閘門收斂，
-  ///     天然也收斂為空）時等於 [productOverlay].products（順序不變）。
+  ///   • **直播回放**（`isLive == false && `[header].isFinishedLiveReplay `== true`）：把
+  ///     [vodActiveProducts]（已依 beginTime 升冪排序好的「所有」`[beginTime,endTime)` 命中
+  ///     商品）整批移到清單最前，維持其既有順序；其餘商品維持 [productOverlay].products 的
+  ///     原始相對順序接在後面。[vodActiveProducts] 為空（無命中視窗；開場影片播放中時
+  ///     [vodActiveProducts] 內部讀的 `productOverlay.products` / `playbackProgress.position`
+  ///     皆已被既有介紹中閘門收斂，天然也收斂為空）時等於 [productOverlay].products（順序
+  ///     不變）。
+  ///   • **純 VOD 點播**（`isLive == false && `[header].isFinishedLiveReplay `== false`）：
+  ///     **不置頂**——直接等於 [productOverlay].products，維持原始清單順序，不依
+  ///     [vodActiveProducts] 重排。2026-09-07 使用者拍板訂正：純 VOD 排除在置頂之外，只有
+  ///     直播與直播回放置頂（`flutter-vod-product-list-introducing-order-exclude-vod-template`），
+  ///     對齊設計稿 `design/templates/minimal/screens.jsx:ProductListSheet` 的 `ordered` 從
+  ///     一開始就只在 `live=true` 才重排的原始行為。
   ///
-  /// 分支判斷 MUST 用明確的 [header].isLive 旗標，MUST NOT 用「[vodActiveProducts] 是否非空」
-  /// 判斷——[vodActiveProducts] 本身沒有直播狀態閘門，理論上極端情況兩者可能同時有值；`isLive`
-  /// 為 true 時 MUST 優先走 LIVE 分支。
+  /// 分支判斷 MUST 依序用明確的 [header].isLive、[header].isFinishedLiveReplay 兩個旗標，
+  /// MUST NOT 用「[vodActiveProducts] 是否非空」判斷——[vodActiveProducts] 本身沒有直播狀態
+  /// 閘門，理論上極端情況兩者可能同時有值；`isLive` 為 true 時 MUST 優先走 LIVE 分支。
   ///
   /// 純 computed 唯讀：MUST NOT 新增第二份狀態、MUST NOT 新增輪詢或通知管道、MUST NOT 改變既有
   /// [DefaultProductOverlayState.productsIntroducingFirst] / [vodActiveProducts] /
-  /// [header].isLive 任一者的既有合約——本 getter 只是在既有兩個排序結果之上依 live/VOD 旗標
-  /// 擇一 forward。與 [DefaultProductOverlayState.productsIntroducingFirst]（LIVE-only，同名、
-  /// 不同類別 receiver，維持不動、繼續可單獨測試）是不同屬性、不互相取代——後者供任何只想看
-  /// LIVE 排序的呼叫端使用，本 getter 是在它之上再組合 VOD 分支的聚合版。
+  /// [header].isLive / [header].isFinishedLiveReplay 任一者的既有合約——本 getter 只是在既有
+  /// 排序結果之上依 live / 回放 / 純 VOD 三分支旗標擇一 forward。與
+  /// [DefaultProductOverlayState.productsIntroducingFirst]（LIVE-only，同名、不同類別
+  /// receiver，維持不動、繼續可單獨測試）是不同屬性、不互相取代——後者供任何只想看 LIVE 排序
+  /// 的呼叫端使用，本 getter 是在它之上再組合直播回放分支的聚合版。
   ///
   /// reference-ui（`ProductSheetsModel.products`）綁定**這個**聚合 getter 取代直讀
   /// `productOverlay.productsIntroducingFirst`；排序仍是資料層職責，reference-ui MUST NOT
   /// 自行 slice / merge / 排序。
   List<LBProduct> get productsIntroducingFirst {
     if (header.isLive) return productOverlay.productsIntroducingFirst;
+    if (!header.isFinishedLiveReplay) return productOverlay.products;
     final active = vodActiveProducts;
     if (active.isEmpty) return productOverlay.products;
     final activeIds = active.map((p) => p.id).toSet();
@@ -1448,15 +1458,31 @@ class DefaultPlayerTemplate {
   /// enum-switch convention (e.g. `LBActivityTier.rank` in
   /// `default_activity_feed.dart`), not because the expression form would be
   /// any less safe.
+  ///
+  /// flutter-url-open-crash-guard-template — the seam call is wrapped in a
+  /// `try`/`catch` (this is the ONLY place both branches share, so it guards
+  /// the default `url_launcher`-backed openers AND any host-injected custom
+  /// opener from a single chokepoint). A real-device crash showed `launchUrl`
+  /// can throw (no app can handle the URL / Android 11+ missing a `<queries>`
+  /// manifest entry / any future package-behavior change) and, unguarded, that
+  /// exception propagated all the way out of `handleProductTap` and crashed
+  /// the host app. MUST NOT rethrow — a swallowed failure (debug log + no-op)
+  /// is a strictly safer degradation than an app crash. This guard MUST NOT
+  /// change the three-way routing decision itself (in-app / external /
+  /// unopenable) — it only wraps the already-decided seam call.
   Future<void> _openResolvedUrl(String rawUrl) async {
     final decision = LBURLOpenPolicy.decide(rawUrl);
     if (decision == null) return;
     final resolved = decision.url.toString();
-    switch (decision.target) {
-      case LBURLOpenTarget.inApp:
-        await _openInAppBrowser(resolved);
-      case LBURLOpenTarget.external:
-        await _openExternalUrl(resolved);
+    try {
+      switch (decision.target) {
+        case LBURLOpenTarget.inApp:
+          await _openInAppBrowser(resolved);
+        case LBURLOpenTarget.external:
+          await _openExternalUrl(resolved);
+      }
+    } catch (e) {
+      debugPrint('[DefaultTemplate] url-open seam threw (swallowed, safe no-op): $e');
     }
   }
 

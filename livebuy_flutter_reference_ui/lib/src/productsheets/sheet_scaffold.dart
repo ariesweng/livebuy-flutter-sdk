@@ -126,38 +126,38 @@ bool sheetShouldDismiss(double dragOffset, {double threshold = kSheetDismissThre
 /// pins and only the body scrolls.
 ///
 /// DRAG-RESIZE + DRAG-TO-DISMISS（rb-flutter-sheetkit-resize-dismiss-unify，design
-/// `LBPBottomSheet`，parity iOS `BottomSheetChrome.dragState` / Android — supersedes
-/// `rb-flutter-product-sheet-resize-fav-inline`'s opt-in `draggable` + dead-fixed 25% floor
-/// with no dismiss concept）: EVERY presentation gets one continuous handle-drag gesture,
-/// no opt-in flag — there is no longer a "non-draggable `LBSheetScaffold`". Dragging UP
-/// grows the card from the CURRENT GESTURE's floor toward a shared 80%
-/// ([kSheetResizeCeilingFraction]) CEILING; dragging DOWN shrinks it back toward that same
-/// floor; once at the floor, further downward drag converts the excess into a drag-to-dismiss
-/// offset — release past [kSheetDismissThresholdPx] invokes [onDismiss], else the card
-/// bounces back to that floor.
+/// `LBPBottomSheet`，parity Android — supersedes `rb-flutter-product-sheet-resize-fav-inline`'s
+/// opt-in `draggable` + dead-fixed 25% floor with no dismiss concept）: EVERY presentation gets
+/// one continuous handle-drag gesture, no opt-in flag — there is no longer a "non-draggable
+/// `LBSheetScaffold`". Dragging UP grows the card from its STRUCTURAL floor
+/// (`_floorFraction` — the presentation's own default/resting height) toward a shared 80%
+/// ([kSheetResizeCeilingFraction]) CEILING; dragging DOWN — in the SAME gesture, or a later,
+/// separate one — shrinks the RENDERED height back toward that same structural floor first, as
+/// pure resize (release before reaching the floor holds the card at wherever it was let go, no
+/// bounce). The DISMISS decision is a SEPARATE calculation (rb-flutter-sheetkit-resize-floor-
+/// not-reanchored — see [_dismissFloorFraction]'s own doc for the full two-floor rationale and
+/// the accepted trade-off it reintroduces, parity Android `rb-android-sheetkit-resize-floor-
+/// reanchor-fix`): it measures a constant [kSheetDismissThresholdPx] of drag from THIS gesture's
+/// OWN start, independent of the structural floor — release past it invokes [onDismiss]
+/// (regardless of how far the rendered height has shrunk so far), else the card-follow peek
+/// bounces back to the structural floor.
 ///
-/// GESTURE FLOOR RE-ANCHORING（rb-flutter-sheetkit-dismiss-after-resize-fix）: the floor fed
-/// into the drag math is re-anchored at the START of every new gesture (see
-/// `_gestureFloorFraction` / `_activeFloor`) to whatever height the card is ACTUALLY resting
-/// at right now — NOT the presentation's original structural floor (`_floorFraction`). The
-/// very FIRST gesture of a presentation is unaffected (the card is still at its structural
-/// floor then, so the gesture floor equals it exactly — byte-identical to "never dragged up").
-/// Once the user has resized up at least once, a LATER, separate gesture's floor is wherever
-/// the card currently sits — so dragging down in that later gesture counts toward the dismiss
-/// threshold immediately, instead of first needing to travel all the way back down to the
-/// original structural floor (which, from near the 80% ceiling, routinely exceeds what a
-/// single touch can physically cover — this was the reported "can't dismiss after resizing
-/// up" bug). See the class doc's `_gestureFloorFraction` field for the full rationale.
+/// `_activeFloor` — the RESIZE floor — therefore stays FIXED at the structural floor across
+/// every gesture (see that getter's own doc for the earlier, reverted design where a single
+/// shared floor was re-anchored per-gesture, and the real-hardware bug that reversion fixes: a
+/// short-content sheet, resized up then down in two separate gestures, could get visually stuck
+/// with a large blank area no subsequent drag could shrink away). Only [_virtualFraction] —
+/// where a NEW gesture's own accumulator starts counting from — is re-baselined at
+/// [_onDragStart], so the drag still tracks the finger continuously from wherever the card is
+/// currently rendered; the RESIZE floor it is clamped against never moves. [_dismissFloorFraction]
+/// — the separate DISMISS floor — IS re-anchored every gesture, on purpose (see its own doc).
 ///
-/// `_floorFraction` (the presentation's own default/resting height — STRUCTURAL, not the
-/// per-gesture value) is: for `fillToCap` leaves, the constant cap itself (no measurement
-/// needed — the card always renders at exactly that height); for content-sized leaves, the
-/// height actually rendered at first layout, LATCHED ONCE (see `_latchFloorFromMeasurement`)
-/// and never re-measured for the rest of this presentation — this is what keeps the drag path
-/// pure arithmetic with zero re-measurement feedback loop (no SwiftUI-style
-/// `GeometryReader`/`PreferenceKey` jitter risk; see design.md). It now only seeds the FIRST
-/// gesture's floor (via `_gestureFloorFraction`) rather than being read directly by the drag
-/// math on every gesture.
+/// `_floorFraction` (the presentation's own default/resting height) is: for `fillToCap` leaves,
+/// the constant cap itself (no measurement needed — the card always renders at exactly that
+/// height); for content-sized leaves, the height actually rendered at first layout, LATCHED ONCE
+/// (see `_latchFloorFromMeasurement`) and never re-measured for the rest of this presentation —
+/// this is what keeps the drag path pure arithmetic with zero re-measurement feedback loop (no
+/// SwiftUI-style `GeometryReader`/`PreferenceKey` jitter risk; see design.md).
 ///
 /// 與 iOS 共用單一 `BottomSheetChrome` 畫「一個」grab handle（因此把拖曳手勢放在那顆共用 chrome
 /// 上）不同，Flutter 的 grab handle 是**每個 leaf 各自畫**（`ProductDetailSheet` /
@@ -222,11 +222,10 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
 
   /// This presentation's STRUCTURAL floor (its own default/resting height) — latched once,
   /// `null` only for the single frame before a content-sized leaf's post-frame measurement
-  /// completes (`fillToCap` leaves latch synchronously in [initState], never `null`). As of
-  /// `rb-flutter-sheetkit-dismiss-after-resize-fix` this is no longer read directly by the
-  /// drag math (`_onDragUpdate` / `_onDragEnd` / [build]) — it only SEEDS the very first
-  /// gesture's floor via [_gestureFloorFraction] / [_activeFloor] (see that field's doc for
-  /// why). It MUST NOT also govern the AT-REST render cap (see [build] — that was a real
+  /// completes (`fillToCap` leaves latch synchronously in [initState], never `null`). Read
+  /// directly by every gesture's resize clamp + dismiss-offset math via [_activeFloor] — see
+  /// that getter's own doc for why it is never re-anchored to anything else. It MUST NOT also
+  /// govern the AT-REST render cap (see [build] — that was a real
   /// regression caught in review: latching this once and then using it as the render
   /// `maxHeight` itself froze a content-sized leaf's height at whatever it happened to be on
   /// first layout, so a later rebuild with taller content (e.g. a tab switch on the SAME
@@ -237,44 +236,45 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
   /// constant `capFraction`.
   double? _floorFraction;
 
-  /// The floor ACTUALLY used by the CURRENT (or most recently completed) gesture's resize
-  /// clamp + dismiss-offset math (rb-flutter-sheetkit-dismiss-after-resize-fix). Re-anchored
-  /// at the START of every new gesture ([_onDragStart]) to whatever height the card is
-  /// ACTUALLY resting at right now — see [_activeFloor]. `null` only before the presentation's
-  /// very first drag frame.
-  ///
-  /// WHY THIS EXISTS: `sheetDragState`'s `dragOffset` is `(floor − virtualFraction) ×
-  /// screenHeight` once `virtualFraction` dips below `floor`. Feeding it the STRUCTURAL floor
-  /// ([_floorFraction], this presentation's natural resting height — typically 40–50% of the
-  /// screen) meant that after a PRIOR gesture had resized the card up toward the 80% ceiling,
-  /// dismissing required first dragging all the way back down to that structural floor — often
-  /// 40–50% of the screen height — PLUS the 100px dismiss threshold on top, a total distance
-  /// that routinely exceeds what a single continuous drag gesture can cover on a touchscreen,
-  /// so the card was practically stuck open. Worse, [_floorFraction] and [_virtualFraction] are
-  /// both STATE-level fields that persist for the whole presentation, not per-gesture — unlike
-  /// SwiftUI's `DragGesture.translation`, which zeroes automatically for every new gesture, a
-  /// brand-new Flutter gesture (release, then touch down again) got NO relief either, since
-  /// nothing here ever re-anchored to the current position.
-  ///
-  /// Re-anchoring the floor to the CURRENT height at the start of every gesture fixes this:
-  /// any downward drag from wherever the card currently sits now counts immediately toward the
-  /// dismiss threshold — resize-up no longer moves the goalposts for the next dismiss attempt.
-  /// A known, accepted side effect: once a presentation has been resized up at least once, a
-  /// LATER gesture can no longer "shrink back down toward the structural floor" as a pure
-  /// resize step first — any further downward movement in that later gesture is
-  /// drag-to-dismiss territory from the first pixel (this independently converges with iOS's
-  /// `rb-ios-sheetkit-resize-dismiss-separate-gestures` architecture, where the down branch is
-  /// `max(0, translation.height)` with zero dependency on the resize floor — reached via a
-  /// separate analysis of iOS's own SwiftUI gesture model, not copied). The presentation's very
-  /// FIRST gesture is unaffected — `_virtualFraction == null` at that point, so
-  /// [_activeFloor] equals [_floorFraction] exactly, preserving the existing "never dragged up"
-  /// byte-identical contract.
-  double? _gestureFloorFraction;
-
   /// The unclamped, persistent "virtual" fraction the handle drag has accumulated (can dip
   /// below the active floor — that excess becomes the dismiss `dragOffset`). `null` until the
   /// first drag frame; stays `null` forever if the user never drags this presentation.
+  ///
+  /// Re-baselined to [_currentRenderedFraction] at the START of every new gesture ([_onDragStart])
+  /// so a fresh touch-down continues smoothly from wherever the card is ACTUALLY resting right
+  /// now, rather than jumping. This does NOT change which [floorFraction] gesture math clamps
+  /// against — see [_activeFloor] — only where THIS gesture's own accumulator starts counting
+  /// from.
   double? _virtualFraction;
+
+  /// This GESTURE's own dismiss reference floor (rb-flutter-sheetkit-resize-floor-not-reanchored,
+  /// parity Android `rb-android-sheetkit-resize-floor-reanchor-fix` / iOS `rb-ios-sheetkit-
+  /// resize-shrink-after-grow-fix`) — re-anchored at the START of every gesture ([_onDragStart])
+  /// to wherever the card is ACTUALLY resting right now. Read ONLY by [_onDragEnd]'s DISMISS
+  /// decision — completely separate from [_activeFloor] (the STRUCTURAL floor, which governs the
+  /// rendered height / card-follow peek in [build] and never moves).
+  ///
+  /// WHY TWO INDEPENDENT FLOORS: a single shared floor cannot satisfy both goals at once — (a)
+  /// a downward drag should visibly shrink the card all the way back to its true structural
+  /// floor on ANY gesture (this is [_activeFloor]'s job — see its own doc for the real-hardware
+  /// bug this fixes), and (b) dismissing after a prior resize-up should still need only a
+  /// constant [kSheetDismissThresholdPx] of drag, not that same full structural distance PLUS
+  /// the threshold on top (which the ORIGINAL, pre-`rb-flutter-sheetkit-resize-floor-not-
+  /// reanchored` design fixed by re-anchoring a single shared floor — the very re-anchoring
+  /// [_activeFloor] no longer does, since it broke goal (a) instead). Android hit and fixed this
+  /// exact tension first: feeding one shared "current height" floor into both the resize clamp
+  /// AND the dismiss-excess calculation was itself the bug (`rb-android-sheetkit-dismiss-after-
+  /// resize-fix` introduced it; `rb-android-sheetkit-resize-floor-reanchor-fix` split the two).
+  /// This field is that split's Flutter counterpart — [_activeFloor] never re-anchors (goal a),
+  /// this field always does (goal b).
+  ///
+  /// ACCEPTED TRADE-OFF (ported verbatim from Android's own documented one): because this floor
+  /// can sit ABOVE [_activeFloor]'s structural value, [_onDragEnd] can decide to dismiss even
+  /// while the card is STILL visibly shrinking toward the structural floor (the resize-relative
+  /// `dragOffset` in [build] is still `0` — no card-follow peek has appeared yet). A user who
+  /// drags down far enough with dismiss intent reaches that outcome regardless; this is not
+  /// fixed here, matching Android's own accepted scope.
+  double? _dismissFloorFraction;
 
   /// Bounce-back-to-floor animation (release under the dismiss threshold, or under a full
   /// resize-up — `null` when no bounce is in flight).
@@ -285,23 +285,29 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
         heightFraction: widget.heightFraction,
       );
 
-  /// The floor actually fed into the drag math right now (rb-flutter-sheetkit-dismiss-after-
-  /// resize-fix) — the current gesture's re-anchored floor if one has started, else the
-  /// presentation's structural floor, else the default fraction. See [_gestureFloorFraction]'s
-  /// doc for the full rationale.
-  double get _activeFloor => _gestureFloorFraction ?? _floorFraction ?? _defaultFraction;
-
-  /// The height fraction ACTUALLY rendered right now (rb-flutter-sheetkit-dismiss-after-
-  /// resize-fix) — i.e. [SheetDragState.heightFraction] under the floor/ceiling that governed
-  /// the PREVIOUS gesture (or the structural floor, before any gesture has ever run).
+  /// The floor fed into every gesture's resize clamp + dismiss-offset math
+  /// (rb-flutter-sheetkit-resize-floor-not-reanchored) — ALWAYS this presentation's own
+  /// STRUCTURAL floor ([_floorFraction], its natural default/resting height), regardless of
+  /// which gesture (first or a later, separate one) is currently dragging.
   ///
-  /// MUST be used (not raw [_virtualFraction]) when re-anchoring [_gestureFloorFraction] at a
-  /// new gesture's start: [_virtualFraction] is deliberately UNCLAMPED (see
-  /// [advanceVirtualFraction]) and is never clamped back down after a resize-up gesture ends —
-  /// a large upward drag can leave it far past the 80% ceiling even though the card visually
-  /// rendered (and held) at exactly the ceiling. Re-anchoring a new gesture's floor to that raw
-  /// overshot value instead of the visually-rendered ceiling would make the new gesture
-  /// (incorrectly) require dragging back down past the overshoot before anything registers.
+  /// Deliberately NOT re-anchored to "wherever the card currently sits" (an earlier design,
+  /// `rb-flutter-sheetkit-dismiss-after-resize-fix`, tried that — see design.md's own retired
+  /// Decision for why it was reverted): re-anchoring made a SEPARATE gesture's downward drag,
+  /// after a PRIOR gesture had resized the card up, count toward the dismiss threshold from the
+  /// very first pixel — a user who just wanted to shrink the card back to its normal size in a
+  /// second, distinct drag had NO way to do that; every down-drag either bounced back to the
+  /// SAME oversized height or dismissed the whole sheet outright, with no reachable middle
+  /// ground (confirmed on real hardware — a 3-item product list, dragged up then down in two
+  /// separate gestures, left a large blank area below its content that no subsequent drag could
+  /// shrink away). Keeping the floor fixed at the structural value restores "drag down → shrinks
+  /// toward the normal size first, only converts to a dismiss past that point" for every gesture,
+  /// including a later, separate one. See [_onDragStart] for the accepted trade-off this
+  /// reintroduces (dismissing straight from a resized-up state again needs a longer drag).
+  double get _activeFloor => _floorFraction ?? _defaultFraction;
+
+  /// The height fraction ACTUALLY rendered right now — [SheetDragState.heightFraction] under
+  /// the current [_activeFloor] and the shared ceiling. `null` [_virtualFraction] (never
+  /// dragged) → the structural floor (or the default fraction before it latches).
   double _currentRenderedFraction(double screenHeight) {
     final double? virtual = _virtualFraction;
     if (virtual == null) return _floorFraction ?? _defaultFraction;
@@ -345,24 +351,21 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
 
   void _onDragStart(DragStartDetails details, double screenHeight) {
     _bounceController?.stop();
-    // rb-flutter-sheetkit-dismiss-after-resize-fix: re-anchor THIS gesture's floor to
-    // wherever the card is ACTUALLY (visually) resting right now — never reuse a stale value
-    // from a previous gesture (that cross-gesture freeze is precisely the "調高後關不掉" bug
-    // this fixes), and never the raw unclamped `_virtualFraction` (see
-    // `_currentRenderedFraction`'s doc for why that would be wrong after an overshot
-    // resize-up). See `_gestureFloorFraction`'s doc for the full rationale.
+    // rb-flutter-sheetkit-resize-floor-not-reanchored: re-baseline the accumulator to wherever
+    // the card is ACTUALLY (visually) resting right now — never reuse a stale value from a
+    // previous gesture, and never the raw unclamped `_virtualFraction` (a prior gesture that
+    // overshot past the ceiling leaves it far above what is actually rendered; re-baselining to
+    // that raw overshoot instead of the visually-rendered height would make a fresh drag's delta
+    // insignificant relative to the large, invisible gap). This only affects where THIS
+    // gesture's drag STARTS counting from — it does NOT change [_activeFloor] itself, which
+    // stays the fixed structural floor for every gesture (see its own doc for why). Byte-
+    // identical no-op for the presentation's first gesture and for any gesture that never
+    // overshot the ceiling.
     final double current = _currentRenderedFraction(screenHeight);
-    _gestureFloorFraction = current;
-    // Also re-baseline the accumulator itself to the same (clamped) value: `_virtualFraction`
-    // is UNCLAMPED and a prior gesture that overshot past the ceiling leaves it far above what
-    // is actually rendered. Without this, `_onDragUpdate`'s `_virtualFraction ?? floor` would
-    // keep accumulating from that stale overshoot instead of from the visible height, making a
-    // fresh downward drag's delta insignificant relative to the (large, invisible) gap — the
-    // exact same "goalposts moved" failure mode this whole fix targets, just re-introduced via
-    // the accumulator instead of the floor. Byte-identical no-op for the presentation's first
-    // gesture (there, `current` is already what `_onDragUpdate` would have started from) and
-    // for any gesture that never overshot the ceiling.
     _virtualFraction = current;
+    // This gesture's OWN dismiss reference — see [_dismissFloorFraction]'s own doc for why this
+    // is a SEPARATE re-anchored value from the structural [_activeFloor] above.
+    _dismissFloorFraction = current;
   }
 
   void _onDragUpdate(DragUpdateDetails details, double screenHeight) {
@@ -377,24 +380,40 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
   }
 
   void _onDragEnd(DragEndDetails details, double screenHeight) {
-    final double floor = _activeFloor;
-    final SheetDragState state = sheetDragState(
-      virtualFraction: _virtualFraction ?? floor,
-      floorFraction: floor,
+    final double resizeFloor = _activeFloor;
+    final double dismissFloor = _dismissFloorFraction ?? resizeFloor;
+    final double virtual = _virtualFraction ?? resizeFloor;
+
+    // Dismiss decision FIRST, against the GESTURE's OWN dismiss floor
+    // (rb-flutter-sheetkit-resize-floor-not-reanchored) — parity Android's `onDragEnd` checking
+    // `dragShouldDismiss(computeDismissExcessPx(..., floorFraction = startDismissFloor), ...)`
+    // unconditionally, before any resize-hold/bounce branch. See [_dismissFloorFraction]'s own
+    // doc for why this can fire even while the resize-relative `dragOffset` below is still `0`
+    // (the accepted trade-off).
+    final double dismissExcess = sheetDragState(
+      virtualFraction: virtual,
+      floorFraction: dismissFloor,
       screenHeight: screenHeight,
-    );
-    // Pure resize (up, or down but not yet past the floor) — MUST hold the height as
-    // released, no bounce / no dismiss judgement (spec: "使用者在尚未觸及下限以下的任何時刻
-    // 放手...卡片 SHALL 維持放手當下的高度，MUST NOT 彈回、MUST NOT 觸發關閉判斷").
-    if (state.dragOffset <= 0) return;
-    if (sheetShouldDismiss(state.dragOffset)) {
+    ).dragOffset;
+    if (sheetShouldDismiss(dismissExcess)) {
       // Deliberately does NOT reset `_virtualFraction` here — the residual drag offset
       // stacks additively (same direction) with the presenter's own exit slide instead of
       // snapping back first. See design.md Decision 5.
       widget.onDismiss?.call();
       return;
     }
-    _bounceBackToFloor(floor);
+
+    // not dismissing: resize-floor-relative decision (hold vs bounce the card-follow peek).
+    final SheetDragState visual = sheetDragState(
+      virtualFraction: virtual,
+      floorFraction: resizeFloor,
+      screenHeight: screenHeight,
+    );
+    // Pure resize (up, or down but not yet past the structural floor) — MUST hold the height
+    // as released, no bounce / no dismiss judgement (spec: "使用者在尚未觸及下限以下的任何時刻
+    // 放手...卡片 SHALL 維持放手當下的高度，MUST NOT 彈回、MUST NOT 觸發關閉判斷").
+    if (visual.dragOffset <= 0) return;
+    _bounceBackToFloor(resizeFloor);
   }
 
   void _bounceBackToFloor(double floor) {

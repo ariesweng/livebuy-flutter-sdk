@@ -154,6 +154,13 @@ class LivebuyFlutterPlayerView(
                     // guest-comment-channel-bridge-core-flutter: raw permission flag
                     // passthrough — does NOT compute `chatEnabled` here.
                     guestComment = ch.guestComment,
+                    // channel-diversion-bridge-core-flutter: raw passthrough, see
+                    // `ChannelChromeBridge.Snapshot.diversion`'s own doc comment.
+                    diversion = ch.diversion,
+                    // rb-flutter-other-goods-channel-bridge-core: cross-video
+                    // recommended products — reuses the SAME `productToMap` helper
+                    // `goods` above uses, no extra API call needed.
+                    otherGoods = ch.otherGoods.map { productToMap(it) },
                 )
                 if (ChannelChromeBridge.shouldEmit(snapshot, lastChannelChromeSnapshot)) {
                     lastChannelChromeSnapshot = snapshot

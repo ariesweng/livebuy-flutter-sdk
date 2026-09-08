@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBProduct;
 
 import '../productsheets/equalizer_glyph.dart';
+import '../productsheets/product_status_badge.dart';
 import '../productsheets/sheet_scaffold.dart' show liveProductImage;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
@@ -46,12 +47,13 @@ const double _pinnedSwipeVelocity = 80;
 //       LBProduct? pinnedProduct,                //    (by value, from PlayerShellModel)
 //       String hostCaption = '',                 //    host-supplied static copy (GAP NOTE)
 //       bool showGestureHints = true,            //    static presentation toggle
-//       VoidCallback? onTapPinnedProduct })      // 3. action callback (last, default no-op)
+//       ValueChanged<LBProduct>? onTapPinnedProduct })  // 3. action callback (last, default no-op)
 //
 // The announce / caption / gesture hints carry no tap intent. The ONLY action is
-// the pinned card's tap, which is a host-wired core exit (`simulateProductTap`,
-// NOT owned by the shell — the host wires it to core). The surface forwards it via
-// [onTapPinnedProduct] and renders correctly with every callback left null.
+// the pinned card's tap, which carries the tapped product and is host-wired (turnkey
+// container default: opens that product's detail sheet — NOT owned by the shell). The
+// surface forwards it via [onTapPinnedProduct] and renders correctly with every callback
+// left null.
 //
 // One-way data flow: this widget reads ONLY its passed-in values and NEVER reaches
 // back into PlayerShellModel or DefaultPlayerTemplate (D-1 / D-4).
@@ -100,9 +102,15 @@ class LiveOverlayChromeView extends StatelessWidget {
   /// baseline byte-stable). live-pinned-card-image-radius.
   final bool live;
 
-  /// Host-wired pinned-card tap → core `simulateProductTap`. `null` → no-op
-  /// (snapshot-safe).
-  final VoidCallback? onTapPinnedProduct;
+  /// Host-wired pinned-card tap → carries the tapped [LBProduct] (multi-product carousel:
+  /// the CURRENTLY displayed page's product, not always index 0). `null` → no-op (snapshot-safe).
+  /// `rb-flutter-pinned-card-tap-opens-detail`: type widened from `VoidCallback?` (no product
+  /// param) — the turnkey container's default now forwards to `_defaultOnProductTap` (→
+  /// `DefaultPlayerTemplate.handleProductTap`, opens that product's DETAIL sheet), the same
+  /// already-tested default `onProductTap` uses — NOT a new `simulateProductTap` round-trip
+  /// (that path is a confirmed Flutter-bridge dead end, see
+  /// `flutter-product-tap-diversion-wiring-reference-ui`).
+  final ValueChanged<LBProduct>? onTapPinnedProduct;
 
   /// Host-wired pinned-card CLOSE (the right-top X chip). `null` → no-op → the close chip is
   /// inert (snapshot-safe). Carries the dismissed product id so the call site records a
@@ -301,8 +309,9 @@ class LiveOverlayChromeView extends StatelessWidget {
   /// Bottom-right white product card for the single narrating product. Mirrors
   /// `LBLivePinnedCard`: image area + a tappable close chip (dismisses this product locally),
   /// accent narrate tag (when narrating), 1-line name, accent live price. A card-body tap forwards
-  /// to [onTapPinnedProduct] (host-wired core exit `simulateProductTap`); the close chip forwards to
-  /// [onDismissPinnedProduct] and consumes its own tap so it does NOT open the detail.
+  /// [product] to [onTapPinnedProduct] (host-wired, opens that product's detail sheet by default);
+  /// the close chip forwards to [onDismissPinnedProduct] and consumes its own tap so it does NOT
+  /// open the detail.
   Widget _pinnedCard(LBProduct product) {
     // rb-flutter-vod-live-product-card-restyle (2026-09-03): 132×92 → 100×88. Current
     // values (132 container width / 92 thumbnail height) were verified to match the
@@ -317,7 +326,7 @@ class LiveOverlayChromeView extends StatelessWidget {
     // shrink from 132×92 down to 100×wide).
     return GestureDetector(
       key: LbTestKeys.pinnedCard,
-      onTap: onTapPinnedProduct,
+      onTap: () => onTapPinnedProduct?.call(product),
       child: Container(
         width: 100,
         decoration: BoxDecoration(
@@ -439,13 +448,18 @@ class LiveOverlayChromeView extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 3),
-                  // Live price (accent). `priceShow` is the pre-formatted string.
+                  // Live price (accent), or dim「已售完」when sold out — single source of
+                  // truth via ProductStatusBadge, matching MiniCartPeek / ProductRow's
+                  // existing sold-out treatment (rb-flutter-live-pinned-card-soldout-label,
+                  // parity iOS rb-ios-live-pinned-card-soldout-label). `priceShow` is the
+                  // pre-formatted string.
                   Text(
-                    _livePriceText(product),
+                    _isSoldOut(product) ? _soldOutLabel : _livePriceText(product),
                     style: TextStyle(
-                      color: theme.accent,
+                      color: _isSoldOut(product) ? _soldOutColor : theme.accent,
                       fontSize: 13 * theme.fontScale,
-                      fontWeight: FontWeight.w800,
+                      fontWeight:
+                          _isSoldOut(product) ? FontWeight.w600 : FontWeight.w800,
                     ),
                   ),
                 ],
@@ -571,6 +585,13 @@ class LiveOverlayChromeView extends StatelessWidget {
   /// there (`rb-flutter-replay-live-chrome-parity`, parity iOS `isNarrating(_:isLive:)`). Pure.
   bool _isNarrating(LBProduct product, bool isLive) =>
       isLive ? product.narrateStatus == 2 : true;
+
+  /// Sold-out state for the pinned card's price line — single source of truth via
+  /// `ProductStatusBadge` (rb-flutter-live-pinned-card-soldout-label, parity iOS
+  /// `LiveOverlayChromeView.isSoldOut(_:)`). MUST NOT gate whether the card itself
+  /// appears or whether the「介紹中」badge shows — both stay orthogonal to sold-out. Pure.
+  bool _isSoldOut(LBProduct product) =>
+      ProductStatusBadge.resolve(product) == ProductStatusBadge.soldOut;
 
   /// The pinned card's product image URL (`photos.first ?? pic`). `liveProductImage`
   /// trims it and gates on emptiness, so this only picks the first photo or falls back
@@ -709,6 +730,17 @@ const String _hostCaptionLabel = '主持人';
 
 /// Narrate-tag copy shown on the pinned card ("介紹中").
 const String _narrateTagText = '介紹中';
+
+/// Sold-out price-line color (`#9A96A3`), matching this package's existing sold-out-specific
+/// treatment (`ProductRow._soldOutColor` / `MiniCartPeek._soldOutColor`,
+/// rb-flutter-live-pinned-card-soldout-label; color corrected by
+/// rb-flutter-live-pinned-card-soldout-label-color-fix — the original landing mistakenly used
+/// `#6B6775`, this package's general dim-text token (`ProductRow._textDim`, used for
+/// struck-through original price etc), not the sold-out-specific color).
+final Color _soldOutColor = colorFromHex('#9A96A3') ?? const Color(0xFF9A96A3);
+
+/// Sold-out price-line copy ("已售完"), matching `MiniCartPeek` / `ProductRow`.
+const String _soldOutLabel = '已售完';
 
 /// Gesture-hint copy (static localized presentation strings). `_hintTap` updated by
 /// rb-flutter-gesture-clean-mode-v2 (was '點擊畫面 = 切換靜音' — R23's tap-to-mute gesture is

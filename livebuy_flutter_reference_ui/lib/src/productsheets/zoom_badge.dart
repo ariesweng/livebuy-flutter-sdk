@@ -20,6 +20,15 @@ import '../testing/lb_test_keys.dart';
 // renders as tofu in golden) — so the golden shows a correct magnifier, consistent with
 // the iOS / Android / RN self-drawn glyphs. `onTap == null` (demo / golden) → no
 // `GestureDetector` → the golden is byte-identical to the prior decorative badge.
+//
+// GEOMETRY FIX (rb-flutter-product-detail-zoom-badge-glyph-alignment): the handle's
+// position/rotation is derived from the lens circle's own center + radius (below),
+// NOT independent magic numbers — a prior version positioned the handle via unrelated
+// `right`/`bottom` offsets with the WRONG `Transform.rotate` sign, leaving the handle
+// floating away from the lens along the wrong diagonal (a "/" shape instead of the
+// correct outward "\" shape radiating from the lens toward the bottom-right corner).
+// This mirrors Android `ZoomBadge.kt`'s `MagnifierGlyph`, which derives its handle's
+// start point from `lensCenter + edge*(1,1)` — always connected, any `diameter`.
 
 /// A circular zoom badge: a [diameter] disc filled [discColor] with a centered
 /// self-drawn magnifier glyph in [glyphColor]. Tap ([onTap]) opens the lightbox.
@@ -50,6 +59,18 @@ class ZoomBadge extends StatelessWidget {
     final lens = diameter * 0.42;
     final stroke = math.max(1.0, diameter * 0.08);
     final handleLen = diameter * 0.26;
+    // Lens circle geometry (centerline) — same box this build() positions the lens
+    // Container at (`left`/`top`: diameter*0.22, `width`/`height`: lens), so its center
+    // is at `diameter*0.22 + lensRadius` on both axes (the lens box is square).
+    final lensRadius = lens / 2;
+    final lensCenter = diameter * 0.22 + lensRadius;
+    // k = cos(45°) == sin(45°) — the (+1,+1) unit diagonal the handle radiates along.
+    const k = 0.7071067811865476; // sqrt(2) / 2
+    // p1 — the point ON the lens circle's edge, along the (+1,+1) diagonal: the
+    // handle's near endpoint. handleCenter — the midpoint of the handle segment
+    // running from p1 outward by handleLen along the same diagonal.
+    final p1 = lensCenter + lensRadius * k;
+    final handleCenter = p1 + (handleLen * k) / 2;
     final Widget disc = Container(
       width: diameter,
       height: diameter,
@@ -69,12 +90,13 @@ class ZoomBadge extends StatelessWidget {
               ),
             ),
           ),
-          // Handle — a short rotated bar running to the lower-right.
+          // Handle — a short rotated bar running to the lower-right, anchored to the
+          // lens circle's edge (see lensRadius/lensCenter/p1/handleCenter above).
           Positioned(
-            right: diameter * 0.2,
-            bottom: diameter * 0.18,
+            left: handleCenter - stroke / 2,
+            top: handleCenter - handleLen / 2,
             child: Transform.rotate(
-              angle: math.pi / 4, // 45°
+              angle: -math.pi / 4, // -45° — the (+1,+1) outward diagonal
               child: Container(
                 width: stroke,
                 height: handleLen,

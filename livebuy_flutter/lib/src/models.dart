@@ -1159,13 +1159,25 @@ class LBPlayerChannelInfo {
 
   /// product-list-bridge-core-flutter: the channel's primary sellable-product
   /// list (`channel.goods`), UNFILTERED, as it stood at the moment this
-  /// projection was built. Distinct from `channel.other_goods` (cross-video
-  /// recommendations — NOT carried by this projection). This is a
+  /// projection was built. Distinct from [otherGoods] (`channel.other_goods`
+  /// — cross-video recommendations, a DIFFERENT list). This is a
   /// channel-LOAD-time snapshot only: it does NOT track the 5s
   /// `/sdk/video/goods` poll's ongoing updates (that refresh path has no
   /// Flutter bridge as of this change). Feeds a host's `handleProducts` /
   /// product-bag UI. Default `const []`.
   final List<LBProduct> goods;
+
+  /// rb-flutter-other-goods-channel-bridge-core: cross-video recommended
+  /// products (`channel.other_goods`), UNFILTERED, as they stood at the
+  /// moment this projection was built. Distinct from [goods] (the currently
+  /// loaded channel's OWN sellable products) — `other_goods[]` items belong
+  /// to OTHER videos. Previously NOT carried by this projection at all (see
+  /// [goods]'s own doc comment history); now bridged so a host's product-
+  /// detail sheet can populate a "more products" / recommendations section
+  /// (`DefaultPlayerTemplate.setOtherGoods`). This is a channel-LOAD-time
+  /// snapshot only: it does NOT track any subsequent poll's updates. Default
+  /// `const []`.
+  final List<LBProduct> otherGoods;
 
   /// channel-shop-intro-bridge-core-flutter: shop introduction text
   /// (`channel.shop.intro`). "" when absent. May legitimately be "" when a
@@ -1186,6 +1198,13 @@ class LBPlayerChannelInfo {
   /// remains a reference-ui/template-layer concern.
   final int guestComment;
 
+  /// channel-diversion-bridge-core-flutter: raw `channel.diversion` passthrough (`0` = in-app
+  /// product panel, `1` = purchase-page URL redirect). Default `0` when absent, matching both
+  /// native SDKs' own decode default for this field. Feeds
+  /// `DefaultPlayerTemplate.handleProductTap(product:diversion:)` — a reference-ui/template-layer
+  /// concern; this projection only carries the raw value.
+  final int diversion;
+
   const LBPlayerChannelInfo({
     this.publishAt = '',
     this.cover = '',
@@ -1198,8 +1217,10 @@ class LBPlayerChannelInfo {
     this.shareUrl = '',
     this.type = -1,
     this.goods = const [],
+    this.otherGoods = const [],
     this.shopIntro = '',
     this.guestComment = 1,
+    this.diversion = 0,
   });
 
   /// Decode from the native `{"event":"channelChange", …}` EventChannel payload.
@@ -1226,13 +1247,29 @@ class LBPlayerChannelInfo {
         // helper (also used by `LBPlaybackProgress.fromMap`) — missing/null/
         // non-List → `[]`; non-Map entries skipped, not thrown on.
         goods: _asProductList(map['goods']),
+        // rb-flutter-other-goods-channel-bridge-core: reuses the SAME
+        // `_asProductList` helper `goods` uses above — identical tolerant-decode
+        // rules (missing/null/non-List → `[]`; non-Map entries skipped).
+        otherGoods: _asProductList(map['otherGoods']),
         shopIntro: (map['shopIntro'] as String?) ?? '',
         // guest-comment-channel-bridge-core-flutter: a NEW, dedicated helper —
         // NOT `_asLiveStatus` — because that helper's `-1` fallback would be
         // the wrong polarity for this field's SDK-wide-established "缺欄時
         // fail-open" default (`1`).
         guestComment: _asGuestComment(map['guestComment']),
+        diversion: _asDiversion(map['diversion']),
       );
+}
+
+/// Coerce `diversion` to Int. Absent / unparseable → `0` (in-app product panel — the more
+/// common wire value, and both native SDKs' own decode default for this field). Tolerates a
+/// num (native emit) OR a stringified Int (defensive). A dedicated helper (not
+/// `_asLiveStatus`, whose `-1` fallback would be the wrong polarity here — `0` IS this
+/// field's own valid value, not an "unknown" sentinel).
+int _asDiversion(Object? value) {
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value) ?? 0;
+  return 0;
 }
 
 /// Coerce `liveStatus` to Int. Absent / unparseable → `-1` (unknown). Tolerates a

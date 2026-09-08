@@ -324,6 +324,22 @@ class TemplateAttachment {
         // CART_ADD_REQUEST.video_id (Flutter has no ingestChannel). pure assignment.
         final vid = event.params['video_id'];
         template.setCurrentVideoId(vid is String ? vid : null);
+        // swipe-nav-video-open-wiring — VIDEO_OPEN additively carries
+        // `prev_video_id`/`next_video_id` (video-open-adjacent-nav-bridge; key
+        // OMITTED, not null, when there is no adjacent video in that direction).
+        // Feed them into the template's navigation view-model so
+        // `flutter-reference-ui`'s swipe gesture (hasNextVideo/hasPrevVideo) has
+        // real adjacent-video ids instead of permanently null (Flutter has no
+        // ingestChannel; handleNavTargets is the same host-fed forwarder used
+        // when a host calls it directly — this is simply an additional caller).
+        // Tolerant cast, same convention as `vid` above: a non-String value or a
+        // missing key both degrade to null (no adjacent video).
+        final prevVideoId = event.params['prev_video_id'];
+        final nextVideoId = event.params['next_video_id'];
+        template.handleNavTargets(
+          prevVideoId: prevVideoId is String ? prevVideoId : null,
+          nextVideoId: nextVideoId is String ? nextVideoId : null,
+        );
         return LBEventReply.acknowledge;
 
       default:

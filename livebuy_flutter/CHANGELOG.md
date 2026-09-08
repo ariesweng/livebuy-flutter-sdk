@@ -6,7 +6,73 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
-（無 —— 目前累積內容已折入下方 `2.1.0`）
+（無 —— 目前累積內容已折入下方 `2.2.0`）
+
+## 2.2.0 - 2026-09-08
+
+> **三套件皆有實際內容變動**（lockstep）。自 `2.1.0` 以來累積 26 個內容 commit
+> （另 2 個純測試補強不列入），主軸是使用者實機測試（Samsung SM-G887F）回報的一系列
+> Android/Flutter 播放器互動問題修復，加上讚特效素材落地收尾與商品列表狀態旗標訂正批次。
+> **含 3 項 ⚠️ BREAKING**（詳見下方專節）。
+
+### Added
+
+- **讚特效重寫收尾（design R37）**：讚按鈕點擊觸發的飄心特效改為 4 種隨機圖案（愛心/星星/
+  箭頭/十字）× 3 種上升軌跡 × 3 種擺動路徑，並新增讚鈕亮色態（`rb-flutter-live-like-burst-
+  restyle`）；素材落地問題解除後，4 種圖案全數改用設計稿提供的真實 PNG 素材繪製，取代前一輪
+  的 Material icon / 自繪徽章近似畫法（`rb-flutter-live-like-burst-png-glyphs`，含 BREAKING，
+  見下方專節）。
+- **售完 / 介紹中 / 回放狀態訂正批次**：LIVE 直播疊層置頂商品卡現在會正確顯示「已售完」標籤
+  （`rb-flutter-live-pinned-card-soldout-label`）；直播回放中從未被主播介紹過的商品縮圖不再
+  顯示看講解／介紹中效果，點擊完全 no-op（`rb-flutter-replay-never-introduced-no-ui` /
+  `-tap-noop`）；商品列表縮圖的覆蓋層模式改讀正確的 `isFinishedLiveReplay` 旗標
+  （`rb-flutter-product-row-replay-flag-fix`）；VOD 商品列表縮圖撤回先前誤加的「done」狀態
+  （`rb-flutter-product-row-vod-done-state-removed`）。
+- **商品明細「更多商品」推薦區塊補齊**：`channel.other_goods` 首次真正接上明細 sheet 的推薦格
+  （`rb-flutter-other-goods-channel-bridge-core` + `-recommendations-wiring`）。
+- **釘選商品卡點擊行為變更**：點擊直播疊層的釘選商品卡改為開啟商品明細 sheet 並攜帶被點擊的
+  商品，取代先前固定開啟第一個商品的行為（`rb-flutter-pinned-card-tap-opens-detail`，含
+  BREAKING，見下方專節）。
+
+### Fixed
+
+- **播放器手勢與導流修復（使用者實機測試批次）**：修復點擊商品卡完全崩潰跳出 app 的問題
+  （`flutter-url-open-crash-guard-template`，導流連結開啟）、分享／聯絡商家按鈕崩潰
+  （`flutter-share-crash-guard-reference-ui`）、商品明細／加購／補貨 sheet 完全點不開
+  （`flutter-product-tap-diversion-wiring-reference-ui`，補齊 `channel.diversion` 橋接
+  `channel-diversion-bridge-core-flutter`）、上下滑手勢切換相鄰影片失效
+  （`flutter-swipe-nav-wiring-template`）、開場影片播放時「略過介紹」skip 鈕不出現
+  （`flutter-intro-overlay-wiring-reference-ui`）。
+- **進度條顯示修復**：修正細線／展開進度條在特定情境下從中間往兩邊跑出、填色錯位的問題
+  （`flutter-progress-bar-track-fill-width-guard-reference-ui`）。
+- **商品列表縮圖點擊修復**：點擊縮圖前往介紹片段（seek）時同步關閉抽屜，補齊四端唯一缺此行為
+  的 Flutter（`rb-flutter-product-bag-seek-dismiss`）；分享鈕改接上真實系統分享，不再只送無人
+  接收的頻道事件（`rb-flutter-product-list-share-tap-noop`）。
+- **「更多」選單 sheet 對齊修復**：動作列補上遺漏的頂部間距（`rb-flutter-live-more-sheet-
+  vertical-padding`，`top` 值原寫成 0）；改用共用 `LBSheetScaffold`，補齊把手與拖曳收合行為
+  （`rb-flutter-live-more-sheet-drag-resize-parity`）。
+- **Sheet 拖曳 resize 修復**：resize 下限改為恆定的結構性下限，dismiss 下限則獨立每次手勢
+  重新錨定，修正先往上拉再往下拖時出現的異常留白（`rb-flutter-sheetkit-resize-floor-not-
+  reanchored`）。
+- **Icon 對齊修復**：修正商品明細放大鏡圖示的握把方向與圓周錨定問題
+  （`rb-flutter-product-detail-zoom-badge-glyph-alignment`）；飄動愛心改用向量 `Icons.favorite`，
+  取代字面 Unicode `♥` 字元（`rb-flutter-heart-burst-icon-parity`）；明細鈕改用向量
+  `DetailGlyph`、搜尋欄改用向量 `SearchGlyph`（皆取代字面/emoji 字元，2026-09-06 落地，
+  本輪重生對應 golden baseline 收尾）。
+- **商品清單置頂排除純 VOD**（`flutter-vod-product-list-introducing-order-exclude-vod-template`）。
+
+### ⚠️ BREAKING
+
+- **`LivebuyPlayerConfig.onTapPinnedProduct` 型別變更**（reference-ui，
+  `rb-flutter-pinned-card-tap-opens-detail`，**唯一一項源碼相容性破壞**）—— `VoidCallback?` →
+  `ValueChanged<LBProduct>?`。既有覆寫此參數的 host（`onTapPinnedProduct: () { ... }`）升級後將
+  編譯失敗，修法是把簽章改為 `(product) { ... }`（一行改動）。iOS/Android/RN 套件不受影響。
+- **售完商品縮圖覆蓋層行為變更**（reference-ui，非 API 簽章變更，
+  `rb-flutter-product-row-soldout-introducing-visible`）—— 售完商品若同時處於介紹中狀態，縮圖
+  現在會顯示介紹中效果（VOD 遮罩／LIVE-REPLAY 橫幅），先前這種組合下縮圖只顯示乾淨的售完態。
+- **讚特效飄心不再吃 `theme.accent` 染色**（reference-ui，僅本套件內部實作細節，非公開 API，
+  `rb-flutter-live-like-burst-png-glyphs`）—— 4 種圖案（含先前吃 accent 染色的 heart）統一改為
+  顯示各自 PNG 素材本身烘焙好的固定色，parity RN 同批決策。
 
 ## 2.1.0 - 2026-09-07
 

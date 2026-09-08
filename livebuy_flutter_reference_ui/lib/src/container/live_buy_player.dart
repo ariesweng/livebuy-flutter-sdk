@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show debugPrint, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:share_plus/share_plus.dart' show Share;
@@ -85,7 +86,9 @@ LBEventReply resolveContainerEventReply(
 
 /// 組商品分享連結（issue 6）：在 [base]（= `channel.share_url`）後加上商品介紹時間 `t=<beginTime>`（秒）。
 /// Pure（無副作用）所以單元測 + host override 共用一份實作（iOS / Android `productShareURLString`
-/// parity）。Flutter reference-ui 無系統分享 plugin，故此 helper 供 host 自組連結後分享。
+/// parity）。容器的 `onShareProduct` DEFAULT（`_defaultOnShareProduct`）已用此 helper 組連結經
+/// `share_plus` 真的開系統分享（`rb-flutter-product-list-share-tap-noop`）；host override 仍可
+/// 直接呼叫此 helper 自組連結。
 /// - [base] 為空 → 回 `''`。
 /// - [beginTime] 為 null 或負 → 回 [base]（不加 `?t=`）。
 /// - [base] 已含 query（`?`）→ 用 `&` 串接，否則 `?`。
@@ -105,6 +108,117 @@ bool lbShouldPresentChannelShare(String shareUrl) => shareUrl.isNotEmpty;
 /// 比照同檔上方 [lbShouldPresentChannelShare] 的命名與模式。可呈現時由呼叫端再經
 /// `LBURLOpenPolicy.decide()` 裁決 in-app / external / 不可開。
 bool lbShouldPresentServiceLink(String serviceLink) => serviceLink.isNotEmpty;
+
+// MARK: - flutter-share-crash-guard-reference-ui — DEFAULT onShare/onServiceLink crash guard
+//
+// Real-device root cause: `Share.share` (share_plus 9.0.0's Android `startActivity` seam) has
+// no native try/catch of its own — a `queryIntentActivities` miss or a stale activity reference
+// throws uncaught and can crash the WHOLE APP PROCESS. This guard catches the SUBSET of
+// failures that surface back to Dart via the plugin's normal error-reply path; an exception
+// thrown from an async native callback that never returns through that path cannot be caught
+// here (see this change's proposal.md — MUST NOT be described as a complete fix).
+//
+// The decision + guard logic below is deliberately extracted into TOP-LEVEL functions (not
+// `_LivebuyPlayerState` methods) with the underlying opener injected as a PARAMETER
+// (docs/unit-test-discipline.md §4 ctor/parameter-injection-for-side-effects; mirrors
+// `flutter-ui`'s `InAppBrowserOpener` / `ExternalUrlOpener` typedef pattern). This lets a unit
+// test drive [performDefaultShare] / [performDefaultServiceLink] directly with a `Throwing*`
+// fake and a plain string literal — no need to construct the full `LivebuyPlayer` widget tree,
+// `LivebuyUI.install()`, or a `LivebuyPlayerController` (which goes through a real MethodChannel
+// with no platform view in the test env — the R5 limitation this file's other tests document).
+
+/// Testable seam for the DEFAULT `onShare` wiring's underlying `Share.share` call.
+typedef ShareOpener = Future<void> Function(String url);
+
+/// PRODUCTION DEFAULT [ShareOpener]: the real `share_plus` system-share call.
+Future<void> _defaultShareOpener(String url) async {
+  await Share.share(url);
+}
+
+/// The DEFAULT `onShare` wiring's decision + crash guard. [lbShouldPresentChannelShare] decides
+/// whether to present at all (unchanged); the ONLY new behavior is that [opener]'s exception is
+/// swallowed (debug log + no-op) instead of propagating and crashing the host app. MUST NOT
+/// rethrow.
+Future<void> performDefaultShare(String shareUrl, ShareOpener opener) async {
+  if (!lbShouldPresentChannelShare(shareUrl)) return;
+  try {
+    await opener(shareUrl);
+  } catch (e) {
+    debugPrint('[LivebuyPlayer] onShare seam threw (swallowed, safe no-op): $e');
+  }
+}
+
+/// DEFAULT `onShareProduct` decision + crash guard (issue 6 real fix,
+/// rb-flutter-product-list-share-tap-noop). Mirrors iOS `presentProductShare`: builds a
+/// product-specific share link via [productShareUrlString] (`channelShareUrl` + `?t=<beginTime>`)
+/// then delegates the actual system-share call to the SAME crash-guarded [performDefaultShare]
+/// seam [onShare] already uses (no second opener / guard). When [channelShareUrl] itself is
+/// empty, [productShareUrlString] returns `''` and this calls [onEmptyShareUrl] INSTEAD of
+/// [opener] — mirrors iOS `presentProductShare`'s own empty-`shareUrl` fallback to
+/// `player.performShare()` (also a channel-level SDK event), so this is NOT a residual no-op
+/// path, it matches iOS's documented fallback. Kept a top-level function (not a
+/// `_LivebuyPlayerState` method) with `opener` / `onEmptyShareUrl` parameter-injected so a unit
+/// test can drive it with string literals + fakes (R5: no platform view in the test env for
+/// `LivebuyPlayerController`'s MethodChannel — same rationale as [performDefaultShare] itself).
+Future<void> performDefaultShareProduct(
+  String channelShareUrl,
+  int? beginTime,
+  ShareOpener opener, {
+  required VoidCallback onEmptyShareUrl,
+}) {
+  final url = productShareUrlString(channelShareUrl, beginTime);
+  if (url.isEmpty) {
+    onEmptyShareUrl();
+    return Future.value();
+  }
+  return performDefaultShare(url, opener);
+}
+
+/// Testable seam for the DEFAULT `onServiceLink` wiring's in-app-browser branch
+/// (`launchUrl(url, mode: LaunchMode.inAppBrowserView)`). Deliberately a SEPARATE typedef from
+/// [ServiceLinkExternalOpener] (not one seam plus a `mode` parameter) so an injector cannot
+/// silently forget which branch it is overriding — same rationale as flutter-ui's
+/// `InAppBrowserOpener` / `ExternalUrlOpener` split.
+typedef ServiceLinkInAppOpener = Future<void> Function(Uri url);
+
+/// PRODUCTION DEFAULT [ServiceLinkInAppOpener].
+Future<void> _defaultServiceLinkInAppOpener(Uri url) async {
+  await launchUrl(url, mode: LaunchMode.inAppBrowserView);
+}
+
+/// Sibling seam for the DEFAULT `onServiceLink` wiring's external-application branch
+/// (`launchUrl(url, mode: LaunchMode.externalApplication)`). See [ServiceLinkInAppOpener] doc.
+typedef ServiceLinkExternalOpener = Future<void> Function(Uri url);
+
+/// PRODUCTION DEFAULT [ServiceLinkExternalOpener].
+Future<void> _defaultServiceLinkExternalOpener(Uri url) async {
+  await launchUrl(url, mode: LaunchMode.externalApplication);
+}
+
+/// The DEFAULT `onServiceLink` wiring's decision + crash guard (same rationale as
+/// [performDefaultShare]). [lbShouldPresentServiceLink] + `LBURLOpenPolicy.decide()` decide
+/// whether/how to present (unchanged); ONE `try`/`catch` wraps BOTH branches (mirrors
+/// flutter-ui's `_openResolvedUrl` single-chokepoint pattern) so either opener's exception is
+/// swallowed instead of propagating. MUST NOT rethrow.
+Future<void> performDefaultServiceLink(
+  String serviceLink, {
+  required ServiceLinkInAppOpener inAppOpener,
+  required ServiceLinkExternalOpener externalOpener,
+}) async {
+  if (!lbShouldPresentServiceLink(serviceLink)) return;
+  final decision = LBURLOpenPolicy.decide(serviceLink);
+  if (decision == null) return;
+  try {
+    switch (decision.target) {
+      case LBURLOpenTarget.inApp:
+        await inAppOpener(decision.url);
+      case LBURLOpenTarget.external:
+        await externalOpener(decision.url);
+    }
+  } catch (e) {
+    debugPrint('[LivebuyPlayer] onServiceLink seam threw (swallowed, safe no-op): $e');
+  }
+}
 
 /// 留言 pill 預設 gating（純函式，與容器 `onComment` 共用一份；parity iOS / Android / RN 同名）：
 /// 暱稱**尚未選名**（`!isLoggedIn && displayName.isEmpty`）→ 回 `true`，容器先呈現 設定暱稱 modal；
@@ -492,9 +606,20 @@ class LivebuyPlayerConfig {
   /// guestNameEdit / more). 「留言…」comment is a separate seam (`onComment`).
   final ValueChanged<LBSideRailKind>? onTapRailItem;
 
-  /// Pinned product card tap. DEFAULT: `controller.operationPanel.simulateGoodsTap()`
-  /// (opens the goods surface — same intent as the rail「商品」).
-  final VoidCallback? onTapPinnedProduct;
+  /// Pinned product card tap. DEFAULT: `_defaultOnProductTap` (→
+  /// `DefaultPlayerTemplate.handleProductTap(product:,diversion:)`, opens that product's
+  /// DETAIL sheet — the same default forwarder [onProductTap] already uses).
+  ///
+  /// 🔴 **BREAKING（編譯期）**：型別由 `VoidCallback?`（無參數）加寬為
+  /// `ValueChanged<LBProduct>?`（`rb-flutter-pinned-card-tap-opens-detail`）。Dart 不允許把
+  /// 無參數 callback 指派給帶參數函式型別，故已覆寫此 seam 的 host 會在升級時編譯失敗，需把
+  /// `onTapPinnedProduct: () { ... }` 改成 `onTapPinnedProduct: (product) { ... }`。舊預設
+  /// `controller.operationPanel.simulateGoodsTap()` 語意錯誤（開商品**列表**、非該商品**明細**）
+  /// 已移除；MUST NOT 改呼叫 `controller.productOverlay.simulateProductTap(product)` ——該路徑
+  /// 已被 `flutter-product-tap-diversion-wiring-reference-ui` 於真機證實為 Flutter bridge 的
+  /// 死路（native method-channel round-trip，本容器的 `LivebuyPlayerCore(...)` 建構點從未接住
+  /// 其回程的 `onProductTap` 事件）。
+  final ValueChanged<LBProduct>? onTapPinnedProduct;
 
   /// LIVE「留言…」pill. DEFAULT: open + focus the on-demand chat composer.
   final VoidCallback? onComment;
@@ -523,11 +648,14 @@ class LivebuyPlayerConfig {
   /// host override 可改走自家章節跳轉。Mirrors iOS `onSeekToProductIntro`.
   final ValueChanged<LBProduct>? onSeekToProductIntro;
 
-  /// 商品列表列**分享鈕**點擊 → 系統分享，連結帶該商品介紹時間 `?t=beginTime`（issue 6）.
-  /// DEFAULT: `controller.operationPanel.simulateShareTap()`（channel-level 分享事件，由 host
-  /// listener 呈現）——**Flutter reference-ui 不含 share_plus 等系統分享 plugin**（純 widget 層、
-  /// 原生分享為 host 職責），故預設的 per-product `?t=beginTime` 系統分享需 host override（或用
-  /// 套件提供的純函式 [productShareUrlString] 自組連結後分享）。收到該 [LBProduct]。
+  /// 商品列表列**分享鈕**點擊 → 系統分享，連結帶該商品介紹時間 `?t=beginTime`（issue 6，
+  /// rb-flutter-product-list-share-tap-noop 修正）. DEFAULT: 以 `channel.share_url`
+  /// （`LivebuyUI.playerTemplate?.header.shareUrl`）+ `?t=<beginTime>`（純函式
+  /// [productShareUrlString]）經 `share_plus` `Share.share` 開系統分享（複用 [onShare] 同一套
+  /// [performDefaultShare] 崩潰防護）；`channel.share_url` 本身為空時退回
+  /// `controller.operationPanel.simulateShareTap()`（channel-level 事件，由 host listener 呈現
+  /// ——parity iOS `presentProductShare` 對空 `shareUrl` 的既有 fallback）。host 設此 callback
+  /// 完全覆蓋（零變更）。收到該 [LBProduct]。Mirrors iOS `onShareProduct` / `presentProductShare`.
   final ValueChanged<LBProduct>? onShareProduct;
 
   /// Feed event-join entry. DEFAULT: no-op + host guidance (joining needs the event keyword,
@@ -974,6 +1102,14 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// （開瀏覽器）讀取。`''` 表示尚未收到任何 `onChannelChange`、或該頻道 shop 無 serviceLink。
   String _lastServiceLink = '';
 
+  /// flutter-product-tap-diversion-wiring-reference-ui: mirrors `_lastServiceLink`'s pattern —
+  /// every `onChannelChange` tick also captures `info.diversion` here, so the default
+  /// `onProductTap` handler (below) can call
+  /// `DefaultPlayerTemplate.handleProductTap(product:diversion:)` with the CURRENT channel's
+  /// diversion flag. `0` (in-app product panel) is the safe default before the first
+  /// `onChannelChange` tick arrives — matching both native SDKs' own decode default.
+  int _lastDiversion = 0;
+
   late String _currentVideoId;
 
   /// No-template FALLBACK mute mirror. The single mute truth is `template.header.muted`
@@ -1195,6 +1331,15 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     }
   }
 
+  /// Default product-row tap (flutter-product-tap-diversion-wiring-reference-ui). Thin instance
+  /// wrapper binding the container's own [_lastDiversion] mirror + [LivebuyUI.playerTemplate]
+  /// into [forwardProductTapToTemplate] (below) — kept a separate, tiny method (rather than an
+  /// inline closure) only so the `onProductTap:` call site reads as a plain named default,
+  /// matching this file's existing convention (`_toggleMute` / `_routeRailItem`).
+  void _defaultOnProductTap(LBProduct product) {
+    forwardProductTapToTemplate(product, _lastDiversion, LivebuyUI.playerTemplate);
+  }
+
   /// Route a side-rail tap to its core `operationPanel.simulate*` exit (kind-routed default).
   void _routeRailItem(LBSideRailKind kind) {
     final op = _controller.operationPanel;
@@ -1276,6 +1421,7 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
             // 供下方 `onServiceLink` 預設讀取；`forwardChannelChangeToTemplate` 函式本體不變。
             onChannelChange: (info) {
               _lastServiceLink = info.serviceLink;
+              _lastDiversion = info.diversion;
               forwardChannelChangeToTemplate(info, LivebuyUI.playerTemplate);
             },
           ),
@@ -1383,8 +1529,11 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // config.onToggleSubscribe 則完全接管、不套 gating（零改）。
       onToggleSubscribe: c.onToggleSubscribe ?? _gatedSubscribe,
       onTapRailItem: c.onTapRailItem ?? _routeRailItem,
-      onTapPinnedProduct:
-          c.onTapPinnedProduct ?? _controller.operationPanel.simulateGoodsTap,
+      // rb-flutter-pinned-card-tap-opens-detail: reuse the SAME already-tested default
+      // forwarder onProductTap uses below — NOT a new call to
+      // controller.productOverlay.simulateProductTap(product), which is a confirmed Flutter
+      // bridge dead end (see _defaultOnProductTap's own doc comment).
+      onTapPinnedProduct: c.onTapPinnedProduct ?? _defaultOnProductTap,
       // LIVE「留言…」pill → 預設先判斷暱稱是否已設定（R2：讀容器本地鏡像 `_guestNickname`）：未設定
       // （訪客且尚未選名）→ 先呈現 設定暱稱 modal（composeAfter=true、送出後接 composer）；否則開
       // composer。host 自訂 config.onComment 則完全接管、不套 gating（parity iOS / Android / RN）。
@@ -1442,44 +1591,32 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // `POST /sdk/video/claim`（第二次後端回「已領過」→ 500 api.fail → 假失敗）。
       onSubmitClaim:
           c.onSubmitClaim ?? buildAwardClaimSubmit(_controller.requestAwardClaim),
-      onProductTap: c.onProductTap ??
-          (product) => _controller.productOverlay.simulateProductTap(product),
+      onProductTap: c.onProductTap ?? _defaultOnProductTap,
       // 頻道/footer 分享預設（dropin-player-default-share-sheet-flutter，B 等義）：host 設了 onShare →
       // 覆蓋；未設 → 以 channel.share_url（playerTemplate.header.shareUrl）經 share_plus 開系統分享。
       // 空 url → no-op（lbShouldPresentChannelShare）。頻道級不附 ?t=。已設 onShare 的 host 零變更。
-      onShare: c.onShare ??
-          () {
-            final url = LivebuyUI.playerTemplate?.header.shareUrl ?? '';
-            if (lbShouldPresentChannelShare(url)) Share.share(url);
-          },
+      // flutter-share-crash-guard-reference-ui：崩潰防護見 [_defaultOnShare] / [performDefaultShare]。
+      onShare: c.onShare ?? _defaultOnShare,
       // 聯絡商家預設（dropin-service-link-default-browser-wiring-flutter，B 等義）：host 設了
       // onServiceLink → 覆蓋（零變更）；未設 → 以 onChannelChange 捕捉到的最近一次 [_lastServiceLink]
       // 經 lbShouldPresentServiceLink 判斷非空，再經 LBURLOpenPolicy.decide() 裁決：inApp →
       // inAppBrowserView；external → externalApplication；decide() 回 null 或 serviceLink 空 → no-op
       // （比照 flutter-ui/lib/src/default_template.dart 既有 _openResolvedUrl 的裁決 → 分流範式）。
-      onServiceLink: c.onServiceLink ??
-          () {
-            final serviceLink = _lastServiceLink;
-            if (!lbShouldPresentServiceLink(serviceLink)) return;
-            final decision = LBURLOpenPolicy.decide(serviceLink);
-            if (decision == null) return;
-            switch (decision.target) {
-              case LBURLOpenTarget.inApp:
-                launchUrl(decision.url, mode: LaunchMode.inAppBrowserView);
-              case LBURLOpenTarget.external:
-                launchUrl(decision.url, mode: LaunchMode.externalApplication);
-            }
-          },
+      // flutter-share-crash-guard-reference-ui：崩潰防護見 [_defaultOnServiceLink] /
+      // [performDefaultServiceLink]。
+      onServiceLink: c.onServiceLink ?? _defaultOnServiceLink,
       // 列縮圖 → seek 到商品介紹時間（issue 5）：beginTime null 不 seek。
       onSeekToProductIntro: c.onSeekToProductIntro ??
           (product) {
             final begin = product.beginTime;
             if (begin != null) _controller.seek(begin.toDouble());
           },
-      // 列分享 → 系統分享帶 ?t=（issue 6）。Flutter 無 share_plus → 預設退回 channel-level 分享事件
-      // （simulateShareTap，host listener 呈現）；per-product ?t= 需 host override（用 productShareUrlString）。
-      onShareProduct: c.onShareProduct ??
-          (product) => _controller.operationPanel.simulateShareTap(),
+      // 列分享 → 系統分享帶 ?t=（issue 6，rb-flutter-product-list-share-tap-noop 修正）：DEFAULT
+      // 以 channel.share_url（LivebuyUI.playerTemplate?.header.shareUrl）+ ?t=<beginTime>（經
+      // productShareUrlString）真的經 share_plus 開系統分享（複用 onShare 同一套 performDefaultShare
+      // 崩潰防護，不重新發明）；channel.share_url 本身為空才退回 channel-level simulateShareTap()
+      // 事件（parity iOS presentProductShare 的空 shareUrl fallback，非殘留 no-op）。
+      onShareProduct: c.onShareProduct ?? _defaultOnShareProduct,
       // 商品明細「更多商品」推薦卡播放圖示 → 換片（rb-flutter-product-detail-recommendations §4）：
       // 同 onPickHot 的 in-place switch 動作，但 MUST NOT 連動任何 dismiss —
       // ProductSheetsOverlayView 完全不呼叫這個 seam 以外的東西，sheet stack 自己維持開啟。
@@ -1526,6 +1663,40 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
               _controller.seek(seconds, duration: duration),
     );
   }
+
+  /// DEFAULT `onShare` glue (flutter-share-crash-guard-reference-ui): reads the live
+  /// `channel.share_url` and delegates the decision + crash guard to the top-level
+  /// [performDefaultShare] (kept a pure, directly-testable function — see this file's MARK
+  /// block above [performDefaultShare] for why the guard itself lives there, not here).
+  Future<void> _defaultOnShare() {
+    final url = LivebuyUI.playerTemplate?.header.shareUrl ?? '';
+    return performDefaultShare(url, _defaultShareOpener);
+  }
+
+  /// DEFAULT `onShareProduct` glue (rb-flutter-product-list-share-tap-noop): reads the SAME
+  /// live `channel.share_url` [_defaultOnShare] reads, and delegates the link-building +
+  /// crash-guarded system-share decision to the top-level [performDefaultShareProduct]. The
+  /// empty-`channel.share_url` fallback is the existing channel-level `simulateShareTap()` SDK
+  /// event — see [performDefaultShareProduct]'s doc for why that fallback is correct parity
+  /// (iOS `presentProductShare`), not a residual no-op.
+  Future<void> _defaultOnShareProduct(LBProduct product) {
+    final base = LivebuyUI.playerTemplate?.header.shareUrl ?? '';
+    return performDefaultShareProduct(
+      base,
+      product.beginTime,
+      _defaultShareOpener,
+      onEmptyShareUrl: () => _controller.operationPanel.simulateShareTap(),
+    );
+  }
+
+  /// DEFAULT `onServiceLink` glue (flutter-share-crash-guard-reference-ui): reads the container's
+  /// [_lastServiceLink] mirror and delegates the decision + crash guard to the top-level
+  /// [performDefaultServiceLink]. See [_defaultOnShare] doc for the shared rationale.
+  Future<void> _defaultOnServiceLink() => performDefaultServiceLink(
+        _lastServiceLink,
+        inAppOpener: _defaultServiceLinkInAppOpener,
+        externalOpener: _defaultServiceLinkExternalOpener,
+      );
 
   /// LIVE「留言…」pill 預設三層 gating（rb-flutter-live-comment-login-gate，方案 A）：①登入閘優先——訪客且
   /// 該場 guest_comment==0（`operationRail.chatEnabled==false`，讀 LIVE template R2 read path）→ 先本地
@@ -1839,6 +2010,21 @@ void forwardChannelChangeToTemplate(
   // diff-then-notifies internally, so repeated `channelChange` ticks with an unchanged
   // `goods` list are a safe no-op.
   template.handleProducts(info.goods);
+  // rb-flutter-other-goods-recommendations-wiring: forward the channel's cross-video
+  // 「更多商品」candidate list (`info.otherGoods`, projected by
+  // `rb-flutter-other-goods-channel-bridge-core` from `channel.other_goods`) into the
+  // existing `flutter-ui` public entry point `setOtherGoods` — parity iOS `ingestChannel`
+  // / Android `TemplateAttachment` already doing this on every channel load, and RN
+  // reference-ui already reading `LBChannel.otherGoods` directly. `setOtherGoods` is a
+  // pure host-fed cache (mirrors `setCurrentVideoId`/`setShopId`); `_openProductDetail`
+  // consumes it to compute `LBProductDetailState.recommendations` the next time a
+  // product-detail sheet opens. Prior to this line, `setOtherGoods` had ZERO production
+  // callers anywhere in `flutter` / `flutter-ui` / `flutter-reference-ui` — the reported
+  // root cause of「商品明細 sheet 內沒有顯示更多商品區塊」(the「更多商品」recommendations
+  // block never rendering, since it was always fed an empty list). `setOtherGoods`
+  // already overwrites-then-caches internally (no diff-then-notify — pure assignment, no
+  // pixel effect until the next `openDetail`), so repeated `channelChange` ticks are safe.
+  template.setOtherGoods(info.otherGoods);
   // video-info-wiring-reference-ui-flutter: forward the「直播資訊」info-tab fields
   // (title / publishAt / shopName / shopIntro / shopLogo) into the existing `flutter-ui`
   // public entry point `handleInfo`, which drives `DefaultInfoTab` / `VideoInfoPanelView`
@@ -1856,4 +2042,66 @@ void forwardChannelChangeToTemplate(
     shopIntro: info.shopIntro,
     shopLogo: info.shopLogo,
   );
+  // intro-overlay-wiring-reference-ui-flutter: forward `info.start` (+ the
+  // upcoming-relevant fields `publishAt`/`cover`/`liveStatus`/`type`) into the existing
+  // `flutter-ui` public entry points `handleStartUrl` / `handleUpcoming` — parity
+  // iOS/Android `ingestChannel` deriving the StartScreen `hasStart` +
+  // `DefaultUpcomingState` snapshot on every channel load
+  // (`TemplateAttachment.kt:526` / iOS `DefaultPlayerTemplate.swift` equivalent).
+  // Prior to this call, `handleUpcoming`/`handleStartUrl` had ZERO production callers
+  // anywhere in `flutter` / `flutter-ui` / `flutter-reference-ui` (only test doubles
+  // called them directly), so `DefaultPlayerTemplate._hasStart` stayed permanently
+  // `false` and the StartScreen phase mapping (`splash` requires `hasStart`) could
+  // never reach `splash` — the reported root cause of「開場影片播放時沒有出現略過介紹按鈕」
+  // (the skip-intro button never rendering during the intro MP4 preroll, since
+  // `StartScreenView`'s skip affordance is gated on `phase == splash`).
+  // `handleStartUrl` is called first (its own doc: "call before / alongside the state
+  // route") and `handleUpcoming` second (its own doc: "call on channel load, alongside
+  // the state route") — `handleUpcoming` re-derives the SAME `hasStart` from
+  // `info.start` and additionally re-applies the StartScreen phase mapping + the
+  // `upcoming` (直播預告) view-model snapshot, so the two calls are safe together:
+  // `handleUpcoming` alone already re-applies with the fresh value, so the preceding
+  // `handleStartUrl` call is a redundant-but-harmless write to the same private
+  // `_hasStart` field (both wire the same `info.start`, no divergence possible).
+  template.handleStartUrl(info.start);
+  template.handleUpcoming(
+    publishAt: info.publishAt,
+    cover: info.cover,
+    start: info.start,
+    liveStatus: info.liveStatus,
+    type: info.type,
+  );
+}
+
+/// Default product-row tap forward (flutter-product-tap-diversion-wiring-reference-ui). Calls
+/// `DefaultPlayerTemplate.handleProductTap(product:diversion:)` DIRECTLY — the correct exit per
+/// its own doc comment ("the host calls `template.handleProductTap(...)` from its per-view
+/// `LivebuyPlayer.onProductTap` typed callback", `template_attachment.dart`'s `productClick`
+/// case) — so that a `diversion == 0` tap populates `productSheet.detail` (opening the in-app
+/// product-detail / add-to-cart / restock-notify sheet stack) and a `diversion == 1` tap opens
+/// the product's purchase-page URL.
+///
+/// 🔴 PRIOR BUG (this change fixes it): the container's old default `onProductTap` called
+/// `_controller.productOverlay.simulateProductTap(product)` instead — a NATIVE method-channel
+/// round-trip (`productOverlay_simulateProductTap` → native `ProductOverlayView
+/// .simulateProductTap` → `onProductTap` Kotlin/Swift closure → the Flutter bridge's
+/// `productTap` EventChannel emit) that comes back to `LivebuyPlayerCore.onProductTap` — a
+/// widget property the container's own `LivebuyPlayerCore(...)` call site never wires. The
+/// whole round-trip was therefore a dead end: EVERY product tap silently did nothing (confirmed
+/// on real hardware via `adb logcat`: no sheet, no crash, no log line — `simulateProductTap`
+/// exists for the native Android/iOS reference-ui apps, which share one process/runtime with
+/// their template and don't need this round-trip at all). iOS/Android-native are unaffected —
+/// only the Flutter bridge's cross-runtime plumbing had this specific gap. [diversion] is the
+/// CURRENT channel's `diversion` flag (channel-diversion-bridge-core-flutter,
+/// `LBPlayerChannelInfo.diversion`) — a per-CHANNEL setting, not a per-product one; the
+/// container mirrors it into `_lastDiversion` on every `onChannelChange` tick (parity
+/// `_lastServiceLink`'s existing mirror pattern) and passes that mirror in here.
+///
+/// Extracted as a standalone top-level function — same rationale as
+/// [forwardChannelChangeToTemplate] / [forwardSubtitleChangeToTemplate]: the container
+/// `LivebuyPlayer` cannot be constructed in a widget test, so an inline closure body at the
+/// `onProductTap:` call site would be unreachable by a unit test.
+void forwardProductTapToTemplate(
+    LBProduct product, int diversion, DefaultPlayerTemplate? template) {
+  template?.handleProductTap(product: product, diversion: diversion);
 }

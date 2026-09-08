@@ -333,18 +333,61 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
   }
 
   /// 3px-tall track: [background] behind, opaque white fill left-aligned by [ratio].
+  ///
+  /// (rb-flutter-progress-bar-track-fill-width-guard) Two independent, STACKED bugs were found
+  /// and fixed here, on real hardware (`flutter test`'s software renderer showed neither):
+  ///
+  /// 1. **Sizing**: both callers ([_idleLineVisual], [_expandedTrackVisual]) wrap this in an
+  ///    `Align`, which — unlike a stretching parent (`CrossAxisAlignment.stretch` /
+  ///    `Positioned.fill`) — sizes ITSELF to the incoming bounded max, but only STRETCHES ITS
+  ///    CHILD to that size when the child asks for it. Without an explicit width, this outer
+  ///    `SizedBox`'s width used to fall through to its (then-)child `Stack`'s intrinsic size,
+  ///    which resolved to `ratio * availableWidth` — the WHOLE track (bg + fill together)
+  ///    shrinking to `ratio`-of-full-width and then re-centering inside `Align`'s full-width box.
+  ///    `width: double.infinity` forces this outer `SizedBox` to claim the full available width
+  ///    regardless of `Align`'s non-stretching default — this alone fixed the reported "grows
+  ///    from the middle outward" symptom ("細線進度條...從中間往左右兩邊跑出"), confirmed via
+  ///    `adb shell screenrecord` pixel-scans (the track's OWN left/right edges no longer moved).
+  /// 2. **Fill invisibility (the deeper bug)**: even after fix #1, the "played" fill was still
+  ///    completely invisible on-device at every ratio strictly between 0 and 1 — confirmed with a
+  ///    `Color(0xFFFF0000)` debug substitution: zero red pixels at ANY ratio (up to 0.976),
+  ///    despite `flutter test` widget tests (software renderer, no `Impeller`) asserting the
+  ///    correct rendered size/position for the identical widget tree. The original
+  ///    `FractionallySizedBox(widthFactor: ratio, ...)` — a NON-positioned `Stack` child sized
+  ///    from its own `widthFactor` — was the actual culprit: replaced with a `LayoutBuilder`
+  ///    reading the resolved pixel `maxWidth` directly and an explicit
+  ///    `Positioned(width: maxWidth * ratio)`, which renders correctly identically on both the
+  ///    `flutter test` software renderer AND real-device `Impeller` (Vulkan/OpenGLES) rendering —
+  ///    on-device re-verified via the same debug-color substitution at ratio ≈0.92: a correctly-
+  ///    sized red segment appeared, sized to just the fill fraction, not the whole track.
+  ///
+  /// The one pre-existing test asserting fill width (`playback_progress_bar_view_test.dart`'s
+  /// "expanded track leaves a symmetric 12px trailing gap" case) could not have caught either
+  /// bug: it deliberately used `ratio == 1` (`position: duration: 100`), where bug #1's
+  /// `ratio² == ratio` compounding is arithmetically invisible AND a fully-filled `ratio == 1`
+  /// track has no unfilled remainder to reveal bug #2's total absence of any partial fill — see
+  /// the new regression tests at `ratio == 0.5` for the case that actually discriminates both.
   Widget _track(double ratio, {required Color background}) {
     return SizedBox(
+      width: double.infinity,
       height: 3,
-      child: Stack(
-        children: [
-          Positioned.fill(child: ColoredBox(color: background)),
-          FractionallySizedBox(
-            alignment: Alignment.centerLeft,
-            widthFactor: ratio,
-            child: const ColoredBox(color: Colors.white),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final fillWidth =
+              constraints.maxWidth.isFinite ? constraints.maxWidth * ratio : 0.0;
+          return Stack(
+            children: [
+              Positioned.fill(child: ColoredBox(color: background)),
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: fillWidth,
+                child: const ColoredBox(color: Colors.white),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
