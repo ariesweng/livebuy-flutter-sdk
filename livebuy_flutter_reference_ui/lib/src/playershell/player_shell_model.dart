@@ -319,6 +319,26 @@ class PlayerShellModel {
   /// `navigateToNext()` (→ core `load(videoId)`). No-op when there is no next
   /// video (`nextVideoId == null`) or no bound template (demo / golden).
   void navigateToNext() => template?.navigateToNext();
+
+  // -- family-4 EndScreen presence (fix-flutter-endscreen-close-button-blocked) --
+
+  /// Whether the family-4 end moment (auto-next 倒數變體 OR 空狀態) is currently
+  /// active — mirrors the SAME "should the end moment be shown at all" condition
+  /// `MomentsOverlayView._buildActiveMoment` computes for itself
+  /// (`moments_view.dart`, `countdown != null || endScreenVisible`) — NOT that
+  /// container's further local 取消-dismiss latch (`_endScreenDismissed`, private
+  /// to its own `State`, not reachable here without adding a new template-layer
+  /// accessor — see this change's design.md D2 for the accepted narrow edge case
+  /// this simplification carries). Used by `PlayerShellView` to force the header's
+  /// top-right button into "direct close" while the end screen is showing
+  /// (the user's decision: end-screen close is ALWAYS "close the whole player",
+  /// independent of the global `showCloseIcon` setting). `false` for a demo /
+  /// golden instance (no bound template).
+  bool get isEndScreenActive {
+    final t = template;
+    if (t == null) return false;
+    return t.endScreen.countdown != null || t.endScreen.endScreenVisible;
+  }
 }
 
 // GAP NOTES (reachability of family-1 surfaces — parity with iOS / Android)

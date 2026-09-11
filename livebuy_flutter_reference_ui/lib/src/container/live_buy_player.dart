@@ -982,8 +982,12 @@ class LivebuyPlayerConfig {
   /// (the Flutter `PlayerShellView` exposes no such param yet). DEFAULT: false.
   final bool paintsBackgroundPlaceholder;
 
-  /// Whether to show the one-time gesture hint. Reserved for parity (no Flutter shell param
-  /// yet). DEFAULT: false.
+  /// Whether the LIVE overlay chrome's gesture-hint pills (tap / long-press / swipe) are
+  /// shown at all (rb-flutter-gesture-hint-plumb, parity iOS / Android `showGestureHints`).
+  /// Forwarded to `PlayerOverlayContext.showGestureHints` → `PlayerShellView.showGestureHints`
+  /// → ANDed with `_cleanMode` before reaching `LiveOverlayChromeView` (parity iOS
+  /// `showGestureHints && !cleanMode`). DEFAULT: `false` — a host that does nothing sees no
+  /// hint, matching iOS / Android / RN.
   final bool showGestureHints;
 
   /// MERCHANT capability gate for the product sheet's「只剩庫存 N 組」caption
@@ -1493,6 +1497,17 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     // to '' falls back to the existing solid `#0C0C10` brand backdrop, never a wrong photo.
     LivebuyUI.playerTemplate?.applyLoadingCover('');
     _controller = LivebuyPlayerController();
+    // fix-flutter-viewcart-unwired-provider: `LivebuyUI.playerControllerProvider` is read by
+    // `LivebuyUI.install()`'s `viewCartRequester` (→ `DefaultPlayerTemplate.openCart()`, the
+    // 「查看購物車」CTA's only path to a real controller) but was never assigned anywhere in
+    // production — the doc comment says "the host sets this from its player widget", and THIS
+    // State IS that player widget, so it must be the one to set it. Left unset, `openCart()`
+    // silently no-ops (`playerControllerProvider?.call()` reads `null`), so every 「查看購物車」CTA
+    // tap did nothing with no error, no log, no crash — indistinguishable from "the SDK ignored
+    // the tap". Set on every new controller (mirrors the process-global singleton pattern the
+    // `startScreen.resetForNewSession()` call above already documents) so `openCart()` always
+    // targets the LATEST live player instance.
+    LivebuyUI.playerControllerProvider = () => _controller;
     _composer = ChatComposerController();
     _nickname = NicknamePromptController();
     _login = LoginPromptController();
@@ -1610,6 +1625,13 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       ?..removeListener(_onLiveNowChanged)
       ..stop()
       ..dispose();
+    // fix-flutter-viewcart-unwired-provider: only clear if still pointing at THIS instance's
+    // controller — a newer player State may already have overwritten it with its own provider
+    // (mirrors the identity-guard reasoning `LivebuyUI.install()` itself documents for its
+    // `onInstantiate` closure), so an out-of-order dispose must not clobber a live registration.
+    if (identical(LivebuyUI.playerControllerProvider?.call(), _controller)) {
+      LivebuyUI.playerControllerProvider = null;
+    }
     _composer.dispose();
     _nickname.dispose();
     _login.dispose();
@@ -1911,6 +1933,11 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // iOS/Android `showViewerCount`）：純 by-value host 呈現旗標，預設 `true`，不接觸
       // core / sdkConfig 的 viewerCount 資料管線，只 gate 渲染端。
       showViewerCount: c.showViewerCount,
+      // LIVE 疊層手勢提示顯示/隱藏（rb-flutter-gesture-hint-plumb，parity iOS/Android
+      // `showGestureHints`）：把先前從未被轉發的死欄位接上，`PlayerShellView` 內部再與
+      // `_cleanMode` 疊加（parity iOS `showGestureHints && !cleanMode`）。預設 `false`——
+      // host 什麼都不做時手勢提示保持關閉，對齊 iOS/Android/RN。
+      showGestureHints: c.showGestureHints,
       // 標題跑馬燈的商家能力閘（rb-flutter-marquee-title-scroll）：原樣帶 host 注入的 raw
       // `extensions.video_title_scroll`，容器**不**自行讀 `sdkConfig`、**不**正規化（由
       // `PlayerHeaderBarView` 的 `normalizeTitleScroll` 單一入口負責）。null（預設）→ 溢出即捲，
@@ -2697,9 +2724,18 @@ void forwardChannelChangeToTemplate(
 /// `forwardChannelChangeToTemplate`'s own doc comment notes), so a repeated tick with an
 /// unchanged `products` list is a safe no-op.
 ///
-/// Deliberately scoped to ONLY `products`/`narratingProduct` — [LBPlayerMomentInfo]'s other 6
-/// fields (`viewerCount`/`isSubscribed`/`autoNextCountdownActive`/`autoNextRemainingSeconds`/
-/// `nextItem`/`hotItems`) are explicitly NOT read or forwarded here (design.md "範疇刻意收斂");
+/// fix-flutter-viewer-count-unwired: also forwards `info.viewerCount` to the existing
+/// `template.handleViewerCount` (`flutter-ui/lib/src/default_template.dart:1466`) — a public
+/// method that has existed since `moment-state-template` with correct logic and its own unit
+/// test coverage, but had ZERO production callers until this change (a dead wire, same shape as
+/// the `products`/`narratingProduct` gap this function was originally created to fix). This is
+/// the user-reported「Flutter 直播間沒有顯示觀看人數」root cause: native bridges already send
+/// `viewerCount` on every `onMomentStateChange` tick (Android `MomentFieldsBridge.kt:78`, iOS
+/// `LivebuyPlugin.swift:1038`), it just never reached the template.
+///
+/// Deliberately scoped to ONLY `products`/`narratingProduct`/`viewerCount` — [LBPlayerMomentInfo]'s
+/// remaining 5 fields (`isSubscribed`/`autoNextCountdownActive`/`autoNextRemainingSeconds`/
+/// `nextItem`/`hotItems`) are still explicitly NOT read or forwarded here (design.md "範疇刻意收斂");
 /// wiring them is a separate, untested, unrequested capability.
 ///
 /// Extracted as a standalone top-level function — same rationale as
@@ -2711,6 +2747,7 @@ void forwardMomentProductsToTemplate(
     LBPlayerMomentInfo info, DefaultPlayerTemplate? template) {
   if (template == null) return;
   template.handleProducts(info.products, active: info.narratingProduct);
+  template.handleViewerCount(info.viewerCount);
 }
 
 /// Default product-row tap forward (flutter-product-tap-diversion-wiring-reference-ui). Calls

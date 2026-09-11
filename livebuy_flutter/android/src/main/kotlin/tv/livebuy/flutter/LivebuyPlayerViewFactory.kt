@@ -801,11 +801,14 @@ private fun productToMap(product: LBProduct): Map<String, Any?> {
 }
 
 // replay-chat-revealed-seam-core-flutter — serialize an LBComment to the Flutter bridge
-// wire map for the `replayChatRevealed` event (mirrors `productToMap` above). Scoped to
-// EXACTLY the 6 fields this seam's spec contract enumerates (`text` / `name` / `color` /
-// `reply` / `reply_color` / `time`) — NOT the native SDK's full 8-field `LBComment` data
-// class (no `kind` / `isTop`, design D3), matching the existing `CHAT_HISTORY_LOADED`
-// comment wire shape's field naming.
+// wire map for the `replayChatRevealed` event (mirrors `productToMap` above). Originally
+// scoped to EXACTLY the 6 fields this seam's spec contract enumerates (`text` / `name` /
+// `color` / `reply` / `reply_color` / `time`, matching the existing `CHAT_HISTORY_LOADED`
+// comment wire shape's field naming) — NOT the native SDK's full 8-field `LBComment` data
+// class. fix-flutter-comment-kind-wire-priority-core adds one more key, `kind`, sourced
+// from the native SDK's already-resolved `LBMessageKind.rawValue` (wire-`kind`-priority-
+// with-`name`/`reply`-fallback already applied natively); `isTop` remains omitted, no
+// known consumer.
 private fun commentToMap(c: LBComment): Map<String, Any> = mapOf(
     "text" to c.text,
     "name" to c.name,
@@ -813,6 +816,7 @@ private fun commentToMap(c: LBComment): Map<String, Any> = mapOf(
     "reply" to c.reply,
     "reply_color" to c.replyColor,
     "time" to c.time,
+    "kind" to c.kind.rawValue,
 )
 
 // player-moment-fields-bridge-core-flutter — serialize LBNavItem/LBHotItem to the Flutter

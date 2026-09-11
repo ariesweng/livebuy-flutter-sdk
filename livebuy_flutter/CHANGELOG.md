@@ -6,6 +6,30 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.3.1 - 2026-09-11
+
+> `livebuy_flutter_reference_ui` 專屬的兩個小型 bug fix（`livebuy_flutter` /
+> `livebuy_flutter_ui` 兩套件本身無程式碼變動，版號隨 lockstep 慣例一併對齊）。皆為使用者
+> 真機回報後查證修復，無 BREAKING。
+
+### Fixed
+
+- **直播間觀看人數恆為初始值**（`fix-flutter-viewer-count-unwired`）：`onMomentStateChange`
+  的容器轉發函式只轉發 `products`/`narratingProduct`，`viewerCount` 雖然 native 橋接（Android
+  `MomentFieldsBridge` / iOS `LivebuyPlugin`）早已送達，卻從未轉發給
+  `DefaultPlayerTemplate.handleViewerCount()`（該方法本身早就寫好且有單元測試，是條死接線）。
+  補上這一行轉發，其餘 5 個仍刻意未接線的欄位（`isSubscribed`/`autoNextCountdownActive`/
+  `autoNextRemainingSeconds`/`nextItem`/`hotItems`）不變。
+- **直播結束畫面右上角關閉/縮小鈕點不到**（`fix-flutter-endscreen-close-button-blocked`）：
+  `EndScreenView` 的滿版半透明背景（`Container(color: _scrim)`，本質 `ColoredBox`）的
+  `hitTestSelf` 恆為 `true`，攔截了整個螢幕範圍的觸控，擋住底下 `PlayerShellView` header
+  的縮小/關閉鈕，即使該背景本身沒有掛任何手勢。改為只把這個背景節點包進
+  `IgnorePointer`，倒數/空狀態變體既有的取消/立即觀看/查看購物車按鈕不受影響。**另外**，
+  結束畫面顯示期間，header 右上角鈕的行為固定改為「直接關閉整個 player」（複用既有
+  `onCloseRequest`／swipe-nav-close-on-empty 出口），**不論全域 `enableDirectCloseButton`
+  設定為何**——這是使用者明確決策；此前這顆鈕在結束畫面顯示期間因上述觸控攔截問題完全點不到
+  （等同死按鈕），故此行為調整對既有 host 無實際行為倒退。
+
 ## 2.3.0 - 2026-09-11
 
 > **三套件皆有實際內容變動**（lockstep）。自 `2.2.0` 以來累積 90 個內容 commit，主軸是

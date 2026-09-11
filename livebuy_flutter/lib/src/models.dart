@@ -1757,7 +1757,7 @@ class LBWidgetColors {
   /// always-`String?` bridge contract (raw passthrough, e.g. Int 1 → `"1"`).
   factory LBWidgetColors.fromMap(Map<Object?, Object?> map) => LBWidgetColors(
         widgetColor: (map['widget_color'] as num?)?.toInt() ?? 1,
-        widgetBgcolor: _asBgcolor(map['widget_bgcolor']),
+        widgetBgcolor: _asNullableString(map['widget_bgcolor']),
       );
 
   Map<String, Object?> toMap() => {
@@ -1766,9 +1766,11 @@ class LBWidgetColors {
       };
 }
 
-/// Coerce `widget_bgcolor` to the bridge's always-`String?` shape: null → null,
-/// String → passthrough, any stray Int (e.g. backend Int 1) → its string form.
-String? _asBgcolor(Object? value) {
+/// Coerce a value to a tolerant `String?`: null/missing → null, String →
+/// passthrough, any other scalar (e.g. a stray backend Int) → its string
+/// form. Never throws. Used wherever "unset" and "explicitly empty" are
+/// distinct states worth preserving (e.g. `widget_bgcolor`, `LBComment.kind`).
+String? _asNullableString(Object? value) {
   if (value == null) return null;
   if (value is String) return value;
   return value.toString();
@@ -2108,14 +2110,15 @@ class LBViewCartIntent {
 /// [LivebuyPlayerCore.onReplayChatRevealed] (the `replayChatRevealed`
 /// `EventChannel` event) during finished-live replay playback.
 ///
-/// Scoped to EXACTLY the 6 fields this seam's own spec contract enumerates
-/// (`replay-chat-revealed-seam-core-flutter`, mirrors the iOS/Android
-/// `onReplayChatRevealed` requirements' payload contract) — deliberately NOT
-/// the native SDKs' full 8-field `LBComment` struct (no `kind` / `isTop`; a
-/// later change can widen this if a real consumer needs them). Byte-identical
-/// field set to the existing `CHAT_HISTORY_LOADED` / `replayHistoryEventComments`
-/// comment wire shape, so a Dart consumer that already parses one can reuse
-/// the same mental model for the other.
+/// Originally scoped to EXACTLY the 6 fields this seam's own spec contract
+/// enumerates (`replay-chat-revealed-seam-core-flutter`, mirrors the
+/// iOS/Android `onReplayChatRevealed` requirements' payload contract) —
+/// deliberately NOT the native SDKs' full 8-field `LBComment` struct (no
+/// `kind` / `isTop`). `fix-flutter-comment-kind-wire-priority-core` widened
+/// this by one field (`kind`) because a real consumer (`replayChatRow`) needs
+/// it; `isTop` remains omitted, no known consumer. The 6-field subset is
+/// still byte-identical to the existing `CHAT_HISTORY_LOADED` /
+/// `replayHistoryEventComments` comment wire shape.
 class LBComment {
   final String text;
   final String name;
@@ -2135,6 +2138,16 @@ class LBComment {
   /// cross-platform-precision convention).
   final String time;
 
+  /// The native SDK's already-resolved `LBMessageKind.rawValue` (iOS/Android
+  /// `LBComment.kind.rawValue`) — i.e. the wire-`kind`-priority-with-
+  /// `name`/`reply`-fallback decision the native SDK has already made, NOT a
+  /// raw re-parse of the HTTP wire JSON. A raw nullable `String` rather than
+  /// a typed enum: the only consumer (`replayChatRow`) just compares against
+  /// a couple of known values, matching this model's existing all-raw-strings
+  /// style (`fix-flutter-comment-kind-wire-priority-core` D1/D2). `null` when
+  /// the bridge hasn't populated it yet (e.g. a stale native binary).
+  final String? kind;
+
   const LBComment({
     this.text = '',
     this.name = '',
@@ -2142,10 +2155,13 @@ class LBComment {
     this.reply = '',
     this.replyColor = '',
     this.time = '',
+    this.kind,
   });
 
-  /// Tolerant decode: missing / null / wrong-type → `""` per field, never
-  /// throws (mirrors this file's `_asStringOr` convention).
+  /// Tolerant decode: missing / null / wrong-type → `""` per field (`kind` →
+  /// `null` instead, since it is itself nullable), never throws (mirrors this
+  /// file's `_asStringOr` convention; `kind` mirrors `_asNullableString`'s
+  /// null-preserving tolerant-string convention).
   factory LBComment.fromMap(Map<Object?, Object?> map) => LBComment(
         text: _asStringOr(map['text'], ''),
         name: _asStringOr(map['name'], ''),
@@ -2153,6 +2169,7 @@ class LBComment {
         reply: _asStringOr(map['reply'], ''),
         replyColor: _asStringOr(map['reply_color'], ''),
         time: _asStringOr(map['time'], ''),
+        kind: _asNullableString(map['kind']),
       );
 }
 

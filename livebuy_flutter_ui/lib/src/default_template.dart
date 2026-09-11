@@ -999,13 +999,23 @@ class DefaultPlayerTemplate {
           : ReplayChatRebuild(to: incomingCount);
 
   /// 把回放歷史 [LBComment] 映射成 chat feed row 的角色 metadata（parity iOS `replayChatRow(for:)`
-  /// / Android `replayChatRow(c)`）。Flutter 的 [LBComment]（`replay-chat-revealed-seam-core-
-  /// flutter` 刻意只留 `CHAT_HISTORY_LOADED` wire 實際攜帶的 6 個欄位）沒有 `kind` 欄——本函式改用
-  /// iOS `LBComment` decoder 本身在 wire 缺 `kind` 時已在跑的同一套 `name`/`reply` fallback 推導：
-  /// `name` 非空 → 觀眾留言（`isHost = false`）；`name` 空 + `reply` 非空 → 主播回覆
-  /// （`isHost = true`，`replyText = reply`）；`name` 空 + 無 `reply` → 主播留言（`isHost = true`，
-  /// 無 `replyText`）。Pure / testable.
+  /// / Android `replayChatRow(c)`）。**`kind` 優先**（`fix-flutter-comment-kind-wire-priority-
+  /// core` 補上的欄位，承接原生 SDK 已解析完成的 `LBMessageKind.rawValue`）：非 null 時直接依其值
+  /// 判型（`"host"` → 主播留言；`"host_reply"` → 主播回覆，`replyText = reply`；其餘值（含
+  /// `"comment"`）→ 觀眾留言），與 iOS/Android 對齊。僅當 `kind` 為 `null`（橋接尚未攜帶，例如
+  /// 搭配舊版原生 binary）才 fallback 到舊有的 `name`/`reply` 推導：`name` 非空 → 觀眾留言
+  /// （`isHost = false`）；`name` 空 + `reply` 非空 → 主播回覆（`isHost = true`，
+  /// `replyText = reply`）；`name` 空 + 無 `reply` → 主播留言（`isHost = true`，無
+  /// `replyText`）。**訂正說明**：舊版純 `name`/`reply` 推導假設「主播訊息 `name` 恆為空字串」，
+  /// 但真實後端資料主播列 `name` 其實是非空的真實暱稱，方向與推導相反，回放時所有主播留言都被誤判
+  /// 為觀眾留言（詳見本 change 的 proposal.md）。Pure / testable。
   static (bool isHost, String? replyText) replayChatRow(LBComment comment) {
+    final kind = comment.kind;
+    if (kind != null) {
+      if (kind == 'host') return (true, null);
+      if (kind == 'host_reply') return (true, comment.reply);
+      return (false, null);
+    }
     if (comment.name.isNotEmpty) return (false, null);
     if (comment.reply.isNotEmpty) return (true, comment.reply);
     return (true, null);
@@ -1856,8 +1866,18 @@ class DefaultPlayerTemplate {
     // 純欄位、不 notify（template 非 ChangeNotifier；呈現由 container 驅動）。
     _addToCartInFlight = true;
     final specId = variantPicker.selectedSpecificationId;
+    // fix-flutter-addtocart-empty-shopid: no production call site ever invokes
+    // [setShopId] (`LivebuyUI.install()` constructs this template before
+    // `LivebuySDK.configure()` has even run, so there is no value to read yet —
+    // see design.md), so `_shopId` was always `''`, sending `shop_id=''` to
+    // `POST /sdk/video/addcart` → backend `ServerError(500, "參數錯誤")` on every
+    // add-to-cart through the drop-in player. Fall back to `LivebuySDK.currentShopId`
+    // (the same "auto-fallback to the configured shop" idiom already used by
+    // `live_buy_player.dart`'s live-now pill) so an un-set `_shopId` still resolves
+    // to the real configured shop by the time a host can actually reach this CTA.
+    final effectiveShopId = _shopId.isNotEmpty ? _shopId : (LivebuySDK.currentShopId ?? '');
     final options = LBAddToCartOptions(
-      shopId: _shopId,
+      shopId: effectiveShopId,
       goodsId: int.tryParse(detail.productId),
       num: qtyStepper.qty,
       specificationId: specId == null ? null : int.tryParse(specId),

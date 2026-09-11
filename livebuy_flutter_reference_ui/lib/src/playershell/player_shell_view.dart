@@ -138,6 +138,36 @@ enum SwipeNavFallbackAction { navigate, close }
 SwipeNavFallbackAction resolveSwipeNavFallback(bool hasAdjacentVideo) =>
     hasAdjacentVideo ? SwipeNavFallbackAction.navigate : SwipeNavFallbackAction.close;
 
+/// The header top-right button's resolved presentation + action
+/// (fix-flutter-endscreen-close-button-blocked).
+typedef HeaderCloseButtonResolution = ({bool showCloseIcon, VoidCallback? onMinimize});
+
+/// PURE: resolve the header's top-right button state given whether the family-4 end
+/// screen is currently active (`PlayerShellModel.isEndScreenActive`). The user's
+/// decision: while the end screen is showing, the button is ALWAYS "close the whole
+/// player" — [onCloseRequest] — overriding the global [showCloseIcon] / [onMinimize]
+/// resolution for that window only (there is no meaningful "minimize into the
+/// floating widget" affordance once the broadcast has ended). Outside that window
+/// this is a no-op passthrough of the given [showCloseIcon] / [onMinimize].
+///
+/// PURE / State-independent (per `docs/unit-test-discipline.md`'s "extract pure
+/// functions" rule, mirrors the [resolveSwipeNavFallback] precedent above) so both
+/// `_buildContent`'s main LIVE/VOD branch AND `_buildUpcoming`'s 直播預告 branch can
+/// share ONE tested computation instead of two independent inline ternaries that
+/// could silently drift apart — the same risk this file's own [titleScroll] /
+/// [showCloseIcon] "MUST forward at both call sites" doc comments already call out.
+HeaderCloseButtonResolution resolveHeaderCloseButton({
+  required bool endScreenActive,
+  required bool showCloseIcon,
+  required VoidCallback? onMinimize,
+  required VoidCallback? onCloseRequest,
+}) {
+  if (endScreenActive) {
+    return (showCloseIcon: true, onMinimize: onCloseRequest);
+  }
+  return (showCloseIcon: showCloseIcon, onMinimize: onMinimize);
+}
+
 /// PURE: whether a committed vertical swipe on the player video area is allowed to trigger
 /// the switch-video action (rb-flutter-live-swipe-gesture-gating, design `screens.jsx`
 /// `liveInProgress = effectiveState === 'live_main' && !isUpcoming && !isReplay`, `screens.jsx:223`).
@@ -589,6 +619,17 @@ class PlayerShellView extends StatefulWidget {
   /// opt-in reversal).
   final bool showViewerCount;
 
+  /// Whether the LIVE overlay chrome's gesture-hint pills (tap / long-press / swipe) are
+  /// drawn at all (rb-flutter-gesture-hint-plumb, parity iOS `showGestureHints`). Forwarded
+  /// to `LiveOverlayChromeView(showGestureHints:)` ANDed with the widget's own `_cleanMode`
+  /// state (`widget.showGestureHints && !_cleanMode`) — parity iOS
+  /// `showGestureHints && !cleanMode`, NOT Android's "cleanMode never affects
+  /// showGestureHints" (that is Android's own deliberate, narrower scope choice, see
+  /// design.md D1). Default `true` — this WIDGET's own default keeps existing call sites /
+  /// goldens unchanged; the turnkey container's `LivebuyPlayerConfig.showGestureHints`
+  /// defaults to `false` and is the value a host actually sees.
+  final bool showGestureHints;
+
   /// MERCHANT capability gate for the top-bar title marquee — the RAW
   /// `extensions.video_title_scroll` wire value (rb-flutter-marquee-title-scroll, parity
   /// iOS / Android `titleScroll`). Passed through UNCHANGED (no cast, no local default);
@@ -815,6 +856,7 @@ class PlayerShellView extends StatefulWidget {
     this.onToggleSubscribe,
     this.showSubscribe = true,
     this.showViewerCount = true,
+    this.showGestureHints = true,
     this.titleScroll,
     this.showCloseIcon = false,
     this.onTapRailItem,
@@ -1421,6 +1463,11 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // `subtitle.url` 變更（換片）的 FETCH 側效果由獨立的 `addListener` 驅動（見上方 initState /
         // didUpdateWidget / dispose），這裡只負責重繪語意。
         t.subtitle,
+        // fix-flutter-endscreen-close-button-blocked — `endScreen` 變更（進出
+        // `endScreenShown` / 倒數 tick）需要重繪，讓 header 右上角鈕的強制關閉覆寫
+        // （`PlayerShellModel.isEndScreenActive` → `resolveHeaderCloseButton`）與
+        // 結束畫面的顯示/隱藏同步，而不是等其他被合併的 listener 剛好一起觸發重建。
+        t.endScreen,
       ],
     ];
 
@@ -1500,6 +1547,19 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     // 相等 — 這是本 change 對既有純 VOD / 純 LIVE golden 零回歸的數學基礎。
     final usesLiveChrome = m.isLive || m.isFinishedLiveReplay;
 
+    // fix-flutter-endscreen-close-button-blocked: while the family-4 end screen is
+    // showing, the header's top-right button is forced to "direct close" (user
+    // decision), overriding the global showCloseIcon/onMinimize at the
+    // `PlayerHeaderBarView` call site below. See `resolveHeaderCloseButton`'s own
+    // doc comment; the SAME computation is repeated verbatim in `_buildUpcoming`
+    // below (that method has no closure over this local).
+    final headerCloseButton = resolveHeaderCloseButton(
+      endScreenActive: m.isEndScreenActive,
+      showCloseIcon: widget.showCloseIcon,
+      onMinimize: widget.onMinimize,
+      onCloseRequest: widget.onCloseRequest,
+    );
+
     return Stack(
       children: [
         // Themed background placeholder painted ONLY in demo/golden (`live == false`). In host
@@ -1577,7 +1637,11 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               // 「放開手指後 lift」（_scrubBarExpanded && !_isScrubbing，見下方 bottomInset）是兩件
               //獨立的事、彼此不衝突：拖曳中先隱藏，放開後才重新出現並上移。
               announceText: (_cleanMode || _isScrubbing) ? '' : m.announceText,
-              showGestureHints: !_cleanMode,
+              // host config（widget.showGestureHints，parity iOS `showGestureHints &&
+              // !cleanMode`）與乾淨模式疊加：兩者皆須成立手勢提示才顯示
+              // （rb-flutter-gesture-hint-plumb，取代先前只看 !_cleanMode、完全無視 host
+              // config 的舊寫法）。
+              showGestureHints: widget.showGestureHints && !_cleanMode,
               // 釘選卡來源依窄義 m.isLive 分流（rb-flutter-replay-live-chrome-parity，parity iOS）：
               //   真直播（m.isLive） → livePinnedProducts（多件 narrate_status==2 輪播 + 分頁點；
               //     空時 fallback 單一 pinnedProduct 一元清單，問題 7,
@@ -1703,7 +1767,9 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 isLive: usesLiveChrome,
                 isReplay: m.isReplay || m.isFinishedLiveReplay,
                 live: widget.live,
-                onMinimize: widget.onMinimize,
+                // fix-flutter-endscreen-close-button-blocked: forced to onCloseRequest
+                // while the end screen is active — see resolveHeaderCloseButton above.
+                onMinimize: headerCloseButton.onMinimize,
                 onToggleSubscribe: widget.onToggleSubscribe,
                 showSubscribe: widget.showSubscribe,
                 // PlayerHeader 觀看人數徽章顯示/隱藏（rb-flutter-viewer-count-visibility-toggle，
@@ -1722,7 +1788,9 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 hideHostPill: _cleanMode,
                 // 右上角按鈕圖示 minimize ↔ close（rb-flutter-player-direct-close-button），純呈現
                 // by-value 旗標轉發，比照 titleScroll / showSubscribe 的既有轉發慣例。
-                showCloseIcon: widget.showCloseIcon,
+                // fix-flutter-endscreen-close-button-blocked: forced true while the end
+                // screen is active — see resolveHeaderCloseButton above.
+                showCloseIcon: headerCloseButton.showCloseIcon,
                 // 乾淨模式限定靜音鈕（rb-flutter-gesture-clean-mode-v2）：補回單擊切靜音手勢退役後
                 // 的操作管道，沿用既有 `widget.onToggleMute` host-wired seam，只是觸發手勢從「影片
                 // 區單擊」改成「點頂列這顆鈕」。`_cleanMode == false` 時 `onToggleMute` 傳 null →
@@ -2277,6 +2345,19 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// [LiveBottomBarView] call site's outer `Padding` via [liveBottomBarBottomInset].
   Widget _buildUpcoming(
       ReferenceUITheme theme, PlayerShellModel m, double safeAreaBottom) {
+    // fix-flutter-endscreen-close-button-blocked: same override as `_buildContent`'s
+    // main branch (this method has no closure over that local, so it is recomputed
+    // here verbatim) — logically unlikely to coexist with an upcoming (直播預告)
+    // channel, but applied for call-site consistency / to avoid a future divergence,
+    // same forwarding discipline as `titleScroll` / `showCloseIcon` elsewhere in
+    // this method.
+    final headerCloseButton = resolveHeaderCloseButton(
+      endScreenActive: m.isEndScreenActive,
+      showCloseIcon: widget.showCloseIcon,
+      onMinimize: widget.onMinimize,
+      onCloseRequest: widget.onCloseRequest,
+    );
+
     return Stack(
       children: [
         // Background: the upcoming countdown surface (date + big time). `live: false`
@@ -2310,7 +2391,9 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 isLive: false,
                 isReplay: false,
                 live: widget.live,
-                onMinimize: widget.onMinimize,
+                // fix-flutter-endscreen-close-button-blocked: forced to onCloseRequest
+                // while the end screen is active — see resolveHeaderCloseButton above.
+                onMinimize: headerCloseButton.onMinimize,
                 onToggleSubscribe: widget.onToggleSubscribe,
                 showSubscribe: widget.showSubscribe,
                 // PlayerHeader 觀看人數徽章顯示/隱藏（rb-flutter-viewer-count-visibility-toggle，
@@ -2326,7 +2409,9 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 // forwarding discipline as titleScroll above: the upcoming header draws the
                 // SAME button, so omitting this here would silently drop the resolved icon on
                 // 直播預告 videos.
-                showCloseIcon: widget.showCloseIcon,
+                // fix-flutter-endscreen-close-button-blocked: forced true while the end
+                // screen is active — see resolveHeaderCloseButton above.
+                showCloseIcon: headerCloseButton.showCloseIcon,
               ),
             ),
           ],

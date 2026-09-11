@@ -310,7 +310,18 @@ class EndScreenView extends StatelessWidget {
           // comment above for why, and why the resulting stale countdown-variant
           // golden is accepted rather than worked around). The moment composites
           // over the ended video — a fixed design color, not theme bg.
-          Container(color: _scrim),
+          //
+          // fix-flutter-endscreen-close-button-blocked: wrapped in `IgnorePointer` —
+          // `Container(color:)` lowers to a `ColoredBox`, whose `hitTestSelf` is
+          // ALWAYS `true` regardless of whether any gesture is attached, so this
+          // full-bleed node was swallowing every tap in its bounds, including the
+          // `PlayerHeaderBarView` minimize/close button painted UNDERNEATH this
+          // overlay by the enclosing `Stack` (`MinimalDesign.playerOverlay`).
+          // `IgnorePointer` removes it from hit-testing while leaving it fully
+          // painted (zero visual effect) — ONLY this node is wrapped, not the
+          // whole `Stack`, so the variant's own 取消 / 立即觀看 / 查看購物車
+          // `GestureDetector`s (the OTHER Stack child, built below) are unaffected.
+          IgnorePointer(child: Container(color: _scrim)),
           if (_showCountdown)
             _buildCountdownVariant()
           else

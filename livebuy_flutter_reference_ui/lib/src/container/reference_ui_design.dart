@@ -122,6 +122,17 @@ class PlayerOverlayContext {
   /// reverse the default; `showViewerCount` is a pure host opt-OUT, not opt-in chrome).
   final bool showViewerCount;
 
+  /// Whether the LIVE overlay chrome's gesture-hint pills are drawn at all
+  /// (rb-flutter-gesture-hint-plumb, parity iOS / Android `showGestureHints`), carried
+  /// verbatim from `LivebuyPlayerConfig.showGestureHints` to
+  /// `PlayerShellView.showGestureHints` (which ANDs it with its own `_cleanMode` state
+  /// before forwarding to `LiveOverlayChromeView`). Default `true` here — this
+  /// intermediate context field's own default only matters if `PlayerOverlayContext` is
+  /// ever built directly without going through `LivebuyPlayer`; the turnkey container's
+  /// `LivebuyPlayerConfig.showGestureHints` defaults to `false` and is the value a host
+  /// actually sees.
+  final bool showGestureHints;
+
   /// MERCHANT capability gate for the top-bar title marquee — the RAW
   /// `extensions.video_title_scroll` wire value (rb-flutter-marquee-title-scroll, parity
   /// iOS / Android `titleScroll`), carried verbatim from
@@ -407,6 +418,7 @@ class PlayerOverlayContext {
     this.showSubscribe = true,
     this.showFavorite = true,
     this.showViewerCount = true,
+    this.showGestureHints = true,
     this.titleScroll,
     this.showCloseIcon = false,
     this.infoPanelOpen = false,
@@ -624,6 +636,11 @@ class MinimalDesign extends ReferenceUIDesign {
               // PlayerHeader 觀看人數徽章顯示/隱藏（rb-flutter-viewer-count-visibility-toggle，
               // parity iOS/Android `showViewerCount`）— raw hand-off,預設 `true`。
               showViewerCount: c.showViewerCount,
+              // LIVE 疊層手勢提示顯示/隱藏（rb-flutter-gesture-hint-plumb，parity iOS/Android
+              // `showGestureHints`）— raw hand-off；`PlayerShellView` 內部再與 `_cleanMode`
+              // 疊加，預設 `true`（container 層 `LivebuyPlayerConfig.showGestureHints` 才是
+              // host 實際感受到的預設值 `false`）。
+              showGestureHints: c.showGestureHints,
               // 標題跑馬燈的商家能力閘（rb-flutter-marquee-title-scroll）：原樣帶 host 注入的
               // raw `extensions.video_title_scroll`，design seam **不**正規化、**不**讀 sdkConfig
               // （由 `PlayerHeaderBarView` 的 `normalizeTitleScroll` 單一入口負責）。

@@ -1249,10 +1249,13 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
 
     /// Serialize an `LBComment` to the Flutter bridge wire dict for the
     /// `replayChatRevealed` event (replay-chat-revealed-seam-core-flutter, mirrors
-    /// `lbProductToBody(_:)`). Scoped to EXACTLY the 6 fields this seam's spec contract
-    /// enumerates (`text` / `name` / `color` / `reply` / `reply_color` / `time`) — NOT the
-    /// native SDK's full 8-field `LBComment` struct (no `kind` / `isTop`, design D3),
-    /// matching the existing `CHAT_HISTORY_LOADED` comment wire shape's field naming.
+    /// `lbProductToBody(_:)`). Originally scoped to EXACTLY the 6 fields this seam's spec
+    /// contract enumerates (`text` / `name` / `color` / `reply` / `reply_color` / `time`,
+    /// matching the existing `CHAT_HISTORY_LOADED` comment wire shape's field naming) — NOT
+    /// the native SDK's full 8-field `LBComment` struct. `fix-flutter-comment-kind-wire-
+    /// priority-core` adds one more key, `kind`, sourced from the native SDK's
+    /// already-resolved `LBMessageKind.rawValue` (wire-`kind`-priority-with-`name`/`reply`-
+    /// fallback already applied natively); `isTop` remains omitted, no known consumer.
     /// Does NOT set an `"event"` key — the caller adds its own.
     private static func lbCommentToBody(_ c: LBComment) -> [String: Any] {
         [
@@ -1262,6 +1265,7 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
             "reply": c.reply,
             "reply_color": c.replyColor,
             "time": c.time,
+            "kind": c.kind.rawValue,
         ]
     }
 
