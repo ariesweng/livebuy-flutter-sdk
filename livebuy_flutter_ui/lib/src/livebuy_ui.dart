@@ -56,7 +56,7 @@ class LivebuyUI {
 
     // Detach any prior attachment first (idempotent re-install).
     _attachment?.detach();
-    _attachment = TemplateAttachment(
+    final attachment = TemplateAttachment(
       template: DefaultPlayerTemplate(
         sdkConfig: SDKConfig.fallback,
         hostOptions: _hostOptions,
@@ -73,6 +73,38 @@ class LivebuyUI {
       ),
       contextProvider: () => playerContextProvider?.call(),
     )..attach();
+    _attachment = attachment;
+
+    // mute-preference-persist-across-session-flutter-template — per-NEW-
+    // Player-instance mute seed. Distinct from (and does NOT replace) the
+    // ONE-SHOT `TemplateAttachment.attach()` seed above (`handleMuted(false)`,
+    // fires once per install()): this hook fires once per NEW native Player
+    // platform view (`flutter-player-instantiation-hook-core`'s
+    // `LivebuyPlayerController.onInstantiate`), letting each new Player
+    // instance seed the mute icon from its OWN actual native mute state —
+    // e.g. a fresh instance created after the user closed and reopened the
+    // player may have inherited a non-default app-session mute preference
+    // (`mute-preference-persist-across-session-{ios,android}-core`).
+    //
+    // `attachment` is captured in a LOCAL (not re-read from the static
+    // `_attachment` field) and the resolve callback re-checks
+    // `identical(_attachment, attachment)` before writing. This guards two
+    // races: (a) a REPEATED `install()` call replaces both `_attachment` and
+    // `onInstantiate` with a new closure bound to the new attachment, but an
+    // already-in-flight `isMuted()` query from THIS closure is not
+    // cancelled by that reassignment — its late resolve must not write into
+    // either the stale attachment it was bound to (already detached, no
+    // longer observed) or the newer one (never queried by this call, would
+    // corrupt its own not-yet-run seed); (b) `uninstall()` sets `_attachment`
+    // to null before a pending query resolves, which must not resurrect a
+    // write into an already-torn-down attachment.
+    LivebuyPlayerController.onInstantiate = (controller) {
+      controller.isMuted().then((muted) {
+        if (identical(_attachment, attachment)) {
+          attachment.template.handleMuted(muted);
+        }
+      });
+    };
   }
 
   /// Remove any installed template, detach the event subscription
@@ -82,6 +114,15 @@ class LivebuyUI {
     _hostOptions = null;
     playerContextProvider = null;
     playerControllerProvider = null;
+    // mute-preference-persist-across-session-flutter-template — release
+    // ownership of the per-instance instantiation hook (single-owner seam,
+    // `flutter-player-instantiation-hook-core`: later assignment replaces the
+    // prior one). `install()` above already claimed exclusive ownership of
+    // this GLOBAL static field the moment it ran, so returning it to `null`
+    // here is symmetric with clearing `playerContextProvider` /
+    // `playerControllerProvider` — it is not a new restriction, it completes
+    // the same ownership handoff `install()` started.
+    LivebuyPlayerController.onInstantiate = null;
     _attachment?.detach();
     _attachment = null;
     // widget-content-template — tear down every per-widget attachment.

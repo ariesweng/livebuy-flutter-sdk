@@ -10,6 +10,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 
 import '../productsheets/bottom_sheet_presenter.dart';
 import '../productsheets/sheet_scaffold.dart';
+import '../sheet_slide_transition.dart';
 import '../testing/lb_test_keys.dart';
 import 'now_introducing_carousel.dart';
 import '../reference_ui_theme.dart';
@@ -25,6 +26,7 @@ import 'operation_rail_view.dart';
 import 'playback_progress_bar_view.dart';
 import 'player_header_bar_view.dart';
 import 'player_shell_model.dart';
+import 'product_image_prefetch.dart';
 import 'share_fill_glyph.dart';
 import 'subtitle_vtt_pipeline.dart';
 import 'upcoming_countdown_view.dart';
@@ -281,28 +283,93 @@ bool showsPlaybackProgressBar({
     isMain && !isUpcoming && (!isLive || isReplay);
 
 /// PURE: the extra bottom inset for the `PlaybackProgressBarView`'s outer `Positioned` slot
-/// (rb-flutter-player-shell-bottom-safearea), so the EXPANDED transport bar clears the system
-/// bottom safe area (home indicator / Android gesture bar) while the IDLE thin line stays flush
-/// to the physical screen edge — design `screens.jsx:387-394` (idle) deliberately omits any
-/// safe-area term, `screens.jsx:420-424` (expanded) uses
-/// `Math.max(0, safeArea.bottom - (platform==='android'?8:0))`. [expanded] MUST feed the SAME
-/// boolean passed to `PlaybackProgressBarView.scrubBarExpanded` at the call site
-/// (`_scrubBarExpanded || _cleanMode`) — `expanded == false` ignores [safeAreaBottom] entirely
-/// and always returns `0`. [isAndroid] MUST feed `defaultTargetPlatform ==
-/// TargetPlatform.android` (a device/OS fact, not `Theme.of(context).platform`, which a host app
-/// could override for unrelated gesture-convention reasons). Result is never negative. Scope:
-/// this slot ONLY — the other bottom-pinned player-shell chrome (clean-mode exit button, floating
-/// bag, VOD side rail, LIVE bottom bar) is unaffected and out of scope for this function (see
-/// design.md Non-Goals). Unit-testable without a widget.
+/// (rb-flutter-player-shell-bottom-safearea; MODIFIED by fix-flutter-player-shell-bottom-safearea-
+/// gaps, BREAKING). Both the EXPANDED transport bar AND the IDLE thin line now clear the system
+/// bottom safe area (home indicator / Android gesture bar) with the SAME formula —
+/// `screens.jsx:420-424`'s `Math.max(0, safeArea.bottom - (platform==='android'?8:0))`.
+///
+/// This OVERTURNS the prior idle carve-out (idle used to always return `0`, matching the design's
+/// idle-line formula `screens.jsx:387-394`, which omits any safe-area term). Rationale: a real
+/// iOS device test showed the idle line has no home-indicator problem there — traced to SwiftUI's
+/// default automatic safe-area avoidance for any view not explicitly `.ignoresSafeArea()`, which
+/// iOS's `PlaybackProgressBarView.swift` and its call site never opt out of (idle and expanded
+/// share the same layout there, with zero explicit safe-area code). Flutter's `Stack`/`Positioned`
+/// has no such platform default, so this aligns Flutter to iOS's *actual observed device
+/// behavior* rather than to the design mockup's literal formula.
+///
+/// [expanded] is now UNUSED by the formula itself (kept in the signature for call-site and test
+/// parity — both states compute the identical result for the same [safeAreaBottom]/[isAndroid]).
+/// [isAndroid] MUST feed `defaultTargetPlatform == TargetPlatform.android` (a device/OS fact, not
+/// `Theme.of(context).platform`, which a host app could override for unrelated gesture-convention
+/// reasons). Result is never negative. Scope: this slot ONLY — the other bottom-pinned
+/// player-shell chrome (clean-mode exit button, floating bag, VOD side rail, LIVE bottom bar) is
+/// unaffected and out of scope for this function (see design.md Non-Goals). Unit-testable without
+/// a widget.
 double progressBarBottomSafeAreaInset(
   double safeAreaBottom, {
   required bool expanded,
   required bool isAndroid,
 }) {
-  if (!expanded) return 0;
   final adjusted = safeAreaBottom - (isAndroid ? 8.0 : 0.0);
   return adjusted < 0 ? 0 : adjusted;
 }
+
+/// PURE: the「退出乾淨模式」小圓鈕的完整 `bottom` offset (rb-flutter-player-shell-bottom-chrome-
+/// safearea), closing the first of the 4 bottom-pinned chrome gaps `rb-flutter-player-shell-bottom-
+/// safearea`'s own design.md Non-Goals deliberately deferred. Design `screens.jsx:426`/`:614`:
+/// `bottom: 16 + safeArea.bottom + ((scrubVisible || cleanMode) ? 36 : 0)` — this button only ever
+/// renders while `cleanMode == true`, so the ternary collapses to the file's existing fixed base
+/// values (`isLive ? 16 : 52` — same base values as iOS's sibling `PlayerShellView.
+/// cleanModeExitButtonBaseBottomInset(isLive:)`) plus `safeAreaBottom` verbatim (no Android
+/// correction — unlike the progress bar, none of this
+/// change's 4 formulas carry one). [isLive] MUST feed `PlayerShellModel.isLive`. Result is never
+/// negative (both base values and `safeAreaBottom` are non-negative). Unit-testable without a
+/// widget.
+double cleanModeExitButtonBottomInset(
+  double safeAreaBottom, {
+  required bool isLive,
+}) =>
+    (isLive ? 16 : 52) + safeAreaBottom;
+
+/// PURE: the floating bag button (`FloatingBagButton`)'s full `bottom` offset
+/// (rb-flutter-player-shell-bottom-chrome-safearea). Design `sdk-components.jsx:832`
+/// (`LBPBagButton`): `bottom: 16 + safeBottom`, where the call site's own `safeBottom` local
+/// already bundles `safeArea.bottom + (scrubVisible ? 36 : 0)` — [lift] MUST feed the SAME
+/// `_scrubBarExpanded ? _scrubChromeLift : 0.0` expression already passed at this call site (no
+/// change to that existing logic, only to how `bottom` is assembled from it). Unit-testable
+/// without a widget.
+double floatingBagButtonBottomInset(
+  double safeAreaBottom, {
+  required double lift,
+}) =>
+    16 + safeAreaBottom + lift;
+
+/// PURE: the VOD side rail (`OperationRailView`)'s full `bottom` offset
+/// (rb-flutter-player-shell-bottom-chrome-safearea). Design `sdk-components.jsx:811`
+/// (`LBPSideRail`): `bottom: 68 + safeBottom`, same `safeBottom` bundling as
+/// [floatingBagButtonBottomInset]. [lift] MUST feed the SAME `_scrubBarExpanded ? _scrubChromeLift
+/// : 0.0` expression already passed at this call site. Unit-testable without a widget.
+double vodSideRailBottomInset(
+  double safeAreaBottom, {
+  required double lift,
+}) =>
+    68 + safeAreaBottom + lift;
+
+/// PURE: the LIVE bottom bar (`LiveBottomBarView`)'s outer wrapper `bottom` offset
+/// (rb-flutter-player-shell-bottom-chrome-safearea), shared by BOTH of its call sites (main
+/// live-chrome branch AND `_buildUpcoming`'s slim variant). Design `live-chrome.jsx:183`
+/// (`LBLiveBottomBar`): `padding-bottom: 16 + safeBottom`, call site `screens.jsx:590` resolves
+/// `safeBottom = safeArea.bottom` (no `+36` term — the LIVE bottom bar's scrub-hold lift is a
+/// SEPARATE `lift` prop in the design, orthogonal to `safeBottom`). The `16` base itself is
+/// `LiveBottomBarView`'s OWN internal `_barBottomPadding`, already baked into that untouched
+/// widget — NOT part of this function's job, hence no base constant here. [lift] MUST feed
+/// `_scrubBarExpanded ? _scrubChromeLift : 0.0` at the main live-chrome call site, and `0.0` at the
+/// upcoming slim call site (no scrub bar exists there). Unit-testable without a widget.
+double liveBottomBarBottomInset(
+  double safeAreaBottom, {
+  required double lift,
+}) =>
+    safeAreaBottom + lift;
 
 /// PURE: whether `LiveNowPillView` should be composed (rb-flutter-live-now-pill, design
 /// `claude-design-sync.md` R28 / `components.md` `LBLiveNowPill`). Parity iOS `showsLiveNowPill`
@@ -346,18 +413,24 @@ bool showsLiveNowPill({
 
 /// PURE: whether `CaptionOverlayView` should be mounted (rb-flutter-subtitle-vtt-caption-display,
 /// design `sdk-components.jsx` `LBPCaptionOverlay`). `= !isLive && !introPlaying && subtitleEnabled
-/// && captionText.isNotEmpty` — parity Android `shouldShowCaptionOverlay`'s four core conditions
-/// (`!usesLiveChrome && !introPlaying && subtitleEnabled && captionText.isNotEmpty()`). The
-/// parameter is still literally named [isLive] (unchanged, source-compat) but
-/// `rb-flutter-replay-live-chrome-parity` retargets its call site to feed the caller-computed
-/// `usesLiveChrome = m.isLive || m.isFinishedLiveReplay` (`PlayerShellView.usesLiveChrome`,
-/// parity iOS/Android) instead of the previously-narrow `m.isLive` — see `showsPlaybackProgressBar`'s
-/// own doc comment above for the sibling `isReplay` call-site discipline, and this change's
-/// design.md D1 for the full derivation; this caption gate now mounts under the SAME
-/// `!usesLiveChrome` branch as `_buildNowIntroducing` (VOD-only chrome), not the previously-looser
-/// `!isLive` one. The caller additionally ANDs `!_isScrubbing && !_cleanMode` at the
-/// `_buildContent` call site (mirrors Android's own `shouldShowCaptionOverlay(...) && !isScrubbing`
-/// call-site split) — those two are NOT baked into this function. Unit-testable without a widget.
+/// && captionText.isNotEmpty`. [isLive] MUST be fed the narrow `m.isLive` at the call site, NOT
+/// the union `usesLiveChrome = m.isLive || m.isFinishedLiveReplay` (`PlayerShellView.usesLiveChrome`,
+/// used by the genuinely-LIVE-chrome-related gates elsewhere in this file) — captions and "does
+/// this state wear LIVE chrome" are independent concerns, so an already-finished live replay
+/// still gets captions (like VOD) even though it also wears the LIVE bottom bar / overlay chrome.
+/// `rb-flutter-subtitle-vtt-caption-display` (archived 2026-08-31) deliberately chose the narrow
+/// `m.isLive` here (design.md Decision 2) and its own Risks/Trade-offs explicitly predicted that
+/// a future `usesLiveChrome` unification would make captions follow it automatically.
+/// `rb-flutter-replay-live-chrome-parity` (archived 2026-09-06) was exactly that predicted
+/// unification — retargeting this call site to `usesLiveChrome` was an explicit, itemized goal
+/// of that change (its own proposal.md/design.md list it by name), not an accidental sweep; the
+/// effect was that finished-live-replay videos stopped showing captions, matching iOS/Android at
+/// the time. `rb-flutter-replay-caption-overlay-fix` (2026-09-09) deliberately REVERSES that
+/// unification back to `m.isLive`, per a user report + a four-platform sibling product decision
+/// — this is a new product decision, not a regression fix. The caller additionally ANDs
+/// `!_isScrubbing && !_cleanMode` at the `_buildContent` call site
+/// (mirrors Android's own `shouldShowCaptionOverlay(...) && !isScrubbing` call-site split) —
+/// those two are NOT baked into this function. Unit-testable without a widget.
 bool shouldShowSubtitleCaption({
   required bool isLive,
   required bool introPlaying,
@@ -366,6 +439,82 @@ bool shouldShowSubtitleCaption({
 }) =>
     !isLive && !introPlaying && subtitleEnabled && captionText.isNotEmpty;
 
+/// PURE: the caption overlay's trailing (right) inset, in logical pixels
+/// (rb-flutter-caption-overlay-align-hide-chat, parity design `sdk-components.jsx`
+/// `LBPCaptionOverlay`). The overlay centers inside a box that reserves this much space on the
+/// right for whichever chrome shares the bottom-right corner — NOT the full screen width.
+/// `shouldShowSubtitleCaption`'s `!isLive` gate means the only two states that ever reach
+/// `_buildSubtitleCaption` are pure VOD (`isFinishedLiveReplay == false`) and an already-finished
+/// live replay (`isFinishedLiveReplay == true`), so this only needs to choose between the two:
+/// pure VOD → `68` (clears `OperationRailView`, the VOD side rail, parity `screens.jsx` L533's
+/// `LBPCaptionOverlay` call omitting `right` → the component's own default `right=68`);
+/// already-finished replay → `120` (clears the LIVE bottom bar / pinned-card column, parity
+/// `screens.jsx` L576 `<LBPCaptionOverlay right={120} .../>`). Unit-testable without a widget.
+double captionOverlayRightInset({required bool isFinishedLiveReplay}) =>
+    isFinishedLiveReplay ? 120.0 : 68.0;
+
+/// The explicit safety clearance (logical pixels) kept between the caption overlay's bottom edge
+/// and `LiveBottomBarView`'s top edge in the already-finished-live-replay branch of
+/// [captionOverlayBottomInset] (`rb-flutter-caption-overlay-bottom-bar-clearance-fix`). An
+/// engineering judgment call, not a design-mockup-derived value — parity iOS sibling fix's own
+/// `bottomBarClearanceGap` (same `12`, same rationale: give a comfortable, explicitly-named
+/// buffer beyond the bar's real height rather than hugging it exactly).
+const double captionOverlayBottomBarClearanceGap = 12;
+
+/// PURE: the caption overlay's `bottom` offset (`rb-flutter-caption-overlay-bottom-bar-clearance-
+/// fix` established this function; `rb-flutter-vod-caption-reserve-card-space` MODIFIED the pure-
+/// VOD base below; `fix-flutter-player-shell-bottom-safearea-gaps` MODIFIED the pure-VOD base
+/// again to fold in [safeAreaBottom]). Pure VOD (`isFinishedLiveReplay == false` — the only other
+/// state that ever reaches `_buildSubtitleCaption`, per `shouldShowSubtitleCaption`'s `!isLive`
+/// gate) now uses `safeAreaBottom + 92 + lift`, matching the design authority
+/// (`design/templates/minimal/screens.jsx:533` `LBPCaptionOverlay`'s `safeBottom = safeArea.bottom
+/// + (scrubVisible ? 36 : 0) + 92`) EXACTLY — this OVERTURNS the prior rule that `safeAreaBottom`
+/// MUST NOT be folded in here (the stated reason, "this branch never shares the screen with
+/// `LiveBottomBarView`, so there is nothing to clear against it", was true but conflated two
+/// separate concerns: not needing extra clearance against a specific sibling bar is not the same
+/// as not needing to clear the system safe area at all — a real device with a non-trivial home
+/// indicator / gesture nav still needs this branch's caption pinned above it). The `92` unconditionally
+/// reserves the vertical space `NowIntroducingCarousel` (the VOD "now introducing" product card,
+/// built by `_buildNowIntroducing`) occupies via its own independent `Positioned(bottom: 0)` +
+/// `padding.bottom = 12 + lift` — the caption and the card are two separate `Positioned` widgets
+/// in the same `Stack` with zero awareness of each other, so without this fixed reservation the
+/// card's content can render directly on top of the caption whenever it appears. This mirrors the
+/// design's own unconditional reservation (parity `LBPMiniCart`,
+/// `design/templates/minimal/sdk-components.jsx:908`, `bottom: 12 + safeBottom`) rather than
+/// conditionally sizing the gap only when the card happens to be mounted — same fix as the RN
+/// sibling change (`rb-rn-vod-caption-reserve-card-space`), which has the identical zero-coupling
+/// two-widget structure. This supersedes the previous fixed `8 + lift` base, which pre-dates this
+/// requirement and never accounted for the product card at all.
+///
+/// Already-finished live replay (`isFinishedLiveReplay == true`) ALSO wears `LiveBottomBarView`
+/// (`usesLiveChrome` branch), whose own outer wrapper sits at
+/// `liveBottomBarBottomInset(safeAreaBottom, lift: lift) == safeAreaBottom + lift` and occupies
+/// [LiveBottomBarView.barHeight] above that. The caption's OLD fixed `8 + lift` base ignored both
+/// terms entirely (zero coupling to the real bar position) — on any device with a non-trivial
+/// `safeAreaBottom` (home indicator / gesture nav) the caption box's bottom edge sat INSIDE the
+/// bar's occupied band, guaranteeing visual overlap regardless of caption text length (parity root
+/// cause: iOS `rb-ios-caption-overlay-bottom-bar-clearance-fix` — `64` decoupled from
+/// `LiveBottomBarView.swift`'s real height; Flutter's case was structurally worse because
+/// `safeAreaBottom` was an extra unaccounted-for term). Fix: derive from the SAME `safeAreaBottom +
+/// lift` base the real bar uses, plus its real height, plus an explicit clearance gap
+/// ([captionOverlayBottomBarClearanceGap]) — this guarantees a fixed minimum clearance regardless
+/// of `safeAreaBottom`'s actual value. This branch is NOT touched by
+/// `rb-flutter-vod-caption-reserve-card-space` — out of scope, already correct. [lift] MUST feed
+/// the SAME `_scrubBarExpanded ? _scrubChromeLift : 0.0` expression already passed at the call
+/// site (existing lift-on-release behavior is preserved, not baked separately into this function).
+/// Unit-testable without a widget.
+double captionOverlayBottomInset(
+  double safeAreaBottom, {
+  required bool isFinishedLiveReplay,
+  required double lift,
+}) =>
+    isFinishedLiveReplay
+        ? safeAreaBottom +
+            lift +
+            LiveBottomBarView.barHeight +
+            captionOverlayBottomBarClearanceGap
+        : safeAreaBottom + 92 + lift;
+
 /// Run a vertical-swipe in-place NAVIGATE then report the switched video id (swipe-video-switched-
 /// notify, parity iOS / Android / RN). Forwards [navigate] (→ template → core `load`) FIRST, then —
 /// when the resolved [adjacentId] is non-null — reports it via [onDidSwitchVideo] so the container
@@ -373,13 +522,24 @@ bool shouldShowSubtitleCaption({
 /// hot-pick paths). The NAVIGATE branch only runs when `hasNextVideo` / `hasPrevVideo` is true, so
 /// [adjacentId] is non-null there; the null-guard is defensive. PURE (no widget / gesture) →
 /// unit-testable, parity iOS `PlayerShellModel.navigateToNext` fire.
+///
+/// [onLoadVideo] (flutter-swipe-video-load-requester-wiring-reference-ui, additive / optional):
+/// fired ALONGSIDE [onDidSwitchVideo] with the SAME non-null [adjacentId] — see
+/// [PlayerShellView.onSwipeVideoLoad]'s doc comment for why a SEPARATE, container-controller-
+/// direct reload seam is needed ([navigate] alone no longer reliably reloads the native player in
+/// production). `null` (demo / golden / a host not wiring it) → no-op, byte-identical to before
+/// this parameter existed.
 void navigateAndNotifySwitch(
   String? adjacentId,
   VoidCallback navigate,
-  ValueChanged<String>? onDidSwitchVideo,
-) {
+  ValueChanged<String>? onDidSwitchVideo, [
+  ValueChanged<String>? onLoadVideo,
+]) {
   navigate();
-  if (adjacentId != null) onDidSwitchVideo?.call(adjacentId);
+  if (adjacentId != null) {
+    onDidSwitchVideo?.call(adjacentId);
+    onLoadVideo?.call(adjacentId);
+  }
 }
 
 /// The family-1 player-shell container. Binds the relevant template
@@ -524,6 +684,20 @@ class PlayerShellView extends StatefulWidget {
   /// (demo / golden) → no report.
   final ValueChanged<String>? onDidSwitchVideo;
 
+  /// Fired ALONGSIDE [onDidSwitchVideo] with the SAME resolved adjacent video id
+  /// (flutter-swipe-video-load-requester-wiring-reference-ui). The built-in swipe fallback's
+  /// "official" reload path — `model.navigateToNext()`/`navigateToPrev()` → `DefaultPlayerTemplate
+  /// .navigateToNext()`/`navigateToPrev()` → the injected `VideoLoadRequester` — is a DEAD no-op in
+  /// production: `LivebuyUI.install()` (`flutter-ui/lib/src/livebuy_ui.dart`) never wires that
+  /// requester (unlike `guestNameEditRequester` / `viewCartRequester`, which it DOES wire), so
+  /// `navigate()` above does nothing observable. The turnkey `LivebuyPlayer` container wires this
+  /// SEPARATE seam to `_controller.load(id)` DIRECTLY — the SAME container-held core controller
+  /// [PlayerShellView.onToggleMute]'s default already bypasses the template with — then re-applies
+  /// its currently-known mute truth to the freshly-(re)loaded engine (real-device report: manually
+  /// mute → swipe → sound returns). null (demo / golden / a host wiring `PlayerShellView` directly
+  /// without a container) → no-op, byte-identical to before this seam existed.
+  final ValueChanged<String>? onSwipeVideoLoad;
+
   /// Reports the info panel (VideoInfoPanel bottom sheet) open/closed state to the container so
   /// it can hide the higher-layer chat feed while the panel is up (parity iOS rb-ios-info-panel-
   /// not-covered-by-chat). null → no report. The panel's own state / dismiss paths are unchanged.
@@ -543,6 +717,23 @@ class PlayerShellView extends StatefulWidget {
   /// EVERY open/close. null → no report (demo / golden / a custom `ReferenceUIDesign` not wiring
   /// it). The sheet's own content / two actions / `BottomSheetPresenter` presentation are unchanged.
   final ValueChanged<bool>? onMoreMenuOpenChange;
+
+  /// Reports every transition of the playback-progress transport bar's NARROW active-drag state
+  /// (`_isScrubbing`: finger down until finger up) — rb-flutter-scrub-expanded-chrome-lift,
+  /// bubble pattern copied verbatim from [onCleanModeChange] / [onMoreMenuOpenChange], parity
+  /// iOS `onScrubbingChange` / Android `onScrubbingChange`. Fires from [_handleScrubStart] /
+  /// [_handleScrubEnd]. null (demo / golden / a custom `ReferenceUIDesign` not wiring it) → no
+  /// report — existing behavior unaffected.
+  final ValueChanged<bool>? onScrubbingChange;
+
+  /// Reports every transition of the transport bar's WIDE `_scrubBarExpanded` state (touch-down
+  /// through the [_scrubHoldDuration] post-release hold window, NOT just the active drag) —
+  /// rb-flutter-scrub-expanded-chrome-lift, parity iOS `onScrubBarExpandedChange` / Android
+  /// `onScrubBarExpandedChange`. So the container can lift the SIBLING `FeedWinOverlayView`
+  /// (composed outside this shell) the same amount `_buildContent` already lifts the in-shell
+  /// `LiveOverlayChromeView` pinned card / announce banner via its own `bottomInset`. null → no
+  /// report.
+  final ValueChanged<bool>? onScrubBarExpandedChange;
 
   /// Whether the on-demand 留言 composer bar is currently presented over the shell. When true the
   /// LIVE bottom bar is hidden so the opaque composer does not overlap it (parity iOS
@@ -638,9 +829,12 @@ class PlayerShellView extends StatefulWidget {
     this.onSwipeDown,
     this.onCloseRequest,
     this.onDidSwitchVideo,
+    this.onSwipeVideoLoad,
     this.onInfoPanelOpenChange,
     this.onCleanModeChange,
     this.onMoreMenuOpenChange,
+    this.onScrubbingChange,
+    this.onScrubBarExpandedChange,
     this.composerPresented = false,
     this.sheetsPresented = false,
     this.hasLiveNow = false,
@@ -665,15 +859,39 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// container layout (the standalone surface goldens render it directly).
   bool _infoPanelOpen = false;
 
+  /// Pending delayed bubble for the info-panel CLOSE transition
+  /// (rb-flutter-chat-reveal-sheet-dismiss-timing) — see [_setInfoPanel].
+  Timer? _infoPanelDismissTimer;
+
   /// Set the info-panel open state AND report it up via [PlayerShellView.onInfoPanelOpenChange]
   /// (parity iOS rb-ios-info-panel-not-covered-by-chat) so the container can hide the chat feed
   /// while the panel is up. All open/close paths (host-badge toggle / scrim / header close) funnel
   /// through here. Default CLOSED — the panel opens only on an explicit host-badge / `more` tap
   /// (parity iOS/Android/RN; the prior `true` default opened it on load).
+  ///
+  /// rb-flutter-chat-reveal-sheet-dismiss-timing: OPENING stays fully synchronous — local state
+  /// flips and [PlayerShellView.onInfoPanelOpenChange] fires in the SAME frame, unchanged. CLOSING
+  /// also flips the local `_infoPanelOpen` immediately (so the [BottomSheetPresenter] card starts
+  /// its `kSheetSlideDuration` slide-down animation right away, unchanged visual timing), but the
+  /// bubble to the container is DEFERRED by `kSheetSlideDuration` — the sibling
+  /// `FeedWinOverlayView`'s `chatVisible` gate is a hard boolean fed by that bubble with no
+  /// transition of its own, so bubbling `false` synchronously made the chat feed reappear at full
+  /// opacity while the sheet was still visibly sliding away underneath it (real-device report).
+  /// Reopening before the deferred close fires cancels the pending stale `false` (same
+  /// cancel-and-reschedule shape as [_scrubCollapseTimer] / [_pendingCleanModeToggleTimer]).
   void _setInfoPanel(bool open) {
     if (open == _infoPanelOpen) return;
     setState(() => _infoPanelOpen = open);
-    widget.onInfoPanelOpenChange?.call(open);
+    _infoPanelDismissTimer?.cancel();
+    if (open) {
+      widget.onInfoPanelOpenChange?.call(true);
+      return;
+    }
+    _infoPanelDismissTimer = Timer(kSheetSlideDuration, () {
+      _infoPanelDismissTimer = null;
+      if (!mounted) return;
+      widget.onInfoPanelOpenChange?.call(false);
+    });
   }
 
   /// 「乾淨模式」(rb-flutter-gesture-clean-mode-rewrite, retargeted by
@@ -957,15 +1175,35 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// [_infoPanelOpen]. Default `false` → sheet not drawn → existing goldens unchanged.
   bool _moreMenuOpen = false;
 
+  /// Pending delayed bubble for the「更多」sheet CLOSE transition
+  /// (rb-flutter-chat-reveal-sheet-dismiss-timing) — see [_setMoreMenuOpen].
+  Timer? _moreMenuDismissTimer;
+
   /// Set the「更多」sheet open state AND report it up via
   /// [PlayerShellView.onMoreMenuOpenChange] (rb-flutter-live-more-sheet-above-chat, bubble
   /// pattern copied verbatim from [_setInfoPanel] / [_toggleCleanMode]) so the container can
   /// hide the higher-layer合流聊天 feed while the sheet is up. All open/close paths (rail「更多」
   /// tap / scrim dismiss / 分享 / 客服) funnel through here.
+  ///
+  /// rb-flutter-chat-reveal-sheet-dismiss-timing: same delayed-bubble shape as [_setInfoPanel] —
+  /// OPENING stays fully synchronous; CLOSING flips the local `_moreMenuOpen` immediately (the
+  /// [BottomSheetPresenter] card starts sliding down right away) but defers the bubble to the
+  /// container by `kSheetSlideDuration` so the chat feed does not reappear until the sheet has
+  /// actually finished sliding away. Reopening before the deferred close fires cancels the
+  /// pending stale `false`.
   void _setMoreMenuOpen(bool open) {
     if (open == _moreMenuOpen) return;
     setState(() => _moreMenuOpen = open);
-    widget.onMoreMenuOpenChange?.call(open);
+    _moreMenuDismissTimer?.cancel();
+    if (open) {
+      widget.onMoreMenuOpenChange?.call(true);
+      return;
+    }
+    _moreMenuDismissTimer = Timer(kSheetSlideDuration, () {
+      _moreMenuDismissTimer = null;
+      if (!mounted) return;
+      widget.onMoreMenuOpenChange?.call(false);
+    });
   }
 
   /// Accumulated vertical drag distance for the swipe-to-switch-video gesture
@@ -993,23 +1231,35 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   static const double _scrubChromeLift = 36;
 
   /// Touch-down in the progress bar's hit area / track — cancels any pending collapse (a fresh
-  /// touch mid-hold-window restarts scrubbing) and expands immediately.
+  /// touch mid-hold-window restarts scrubbing) and expands immediately. Reports both transitions
+  /// (rb-flutter-scrub-expanded-chrome-lift, parity iOS `handleScrubStarted`): [onScrubbingChange]
+  /// unconditionally (the narrow drag state always starts here); [onScrubBarExpandedChange] only
+  /// when the WIDE state was not already expanded (a fresh touch mid-hold-window, see
+  /// [_scrubCollapseTimer]'s cancel above, stays already-expanded — no redundant re-report).
   void _handleScrubStart() {
     _scrubCollapseTimer?.cancel();
+    final wasExpanded = _scrubBarExpanded;
     setState(() {
       _isScrubbing = true;
       _scrubBarExpanded = true;
     });
+    widget.onScrubbingChange?.call(true);
+    if (!wasExpanded) widget.onScrubBarExpandedChange?.call(true);
   }
 
-  /// Touch-up (or cancel) — the readout hides immediately (`_isScrubbing = false`); the
-  /// transport bar itself stays expanded for [_scrubHoldDuration] before collapsing.
+  /// Touch-up (or cancel) — the readout hides immediately (`_isScrubbing = false`,
+  /// [onScrubbingChange] reports `false` right away so a lifted sibling surface can reappear);
+  /// the transport bar itself stays expanded for [_scrubHoldDuration] before collapsing, at which
+  /// point [onScrubBarExpandedChange] reports `false` (rb-flutter-scrub-expanded-chrome-lift,
+  /// parity iOS `handleScrubEnded`).
   void _handleScrubEnd() {
     setState(() => _isScrubbing = false);
+    widget.onScrubbingChange?.call(false);
     _scrubCollapseTimer?.cancel();
     _scrubCollapseTimer = Timer(_scrubHoldDuration, () {
       if (!mounted) return;
       setState(() => _scrubBarExpanded = false);
+      widget.onScrubBarExpandedChange?.call(false);
     });
   }
 
@@ -1025,15 +1275,62 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   // comment above — `didUpdateWidget` only rebuilds on a template REFERENCE change) — they flow
   // entirely through reaction 2, keyed on `subtitle.url` itself (design.md Decision 4).
 
+  /// URLs already handed to [_precacheProductImage] THIS `PlayerShellView` presentation
+  /// (rb-flutter-product-image-loading-polish) — de-dupes a repeat `productOverlay`
+  /// notify whose resolved URL set is unchanged (design.md Risk 2) so it costs one
+  /// cheap `Set` diff and prefetches nothing new, never a duplicate `precacheImage`
+  /// call for the same URL.
+  final Set<String> _prefetchedProductImageUrls = {};
+
   @override
   void initState() {
     super.initState();
     _cleanMode = widget.cleanModeForTesting;
     widget.template?.subtitle.addListener(_onSubtitleStateChanged);
     _maybeFetchSubtitleCues();
+    // rb-flutter-product-image-loading-polish — SEPARATE side-effect listener from the
+    // declarative `ListenableBuilder` in `build()` (same split as `subtitle` above):
+    // `precacheImage` needs a stable, mounted `BuildContext` and MUST NOT run as a
+    // side effect of `build()` itself. Runs once immediately too, so products already
+    // present at the first build (no notify needed) still get prefetched.
+    widget.template?.productOverlay.addListener(_onProductOverlayChanged);
+    _maybePrefetchProductImages();
   }
 
   void _onSubtitleStateChanged() => _maybeFetchSubtitleCues();
+
+  void _onProductOverlayChanged() => _maybePrefetchProductImages();
+
+  /// Background-prefetch every product-image URL in the FULL (unfiltered) product
+  /// list (`_model.allProducts`) into Flutter's own `ImageCache` via
+  /// [_precacheProductImage] (rb-flutter-product-image-loading-polish, design.md
+  /// Decisions 1/2/4), so by the time a product's own `[beginTime,endTime)` /
+  /// `narrate_status==2` window opens and the now-introducing carousel actually mounts
+  /// its `Image.network`, the image is already decoded — no placeholder flash.
+  /// `widget.live == false` (demo / golden) is a NO-OP — no network, matching every
+  /// other `live`-gated real-image path in this package (byte-stable baselines).
+  /// Skips URLs already in [_prefetchedProductImageUrls] so a repeat notify for an
+  /// unchanged list schedules nothing new.
+  void _maybePrefetchProductImages() {
+    if (!widget.live) return;
+    final urls = productImageUrlsToPrefetch(_model.allProducts)
+        .where((url) => !_prefetchedProductImageUrls.contains(url))
+        .toList();
+    if (urls.isEmpty) return;
+    _prefetchedProductImageUrls.addAll(urls);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      for (final url in urls) {
+        _precacheProductImage(url, context);
+      }
+    });
+  }
+
+  /// TEST SEAM indirection — [productImagePrecacheForTesting] (null in production) →
+  /// [defaultProductImagePrecache] (the real `precacheImage`). Kept as a tiny getter
+  /// so [_maybePrefetchProductImages] reads a single call site.
+  Future<void> Function(String url, BuildContext context) get _precacheProductImage =>
+      productImagePrecacheForTesting ?? defaultProductImagePrecache;
 
   /// Re-check `widget.template?.subtitle.url` against [_lastFetchedSubtitleUrl]
   /// ([shouldRefetchSubtitleCues]) and, when it genuinely changed, fetch + parse the new URL (or
@@ -1066,6 +1363,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   @override
   void dispose() {
     widget.template?.subtitle.removeListener(_onSubtitleStateChanged);
+    widget.template?.productOverlay.removeListener(_onProductOverlayChanged);
     _scrubCollapseTimer?.cancel();
     // rb-flutter-gesture-clean-mode-v2 — cancel any pending deferred-clean-mode-toggle / 2x-speed
     // tick timers so a fired callback never touches this unmounted state.
@@ -1074,6 +1372,10 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     // rb-flutter-live-like-burst-restyle — cancel the pending liked→false revert timer so a
     // fired callback never touches this unmounted state.
     _likeLikedTimer?.cancel();
+    // rb-flutter-chat-reveal-sheet-dismiss-timing — cancel any pending deferred close-bubble
+    // timers so a fired callback never touches this unmounted state.
+    _infoPanelDismissTimer?.cancel();
+    _moreMenuDismissTimer?.cancel();
     super.dispose();
   }
 
@@ -1087,6 +1389,14 @@ class _PlayerShellViewState extends State<PlayerShellView> {
       _subtitleCues = const [];
       _lastFetchedSubtitleUrl = null;
       _maybeFetchSubtitleCues();
+      // rb-flutter-product-image-loading-polish — re-wire the productOverlay listener
+      // to the NEW template reference (mirrors the subtitle re-wiring immediately
+      // above) and forget URLs prefetched under the OLD template, then re-check the
+      // new one's already-known products.
+      oldWidget.template?.productOverlay.removeListener(_onProductOverlayChanged);
+      widget.template?.productOverlay.addListener(_onProductOverlayChanged);
+      _prefetchedProductImageUrls.clear();
+      _maybePrefetchProductImages();
     }
   }
 
@@ -1130,6 +1440,15 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     final theme = widget.theme;
     final m = _model;
 
+    // rb-flutter-player-shell-bottom-chrome-safearea: shared by the 4 bottom-pinned chrome call
+    // sites this change closes (clean-mode exit button / floating bag / VOD side rail / LIVE
+    // bottom bar, both branches) — a single read, reused below and threaded into `_buildUpcoming`
+    // (a plain method, not a widget, so it cannot read `MediaQuery` itself). The pre-existing
+    // `PlaybackProgressBarView` slot (`rb-flutter-player-shell-bottom-safearea`) keeps its OWN
+    // separate inline `MediaQuery.of(context).padding.bottom` read further below — deliberately
+    // not unified with this local, see design.md Decision 4.
+    final safeAreaBottom = MediaQuery.of(context).padding.bottom;
+
     // UPCOMING (直播預告 awaitingLive) wears the design's LIVE chrome instead of the
     // LIVE / VOD chrome. Priority upcoming > live > vod — early-return so the
     // live / vod composition below is never reached for upcoming. Background is the
@@ -1138,7 +1457,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     // already hidden since isLive == false) + the SLIM LIVE bottom bar. NO VOD side
     // rail / floating bag / mini-cart / LiveOverlayChrome / info panel. Flutter
     // parity of iOS PlayerShellView's upcoming branch / Android UpcomingScaffold.
-    if (m.isUpcoming) return _buildUpcoming(theme, m);
+    if (m.isUpcoming) return _buildUpcoming(theme, m, safeAreaBottom);
 
     // rb-flutter-vod-playback-progress-bar display gate — `isMain` reuses the SAME expression
     // that already gates the VOD side rail / floating bag / now-introducing carousel (not
@@ -1252,8 +1571,12 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               theme: theme,
               // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：重用既有「空字串 → 不畫該
               // banner」渲染閘 + 既有 showGestureHints 參數，widget 本體不動（design.md D4）。
-              // pinnedProducts 原樣傳遞、不受 _cleanMode 影響（保留釘選卡）。
-              announceText: _cleanMode ? '' : m.announceText,
+              // fix-flutter-scrub-hide-announce-chat-pinned：拖曳播放進度條期間（_isScrubbing）
+              // 額外隱藏，parity iOS `isScrubbing ? "" : model.announceText` / Android
+              // `if (isScrubbing) "" else announce`——讓出畫面給 transport bar，跟既有的
+              // 「放開手指後 lift」（_scrubBarExpanded && !_isScrubbing，見下方 bottomInset）是兩件
+              //獨立的事、彼此不衝突：拖曳中先隱藏，放開後才重新出現並上移。
+              announceText: (_cleanMode || _isScrubbing) ? '' : m.announceText,
               showGestureHints: !_cleanMode,
               // 釘選卡來源依窄義 m.isLive 分流（rb-flutter-replay-live-chrome-parity，parity iOS）：
               //   真直播（m.isLive） → livePinnedProducts（多件 narrate_status==2 輪播 + 分頁點；
@@ -1265,10 +1588,14 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               //     時間窗）。
               // 再依本地已關閉的釘選商品 id 過濾（rb-flutter-live-pinned-card-dismiss，鏡像 VOD 的
               // _dismissedVodProductIds 過濾；_dismissedLivePinnedIds 預設空 → 原樣、golden 不變），
-              // 同一個 dismiss set 涵蓋兩個來源分支。
-              pinnedProducts: visiblePinnedProducts(
-                  m.isLive ? m.livePinnedProducts : m.vodActiveProducts,
-                  _dismissedLivePinnedIds),
+              // 同一個 dismiss set 涵蓋兩個來源分支。fix-flutter-scrub-hide-announce-chat-pinned：
+              // 拖曳期間改回傳空清單（parity iOS `isScrubbing ? [] : ...` / Android
+              // `if (isScrubbing) emptyList() else ...`），理由同上方 announceText。
+              pinnedProducts: _isScrubbing
+                  ? const []
+                  : visiblePinnedProducts(
+                      m.isLive ? m.livePinnedProducts : m.vodActiveProducts,
+                      _dismissedLivePinnedIds),
               // live-pinned-card-image-radius: load the real product photo only over a
               // live video surface (false / demo → placeholder, golden byte-stable).
               live: widget.live,
@@ -1295,6 +1622,14 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 m.selectInfoTab(LBInfoPanelTab.notice);
                 _setInfoPanel(true);
               },
+              // 放開手指到 2.8 秒收回這段期間（_scrubBarExpanded && !_isScrubbing），釘選卡 / 公告
+              // banner 重新出現時上移，讓出底部 transport bar 空間（rb-flutter-scrub-expanded-
+              // chrome-lift，parity iOS/Android — 與這個 build 其他既有 `_scrubBarExpanded ?
+              // _scrubChromeLift : 0.0` 用法同一慣例）。預設 0 對既有呼叫點無影響。
+              // safeAreaBottom 項無條件疊加、不受 scrub 狀態影響（fix-flutter-player-shell-bottom-
+              // safearea-gaps，補齊系統底部安全區——比照 liveBottomBarBottomInset 等既有慣例）。
+              bottomInset: safeAreaBottom +
+                  ((_scrubBarExpanded && !_isScrubbing) ? _scrubChromeLift : 0.0),
             ),
           )
         else if (!m.introPlaying)
@@ -1302,16 +1637,40 @@ class _PlayerShellViewState extends State<PlayerShellView> {
           // ALL products whose [beginTime,endTime) window contains the playhead
           // (`m.vodActiveProducts`), minus locally dismissed. Anchored bottom-leading; trailing
           // inset clears the bottom-anchored side rail (rb-flutter-now-introducing，問題 9/10/1).
-          ..._buildNowIntroducing(m, theme),
+          ..._buildNowIntroducing(m, theme, safeAreaBottom),
 
         // VOD closed-caption line (rb-flutter-subtitle-vtt-caption-display). Independent Stack
-        // sibling of the now-introducing carousel above (same `!m.isLive` branch, but a separate
-        // feature — a host may have one without the other), bottom-centered, lifted the same
+        // sibling of the now-introducing carousel above, bottom-centered, lifted the same
         // `_scrubChromeLift` amount while released-but-still-held (rb-flutter-vod-playback
         // -progress-bar precedent). `effectiveCaption` is resolved HERE (not cached in state) —
         // it is a cheap synchronous lookup over `_subtitleCues`, recomputed every rebuild from
         // the current `m.playbackPosition`, parity iOS/Android `activeCue(cues, at: position)`.
-        ..._buildSubtitleCaption(m, theme, usesLiveChrome),
+        //
+        // rb-flutter-replay-caption-overlay-fix: this call site MUST feed the narrow `m.isLive`,
+        // NOT `usesLiveChrome` (= m.isLive || m.isFinishedLiveReplay). VTT/CC captions and "does
+        // this state wear LIVE chrome" are independent concerns — an already-finished live
+        // replay is still, mechanically, playing back a recorded file (like VOD), so it deserves
+        // captions same as VOD even though it also wears the LIVE bottom bar / overlay chrome.
+        // `rb-flutter-subtitle-vtt-caption-display` (archived 2026-08-31) deliberately chose
+        // `m.isLive` here (design.md Decision 2) and its own Risks/Trade-offs explicitly
+        // predicted a future `usesLiveChrome` unification would make captions follow it.
+        // `rb-flutter-replay-live-chrome-parity` (archived 2026-09-06) was exactly that
+        // predicted unification: it retargeted this call site to `usesLiveChrome` along with the
+        // genuinely-LIVE-chrome-related ones (side rail / floating bag / now-introducing
+        // carousel / LiveOverlayChromeView / LiveBottomBarView / merged chat feed) as an
+        // explicit, itemized goal of that change (its own proposal.md/design.md list this call
+        // site by name) — not an accidental sweep. `rb-flutter-replay-caption-overlay-fix`
+        // (2026-09-09) deliberately REVERSES that unification for captions only, per a user
+        // report + a four-platform sibling product decision — a new product decision, not a
+        // regression fix. As a result the caption gate no longer shares a branch with
+        // `_buildNowIntroducing` (`!usesLiveChrome`) — they diverge exactly when
+        // `isFinishedLiveReplay == true` (caption shows, carousel doesn't).
+        //
+        // `safeAreaBottom` (rb-flutter-caption-overlay-bottom-bar-clearance-fix): threaded through
+        // so the vertical `bottom` position can correctly clear `LiveBottomBarView` in the
+        // `isFinishedLiveReplay` branch — same local this `_buildContent` scope already computes
+        // and feeds to every other bottom-pinned chrome element's own inset function.
+        ..._buildSubtitleCaption(m, theme, m.isLive, safeAreaBottom),
 
         // Surfaces 1 + 2 — top bar pinned top, side rail pinned trailing.
         Column(
@@ -1397,13 +1756,17 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                   Padding(
                     padding: EdgeInsets.only(
                         right: 12,
-                        bottom: 68 + (_scrubBarExpanded ? _scrubChromeLift : 0.0)),
+                        // rb-flutter-player-shell-bottom-chrome-safearea: clears the system
+                        // bottom safe area on top of the existing `_scrubBarExpanded` lift.
+                        bottom: vodSideRailBottomInset(safeAreaBottom,
+                            lift: _scrubBarExpanded ? _scrubChromeLift : 0.0)),
                     child: OperationRailView(
                       theme: theme,
                       items: m.railItems,
                       bagCount: m.bagCount,
                       heartBurstTick: m.heartBurstTick,
                       muted: m.muted,
+                      subtitleEnabled: m.subtitleEnabled,
                       onTapItem: _handleRailTap,
                       // rb-flutter-replay-live-chrome-parity: this rail's `isFinishedLiveReplay`
                       // / `onTapMore` collapsed-more-pill capability is now component-level ONLY
@@ -1431,7 +1794,10 @@ class _PlayerShellViewState extends State<PlayerShellView> {
             child: Padding(
               padding: EdgeInsets.only(
                   right: 12,
-                  bottom: 16 + (_scrubBarExpanded ? _scrubChromeLift : 0.0)),
+                  // rb-flutter-player-shell-bottom-chrome-safearea: clears the system bottom
+                  // safe area on top of the existing `_scrubBarExpanded` lift.
+                  bottom: floatingBagButtonBottomInset(safeAreaBottom,
+                      lift: _scrubBarExpanded ? _scrubChromeLift : 0.0)),
               child: FloatingBagButton(
                 theme: theme,
                 bagCount: m.bagCount,
@@ -1443,16 +1809,16 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // 「退出乾淨模式」小圓鈕（rb-flutter-gesture-clean-mode-v2，位置對齊設計稿由
         // rb-flutter-clean-mode-exit-icon-fix 補齊）：`_cleanMode == true` 時可見，點擊即退出。
         // `left: 14` 兩側共用，對齊 `design/templates/minimal/screens.jsx` VOD/LIVE 兩分支皆用的
-        // 同一水平位移。`bottom` 依 `m.isLive` 分流：VOD/回放（`!m.isLive`）`bottom: 52`（設計稿
+        // 同一水平位移。`bottom` 依 `m.isLive` 分流：VOD/回放（`!m.isLive`）base `52`（設計稿
         // `16 + 36`，疊在 transport 列展開態上方，清開展開態進度條的高度）；LIVE（`m.isLive`）
-        // `bottom: 16`（設計稿本就是這個值，不變）。兩者共用同一顆 widget / 同一個
-        // `LbTestKeys.cleanModeExitButton`（`m.isLive` 互斥，永遠只有一顆存在於渲染子樹）。這個檔案
-        // 本身沒有既有 safe-area（`MediaQuery.of(context).padding`）存取慣例，設計稿公式雖含
-        // `+ safeArea.bottom`，這裡刻意不新增（見本 change design.md 的 Non-Goals）。
+        // base `16`（設計稿本就是這個值，不變）。兩者共用同一顆 widget / 同一個
+        // `LbTestKeys.cleanModeExitButton`（`m.isLive` 互斥，永遠只有一顆存在於渲染子樹）。
+        // rb-flutter-player-shell-bottom-chrome-safearea 起，base 值之上疊加 `safeAreaBottom`
+        // （取代先前「這裡刻意不新增 safe-area」的舊決策——見本 change design.md）。
         if (_cleanMode)
           Positioned(
             left: 14,
-            bottom: m.isLive ? 16 : 52,
+            bottom: cleanModeExitButtonBottomInset(safeAreaBottom, isLive: m.isLive),
             child: _CleanModeExitButton(onTap: () => setState(() => _cleanMode = false)),
           ),
 
@@ -1486,8 +1852,11 @@ class _PlayerShellViewState extends State<PlayerShellView> {
           Align(
             alignment: Alignment.bottomCenter,
             child: Padding(
+              // rb-flutter-player-shell-bottom-chrome-safearea: clears the system bottom safe
+              // area on top of the existing `_scrubBarExpanded` lift.
               padding: EdgeInsets.only(
-                  bottom: _scrubBarExpanded ? _scrubChromeLift : 0.0),
+                  bottom: liveBottomBarBottomInset(safeAreaBottom,
+                      lift: _scrubBarExpanded ? _scrubChromeLift : 0.0)),
               child: LiveBottomBarView(
                 theme: theme,
                 bagCount: m.bagCount,
@@ -1499,6 +1868,14 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 isFinishedLiveReplay: m.isFinishedLiveReplay,
                 // 讚鈕亮色狀態（rb-flutter-live-like-burst-restyle，design R37）。
                 liked: _liveLiked,
+                // CC 切換按鈕 active 填色態（rb-flutter-live-bottom-bar-cc-icon-active-fill-state）——
+                // 與 VOD 側欄 CC pill / SubtitleOverlay 共用同一個既有 getter。
+                subtitleEnabled: m.subtitleEnabled,
+                // CC 是否有字幕來源可用（R42，rb-flutter-cc-icon-availability-redesign）——與 VOD
+                // 側欄 `OperationRailView` 內部由 `items` 衍生的同一個 `m.railItems` 讀出，parity
+                // `showShare` / `showContact` 已用的既有衍生慣例（見上方「更多」選單呼叫處）。
+                subtitleAvailable: m.railItems.any(
+                    (it) => it.kind == LBSideRailKind.subtitle && it.enabled),
                 onBag: () => _handleRailTap(LBSideRailKind.goods),
                 onComment: widget.onComment,
                 // 暱稱鈕 → 容器本地呈現 設定暱稱 modal（onNickname；parity）；未接時退回 rail 路徑
@@ -1549,10 +1926,13 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // sibling (composed after the LIVE bottom bar / heart-burst block, before the
         // restriction mask — mirrors iOS ordering) so it can render over whichever chrome above
         // is currently composed. `showsProgressBar` already guarantees `!m.isLive` (see
-        // `showsPlaybackProgressBar`'s doc comment), so under Flutter's current isLive-only
-        // chrome branch this only ever overlays the VOD chrome (side rail / floating bag / now-
-        // introducing carousel), never `LiveOverlayChromeView` — see design.md for why this
-        // change does not retrofit iOS's `usesLiveChrome` unification.
+        // `showsPlaybackProgressBar`'s doc comment). (fix-flutter-player-shell-bottom-safearea-
+        // gaps — corrects a stale claim left behind by rb-flutter-replay-live-chrome-parity):
+        // this slot DOES coexist with `LiveOverlayChromeView` during an already-finished-live-
+        // replay (`usesLiveChrome = m.isLive || m.isFinishedLiveReplay` now decides that chrome
+        // branch, and `showsProgressBar` covers `isReplay: m.isFinishedLiveReplay` too) — it only
+        // overlays the VOD-only chrome (side rail / floating bag / now-introducing carousel) for
+        // genuine pure-VOD content, which is the ONE state that never wears LIVE chrome.
         //
         // STABLE `Key` (player-gesture-feedback-overlays-flutter, kept by rb-flutter-gesture-
         // clean-mode-v2 even though that change's own two paused-overlay/mute-toast slots were
@@ -1739,22 +2119,39 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// dismissed, and anchors a bottom-leading [NowIntroducingCarousel] (full width + page dots). The
   /// trailing inset clears the bottom-anchored side rail when it is shown (VOD-main, startPhase
   /// done): `60 = right 12 + pill 40 + gap 8`; the VOD start sequence (no side rail) keeps 8.
-  /// Returns `[]` (drawn nothing) when there is no in-flight introducing product OR while
+  /// Returns `[]` (drawn nothing) when there is no in-flight introducing product, OR while
   /// actively scrubbing the playback progress bar (`_isScrubbing`,
-  /// rb-flutter-vod-playback-progress-bar — VOD-side chrome collapses during a drag). While
+  /// rb-flutter-vod-playback-progress-bar — VOD-side chrome collapses during a drag), OR while
+  /// `startPhase` is still `loading`/`splash` (rb-flutter-now-introducing-carousel-buffering-
+  /// gate — the card now waits for the SAME threshold as the side rail / floating bag,
+  /// `startPhase ∈ {buffering, done}`, rb-flutter-vod-rail-show-on-buffering). While
   /// released-but-still-held (`_scrubBarExpanded && !_isScrubbing`) the card lifts an extra
-  /// [_scrubChromeLift] to clear the still-expanded transport bar.
-  List<Widget> _buildNowIntroducing(PlayerShellModel m, ReferenceUITheme theme) {
+  /// [_scrubChromeLift] to clear the still-expanded transport bar. [safeAreaBottom]
+  /// (fix-flutter-player-shell-bottom-safearea-gaps, ADDED Requirement — this card's bottom
+  /// position was never covered by any prior `reference-ui-rendering` Requirement) is folded into
+  /// the outer `Padding`'s `bottom`, matching the design authority
+  /// (`design/templates/minimal/sdk-components.jsx:908` `LBPMiniCart`'s `bottom: 12 + safeBottom`)
+  /// — MUST feed the SAME `MediaQuery.of(context).padding.bottom` value `_buildContent` already
+  /// reads for every other bottom-pinned chrome in this file.
+  List<Widget> _buildNowIntroducing(
+      PlayerShellModel m, ReferenceUITheme theme, double safeAreaBottom) {
     // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：與拖曳進度條同一個「不畫」出口。
     if (_isScrubbing || _cleanMode) return const [];
     final introducing = m.vodActiveProducts
         .where((p) => !_dismissedVodProductIds.contains(p.id))
         .toList();
     if (introducing.isEmpty) return const [];
-    // Trailing clearance follows the side rail's visibility (shown from `buffering`
-    // onward, suppressed only in loading/splash) — rb-flutter-vod-rail-show-on-buffering.
+    // The card's OWN mount now follows the side rail's visibility (shown from `buffering`
+    // onward, suppressed only in loading/splash) — rb-flutter-now-introducing-carousel-
+    // buffering-gate. `railShown` used to feed ONLY the trailing-padding calculation below
+    // (never gated whether this card drew at all), so an early-populated `vodActiveProducts`
+    // could surface the card BEFORE the side rail (`OperationRailView`) / floating bag
+    // (`FloatingBagButton`) — both of which already gate on this same expression
+    // (rb-flutter-vod-rail-show-on-buffering). Computed once; reused below for the trailing
+    // inset so there is still only one `startPhase` read for both purposes.
     final railShown =
         m.startPhase != LBPStartPhase.loading && m.startPhase != LBPStartPhase.splash;
+    if (!railShown) return const [];
     final lift = _scrubBarExpanded ? _scrubChromeLift : 0.0;
     return [
       Positioned(
@@ -1762,7 +2159,8 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         right: 0,
         bottom: 0,
         child: Padding(
-          padding: EdgeInsets.only(left: 8, right: railShown ? 60 : 8, bottom: 12 + lift),
+          padding: EdgeInsets.only(
+              left: 8, right: railShown ? 60 : 8, bottom: safeAreaBottom + 12 + lift),
           child: NowIntroducingCarousel(
             theme: theme,
             peeks: [
@@ -1798,19 +2196,46 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// `!_isScrubbing && !_cleanMode` (mirrors Android's own call-site AND split — those two flags
   /// are NOT baked into the pure gate function), and anchors bottom-center, lifted
   /// [_scrubChromeLift] while released-but-still-held (parity `_buildNowIntroducing`'s own lift).
-  /// [usesLiveChrome] (rb-flutter-replay-live-chrome-parity) feeds [shouldShowSubtitleCaption]'s
-  /// `isLive` argument — the pure function's own parameter name is unchanged (its doc comment
-  /// already anticipated this: "Flutter's shell never retrofit that unification" no longer
-  /// holds), only the value fed at THIS call site changed from the narrow `m.isLive` to the
-  /// caller-computed `usesLiveChrome = m.isLive || m.isFinishedLiveReplay`, so the caption
-  /// mounts under the SAME `!usesLiveChrome` branch as `_buildNowIntroducing` (VOD-only chrome).
-  /// Returns `[]` (drawn nothing) when the gate is not satisfied.
+  /// [isLive] feeds [shouldShowSubtitleCaption]'s own same-named argument directly — it MUST be
+  /// the narrow `m.isLive`, NOT the caller-computed `usesLiveChrome = m.isLive ||
+  /// m.isFinishedLiveReplay`. `rb-flutter-subtitle-vtt-caption-display` (archived 2026-08-31)
+  /// deliberately chose `m.isLive` here (design.md Decision 2) and predicted in its own
+  /// Risks/Trade-offs that a future `usesLiveChrome` unification would make captions follow it.
+  /// `rb-flutter-replay-live-chrome-parity` (archived 2026-09-06) was exactly that predicted
+  /// unification — feeding `usesLiveChrome` here was an explicit, itemized goal of that change
+  /// (its own proposal.md/design.md list this call site by name), not an accidental sweep; it
+  /// deliberately stopped showing captions for an already-finished live replay, matching
+  /// iOS/Android at the time. `rb-flutter-replay-caption-overlay-fix` (2026-09-09) deliberately
+  /// REVERSES that unification for captions only, per a user report + a four-platform sibling
+  /// product decision — a new product decision, not a regression fix. Captions and "does this
+  /// state wear LIVE chrome" are independent: a finished-live-replay is mechanically still
+  /// playing back a recorded file, so it gets captions same as VOD, even while it also wears the
+  /// LIVE bottom bar / overlay chrome. This means the caption no longer mounts under the SAME
+  /// branch as `_buildNowIntroducing` (`!usesLiveChrome`) — they diverge exactly when
+  /// `isFinishedLiveReplay == true` (caption shows, now-introducing carousel doesn't). Returns
+  /// `[]` (drawn nothing) when the gate is not satisfied.
+  ///
+  /// Horizontal position (rb-flutter-caption-overlay-align-hide-chat): centers inside a narrow
+  /// box (`Positioned(left: 8, right: captionOverlayRightInset(...))`), NOT the full screen width
+  /// — parity design `sdk-components.jsx` `LBPCaptionOverlay`. See [captionOverlayRightInset]'s
+  /// own doc comment for why the inset only needs to branch on `isFinishedLiveReplay`.
+  ///
+  /// Vertical position (`bottom`, rb-flutter-caption-overlay-bottom-bar-clearance-fix): resolved
+  /// by [captionOverlayBottomInset], which folds in [safeAreaBottom] and
+  /// [LiveBottomBarView.barHeight] for the already-finished-live-replay branch (the state where
+  /// this overlay shares the screen with `LiveBottomBarView`) — see that function's own doc
+  /// comment for the full derivation. [safeAreaBottom] MUST feed the SAME
+  /// `MediaQuery.of(context).padding.bottom` local `_buildContent` already computes and threads
+  /// into every other bottom-pinned chrome element's own inset function. The existing
+  /// `_scrubChromeLift` lift-on-release behavior is preserved unchanged (still applied via [lift],
+  /// now folded into [captionOverlayBottomInset] instead of being added inline here) — this
+  /// requirement predates and is orthogonal to the vertical-position fix itself.
   List<Widget> _buildSubtitleCaption(
-      PlayerShellModel m, ReferenceUITheme theme, bool usesLiveChrome) {
+      PlayerShellModel m, ReferenceUITheme theme, bool isLive, double safeAreaBottom) {
     final effectiveCaption =
         VTTSubtitleParser.activeCue(_subtitleCues, m.playbackPosition)?.text ?? '';
     final shows = shouldShowSubtitleCaption(
-          isLive: usesLiveChrome,
+          isLive: isLive,
           introPlaying: m.introPlaying,
           subtitleEnabled: m.subtitleEnabled,
           captionText: effectiveCaption,
@@ -1819,11 +2244,17 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         !_cleanMode;
     if (!shows) return const [];
     final lift = _scrubBarExpanded ? _scrubChromeLift : 0.0;
+    final rightInset =
+        captionOverlayRightInset(isFinishedLiveReplay: m.isFinishedLiveReplay);
+    final bottomInset = captionOverlayBottomInset(safeAreaBottom,
+        isFinishedLiveReplay: m.isFinishedLiveReplay, lift: lift);
     return [
-      Align(
-        alignment: Alignment.bottomCenter,
-        child: Padding(
-          padding: EdgeInsets.only(bottom: 8 + lift),
+      Positioned(
+        left: 8,
+        right: rightInset,
+        bottom: bottomInset,
+        child: Align(
+          alignment: Alignment.center,
           child: CaptionOverlayView(theme: theme, text: effectiveCaption),
         ),
       ),
@@ -1839,7 +2270,13 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// rail / floating bag / mini-cart NOR the [LiveOverlayChromeView] announce-pinned
   /// card / info panel. Flutter parity of iOS PlayerShellView's upcoming branch /
   /// Android `UpcomingScaffold`. Plain `Stack` / `Column` only (golden-deterministic).
-  Widget _buildUpcoming(ReferenceUITheme theme, PlayerShellModel m) {
+  ///
+  /// [safeAreaBottom] (rb-flutter-player-shell-bottom-chrome-safearea): `_buildContent`'s own
+  /// `MediaQuery.of(context).padding.bottom` read, threaded in as a plain `double` — this method
+  /// has no `BuildContext` of its own (see design.md Decision 3). Feeds the SLIM
+  /// [LiveBottomBarView] call site's outer `Padding` via [liveBottomBarBottomInset].
+  Widget _buildUpcoming(
+      ReferenceUITheme theme, PlayerShellModel m, double safeAreaBottom) {
     return Stack(
       children: [
         // Background: the upcoming countdown surface (date + big time). `live: false`
@@ -1898,23 +2335,33 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // SLIM LIVE bottom bar pinned bottom (bag + spacer + share + like; no 留言 /
         // nickname / CC). bag / share / like route through the existing rail wiring by
         // kind. NO VOD side rail / floating bag / mini-cart / overlay chrome.
+        //
+        // rb-flutter-player-shell-bottom-chrome-safearea: this branch had NO `Padding` at all
+        // before this change — a new one is added so the bar clears the system bottom safe area,
+        // matching the design's `LBLiveBottomBar` (same component as the main branch's own call
+        // site, see `liveBottomBarBottomInset`'s doc comment). `lift: 0.0` — the upcoming slim
+        // state has no playback progress bar / `_scrubBarExpanded` concept.
         Align(
           alignment: Alignment.bottomCenter,
-          child: LiveBottomBarView(
-            theme: theme,
-            bagCount: m.bagCount,
-            isReplay: false,
-            isUpcoming: true,
-            // 讚鈕亮色狀態（rb-flutter-live-like-burst-restyle，design R37）。
-            liked: _liveLiked,
-            onBag: () => _handleRailTap(LBSideRailKind.goods),
-            onShare: () => _handleRailTap(LBSideRailKind.share),
-            // 真 like（host exit）+ 隨機 1-4 顆錯開飄心 burst + 讚鈕短暫亮色（
-            // rb-flutter-live-bottom-heart-burst 起源，rb-flutter-live-like-burst-restyle 改版）。
-            onLike: () {
-              _handleRailTap(LBSideRailKind.like);
-              _triggerLiveLikeBurst();
-            },
+          child: Padding(
+            padding: EdgeInsets.only(
+                bottom: liveBottomBarBottomInset(safeAreaBottom, lift: 0.0)),
+            child: LiveBottomBarView(
+              theme: theme,
+              bagCount: m.bagCount,
+              isReplay: false,
+              isUpcoming: true,
+              // 讚鈕亮色狀態（rb-flutter-live-like-burst-restyle，design R37）。
+              liked: _liveLiked,
+              onBag: () => _handleRailTap(LBSideRailKind.goods),
+              onShare: () => _handleRailTap(LBSideRailKind.share),
+              // 真 like（host exit）+ 隨機 1-4 顆錯開飄心 burst + 讚鈕短暫亮色（
+              // rb-flutter-live-bottom-heart-burst 起源，rb-flutter-live-like-burst-restyle 改版）。
+              onLike: () {
+                _handleRailTap(LBSideRailKind.like);
+                _triggerLiveLikeBurst();
+              },
+            ),
           ),
         ),
 
@@ -1963,9 +2410,11 @@ class _PlayerShellViewState extends State<PlayerShellView> {
       } else if (resolveSwipeNavFallback(_model.hasNextVideo) ==
           SwipeNavFallbackAction.navigate) {
         // swipe-UP → next; report the new id (swipe-video-switched-notify) so the host's
-        // video mirror (minimized floating preview) follows.
-        navigateAndNotifySwitch(
-            _model.nextVideoId, _model.navigateToNext, widget.onDidSwitchVideo);
+        // video mirror (minimized floating preview) follows, AND fire the direct-reload seam
+        // (flutter-swipe-video-load-requester-wiring-reference-ui — `navigateToNext()`'s own
+        // requester is dead in production, see [onSwipeVideoLoad]'s doc comment).
+        navigateAndNotifySwitch(_model.nextVideoId, _model.navigateToNext,
+            widget.onDidSwitchVideo, widget.onSwipeVideoLoad);
       } else {
         widget.onCloseRequest?.call(); // close at the tail
       }
@@ -1974,9 +2423,10 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         widget.onSwipeDown!.call();
       } else if (resolveSwipeNavFallback(_model.hasPrevVideo) ==
           SwipeNavFallbackAction.navigate) {
-        // swipe-DOWN → prev; report the new id (swipe-video-switched-notify).
-        navigateAndNotifySwitch(
-            _model.prevVideoId, _model.navigateToPrev, widget.onDidSwitchVideo);
+        // swipe-DOWN → prev; report the new id (swipe-video-switched-notify), AND fire the
+        // direct-reload seam (flutter-swipe-video-load-requester-wiring-reference-ui).
+        navigateAndNotifySwitch(_model.prevVideoId, _model.navigateToPrev,
+            widget.onDidSwitchVideo, widget.onSwipeVideoLoad);
       } else {
         widget.onCloseRequest?.call(); // close at the head
       }

@@ -89,6 +89,18 @@ class MomentsModel {
   LBPStartPhase get startPhase =>
       template?.startScreen.phase ?? LBPStartPhase.loading;
 
+  /// The GENERAL (non-upcoming-scoped) `.loading`-phase cover photo
+  /// (`DefaultPlayerTemplate.loadingCover` ← `channel.cover`, forwarded on every
+  /// channel load by `forwardChannelChangeToTemplate`'s `applyLoadingCover` call —
+  /// `player-loading-cover-background-reference-ui-flutter`). `StartScreenView`
+  /// reads this BY VALUE (never the model/template) to draw the real cover + dark
+  /// mask behind the brand-mark animation when `live == true`. Demo default `''`
+  /// (no template bound). Deliberately INDEPENDENT of family-1 `PlayerShellModel`'s
+  /// upcoming-scoped cover (`template.upcomingState.cover`) — different model
+  /// class, different data source, no shared code path; this getter MUST NOT be
+  /// confused with (or merged into) that one.
+  String get loadingCover => template?.loadingCover ?? '';
+
   // -- Surface 2: EndScreenView ← auto-next countdown + next + hot ---------------
 
   /// Auto-next countdown snapshot (`endScreen.countdown`); non-null ONLY while

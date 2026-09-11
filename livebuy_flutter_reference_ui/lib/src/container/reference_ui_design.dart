@@ -2,7 +2,12 @@ import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart'
     show LBProduct, LBVideoItem, LBWinner;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
-    show DefaultPlayerTemplate, DefaultWidgetTemplate, LBSideRailKind, LBEndHotItem;
+    show
+        DefaultPlayerTemplate,
+        DefaultWidgetTemplate,
+        LBSideRailKind,
+        LBEndHotItem,
+        LBPStartPhase;
 
 import '../reference_ui_theme.dart';
 import '../playershell/player_shell_view.dart';
@@ -193,6 +198,56 @@ class PlayerOverlayContext {
   /// mirrors it into [moreMenuOpen] to hide the chat feed). null → no report.
   final ValueChanged<bool>? onMoreMenuOpenChange;
 
+  /// Reports every transition of the playback-progress transport bar's NARROW active-drag state
+  /// (finger down through finger up) from `PlayerShellView` up to the container
+  /// (rb-flutter-scrub-expanded-chrome-lift, bubble pattern copied verbatim from
+  /// [onCleanModeChange] / [onMoreMenuOpenChange], parity iOS/Android `onScrubbingChange`). The
+  /// container mirrors it into its own local state and combines it with [onScrubBarExpandedChange]
+  /// to compute [scrubHoldLifted]. null → no report (demo / golden / a custom `ReferenceUIDesign`
+  /// not wiring it).
+  final ValueChanged<bool>? onScrubbingChange;
+
+  /// Reports every transition of the transport bar's WIDE `scrubBarExpanded` state (touch-down
+  /// through the ~2.8s post-release hold window, NOT just the active drag) from `PlayerShellView`
+  /// up to the container (rb-flutter-scrub-expanded-chrome-lift, bubble pattern copied verbatim
+  /// from [onScrubbingChange] above, parity iOS/Android `onScrubBarExpandedChange`). null → no
+  /// report.
+  final ValueChanged<bool>? onScrubBarExpandedChange;
+
+  /// Whether the merged LIVE chat feed (`FeedWinOverlayView`) should lift an EXTRA
+  /// `scrubChromeLift` amount because the playback-progress transport bar has reappeared during
+  /// its post-release hold window (`scrubBarExpanded && !isScrubbing`) — the same released-but-
+  /// still-held window that already lifts the LIVE pinned card / announce banner
+  /// (`PlayerShellView`'s own `LiveOverlayChromeView.bottomInset` call, self-contained since that
+  /// surface is composed BY `PlayerShellView` itself). The chat feed is a SIBLING surface composed
+  /// by the container instead, so it needs this container-resolved value
+  /// (rb-flutter-scrub-expanded-chrome-lift, parity iOS `MinimalDesign.liveChatBottomInset`'s
+  /// `scrubHoldLifted` argument / Android `liveChatBottomInset(scrubHoldLifted:)`). Container-
+  /// computed from its own [onScrubbingChange] / [onScrubBarExpandedChange] mirrors — see
+  /// `LivebuyPlayer`'s wiring. Default `false` → every existing `PlayerOverlayContext(...)` call
+  /// site (which never sets this) is unaffected.
+  final bool scrubHoldLifted;
+
+  /// The system bottom safe area (home indicator / Android gesture bar), mirrored from
+  /// `LivebuyPlayer`'s own `MediaQuery.of(context).padding.bottom` read (fix-flutter-player-shell-
+  /// bottom-safearea-gaps) — bubbled through the SAME container pipeline as [scrubHoldLifted],
+  /// since the chat feed is a container-composed sibling surface that cannot read
+  /// `PlayerShellView`'s own `MediaQuery` lookup directly. Default `0` → every existing
+  /// `PlayerOverlayContext(...)` call site (which never sets this) is unaffected.
+  final double safeAreaBottom;
+
+  /// Whether the playback-progress transport bar is actively being dragged (NARROW active-drag
+  /// state — the container's own raw mirror of [onScrubbingChange], fix-flutter-scrub-hide-
+  /// announce-chat-pinned). Forwarded to the merged chat feed (`FeedWinOverlayView`, a container-
+  /// composed sibling surface) so it hides during the drag, the SAME treatment
+  /// `PlayerShellView` already applies directly to its own `LiveOverlayChromeView.announceText`/
+  /// `.pinnedProducts` (parity iOS/Android — both hide the announce banner / pinned card / chat
+  /// feed while `isScrubbing`). Distinct from [scrubHoldLifted] (which only lifts, never hides,
+  /// during the released-but-still-held window) — the two are independent and stack. Default
+  /// `false` → every existing `PlayerOverlayContext(...)` call site (which never sets this) is
+  /// unaffected.
+  final bool isScrubbing;
+
   /// Whether the product LIST drawer is open. Container-owned single source (default false); the
   /// GOODS rail/bag tap opens it, the scrim/close dismisses it. Parity iOS `listPresented`.
   final bool productListPresented;
@@ -235,6 +290,14 @@ class PlayerOverlayContext {
   /// floating preview) tracks the shown video after a swipe. null → no report.
   final ValueChanged<String>? onSwipeDidSwitchVideo;
 
+  /// Fired ALONGSIDE [onSwipeDidSwitchVideo] with the SAME resolved adjacent video id
+  /// (flutter-swipe-video-load-requester-wiring-reference-ui). See
+  /// `PlayerShellView.onSwipeVideoLoad`'s doc comment for the dead-`VideoLoadRequester`
+  /// rationale — the container wires this to `_controller.load(id)` DIRECTLY (bypassing the dead
+  /// template requester) plus a mute-truth re-apply. null → no-op (demo / golden / a custom
+  /// `ReferenceUIDesign` not wiring it), byte-identical to before this seam existed.
+  final ValueChanged<String>? onSwipeVideoLoad;
+
   // Feed-win seams.
   /// Host OBSERVE hook for an event-join tap (eid only). Existing public field,
   /// signature unchanged.
@@ -255,6 +318,7 @@ class PlayerOverlayContext {
   /// markJoined / 送出；回 `false`（放行）→ 走 C1 既有三步。`null`（demo / golden / 自訂 design 直接用
   /// `FeedWinOverlayView`）→ 無 gating、baseline byte-identical。
   final bool Function(int eid, String keyword)? joinGate;
+
   /// 領獎提交（**帶使用者輸入的 email**，rb-flutter-win-claim-email-flow）。容器把它接到
   /// core `requestAwardClaim(winner, contact: LBAwardClaimInput(email: email))` —— 這是本層
   /// **唯一**真的打領獎 API 的地方（見 `feed_win_view.dart` 檔頭「一次提交只得呼叫 core 一次」）。
@@ -291,6 +355,17 @@ class PlayerOverlayContext {
   final VoidCallback? onWatchNext;
   final ValueChanged<LBEndHotItem> onPickHot;
   final VoidCallback onCancel;
+
+  /// 空狀態「查看購物車」CTA (rb-flutter-endscreen-live-empty-state). Optional
+  /// (like [onSwitchRecommendationVideo]) so the existing `PlayerOverlayContext(...)`
+  /// call sites (this file's production one + several `test/container/*.dart` ones)
+  /// keep compiling unchanged; `null` → `MomentsOverlayView` gets no `onViewCart`
+  /// (an unwired empty-state CTA — only reachable from a bespoke design that
+  /// constructs this context directly, since `live_buy_player.dart`'s own call site
+  /// always resolves `c.onViewCart ?? () => _controller.requestViewCart()` — the
+  /// SAME core seam the product list / detail sheet's own cart CTA uses — before
+  /// reaching here).
+  final VoidCallback? onViewCart;
   final VoidCallback onRetry;
   final VoidCallback? onDismiss;
 
@@ -340,6 +415,11 @@ class PlayerOverlayContext {
     this.onCleanModeChange,
     this.moreMenuOpen = false,
     this.onMoreMenuOpenChange,
+    this.onScrubbingChange,
+    this.onScrubBarExpandedChange,
+    this.scrubHoldLifted = false,
+    this.safeAreaBottom = 0,
+    this.isScrubbing = false,
     this.productListPresented = false,
     this.onDismissProductList,
     this.productSheetsPresented = false,
@@ -357,6 +437,7 @@ class PlayerOverlayContext {
     this.onSwipeDown,
     this.onCloseRequest,
     this.onSwipeDidSwitchVideo,
+    this.onSwipeVideoLoad,
     required this.onJoinEvent,
     this.onJoinEventWithKeyword,
     this.joinGate,
@@ -371,6 +452,7 @@ class PlayerOverlayContext {
     required this.onWatchNext,
     required this.onPickHot,
     required this.onCancel,
+    this.onViewCart,
     required this.onRetry,
     required this.onDismiss,
     required this.onLogin,
@@ -474,6 +556,41 @@ abstract class ReferenceUIDesign {
 //
 // This is the ONLY place the concrete minimal surface widgets are instantiated; the containers
 // themselves only see the [ReferenceUIDesign] abstraction.
+/// rb-flutter-player-hide-chrome-until-loaded — wraps a live-runtime chrome surface
+/// ([PlayerShellView] / [FeedWinOverlayView] / [ProductSheetsOverlayView]) so it renders
+/// nothing while the CURRENT session's [DefaultPlayerTemplate.startScreen] phase is still
+/// [LBPStartPhase.loading]. Native (iOS/Android) never shows a visible flash here because
+/// each player instance gets a BRAND-NEW template object, so `startPhase` reads `.loading`
+/// synchronously from the very first frame — the SAME frame the loading overlay
+/// (`MomentsOverlayView`) also covers chrome with. Flutter's `DefaultPlayerTemplate` is a
+/// process-global singleton (docs/reference-ui/parity-debt-ledger.md #9): its
+/// `startScreen.phase` can still read a stale value left by a PREVIOUS video session for a
+/// frame or more before a genuine native event corrects it, even with
+/// `_LivebuyPlayerState.initState()`'s synchronous `resetForNewSession()` call closing most
+/// of that window — this gate is the reference-ui-layer belt-and-suspenders: chrome simply
+/// never renders during `.loading`, so there is nothing to flash regardless of timing.
+///
+/// ONLY applies on the real host-runtime path ([live] == true); demo / golden / snapshot
+/// construction ([live] == false, or [template] == null) renders [child] unconditionally —
+/// existing baselines stay byte-identical. Gates ONLY `.loading` (not `.splash` /
+/// `.buffering` / `.done`) — `.splash` (an opening intro MP4 playing) still needs chrome
+/// visible per the existing "開場不接管畫面" contract; hiding on `!= .done` would wrongly
+/// suppress it too.
+Widget _hideWhileLoading({
+  required bool live,
+  required DefaultPlayerTemplate? template,
+  required Widget child,
+}) {
+  final startScreen = template?.startScreen;
+  if (!live || startScreen == null) return child;
+  return ListenableBuilder(
+    listenable: startScreen,
+    builder: (context, _) => startScreen.phase == LBPStartPhase.loading
+        ? const SizedBox.shrink()
+        : child,
+  );
+}
+
 class MinimalDesign extends ReferenceUIDesign {
   const MinimalDesign();
 
@@ -487,138 +604,174 @@ class MinimalDesign extends ReferenceUIDesign {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // The shell rebuilds when the 留言 composer toggles so it can hide the LIVE bottom bar
-        // while the opaque composer is up (parity iOS rb-ios-chat-composer-opaque-hide-bottom-bar).
-        ListenableBuilder(
-          listenable: c.composerController,
-          builder: (context, _) => PlayerShellView(
-            template: c.template,
-            theme: c.theme,
-            onMinimize: c.onMinimize,
-            onToggleMute: c.onToggleMute,
-            onToggleSubscribe: c.onToggleSubscribe,
-            // 訂閱鈕顯示/隱藏（rb-flutter-subscribe-favorite-visibility-toggle）— raw hand-off.
-            showSubscribe: c.showSubscribe,
-            // PlayerHeader 觀看人數徽章顯示/隱藏（rb-flutter-viewer-count-visibility-toggle，
-            // parity iOS/Android `showViewerCount`）— raw hand-off,預設 `true`。
-            showViewerCount: c.showViewerCount,
-            // 標題跑馬燈的商家能力閘（rb-flutter-marquee-title-scroll）：原樣帶 host 注入的
-            // raw `extensions.video_title_scroll`，design seam **不**正規化、**不**讀 sdkConfig
-            // （由 `PlayerHeaderBarView` 的 `normalizeTitleScroll` 單一入口負責）。
-            titleScroll: c.titleScroll,
-            // 右上角按鈕圖示 minimize ↔ close（rb-flutter-player-direct-close-button）：design
-            // seam **不**正規化、**不**讀 LivebuySDK（由容器 `_overlayContext()` 的
-            // `resolvedEnableDirectCloseButton(...)` 單一入口負責解析）。
-            showCloseIcon: c.showCloseIcon,
-            onTapRailItem: c.onTapRailItem,
-            onTapPinnedProduct: c.onTapPinnedProduct,
-            // 頻道分享（rb-flutter-player-share-default-sheet）：LIVE / 回放底部 bar + 純 VOD 側欄 rail
-            // 分享鈕改走與商品詳情分享同一條 c.onShare fallback（= config.onShare ?? Share.share
-            // (channel.share_url) 系統分享），不再只派 VIDEO_SHARE_REQUEST 事件（unwired host = 死按鈕）。
-            onShare: c.onShare,
-            // 聯絡商家 override（dropin-service-link-default-browser-flutter）：原樣傳遞，null →
-            // PlayerShellView 自己 fallback 到既有 onTapRailItem(serviceLink)。
-            onServiceLink: c.onServiceLink,
-            // VOD 介紹卡輪播某張卡開明細 → core simulateProductTap（與商品列同出口）。
-            onTapNowIntroducingProduct: c.onProductTap,
-            // Header avatar loads the real shop logo at runtime (rb-flutter-player-header-
-            // real-shop-logo parity). Targeted to the shell header; product images keep
-            // the container's placeholder posture (`c.live`). At demo/golden the model's
-            // shopLogo is empty → liveProductImage falls back to the monogram (no network).
-            live: true,
-            onComment: c.onComment,
-            // 暱稱鈕 → 容器本地呈現 設定暱稱 modal（parity iOS / Android / RN）。
-            onNickname: c.onNickname,
-            // 「現正直播」提示鈕（rb-flutter-live-now-pill）：原樣轉發容器已解析好的
-            // hasLiveNow / onGoLive。
-            hasLiveNow: c.hasLiveNow,
-            onGoLive: c.onGoLive,
-            // Swipe overrides — turnkey container always passes null (host-feed swipeFeed
-            // removed; swipe uses the shell's built-in channel-adjacency + close-on-empty).
-            onSwipeUp: c.onSwipeUp,
-            onSwipeDown: c.onSwipeDown,
-            // Swipe toward an empty direction (no next/prev) → close (swipe-nav-close-on-empty).
-            onCloseRequest: c.onCloseRequest,
-            // Report the switched video id after a swipe in-place switch (swipe-video-switched-notify).
-            onDidSwitchVideo: c.onSwipeDidSwitchVideo,
-            // Report info-panel open/close up so the container hides the chat feed while it's up.
-            onInfoPanelOpenChange: c.onInfoPanelOpenChange,
-            // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：把翻轉冒泡給容器（design.md D5）。
-            onCleanModeChange: c.onCleanModeChange,
-            // 「更多」選單開合冒泡給容器，用來隱藏合流聊天 feed（rb-flutter-live-more-sheet-above-chat）。
-            onMoreMenuOpenChange: c.onMoreMenuOpenChange,
-            // Hide the LIVE bottom bar while the opaque 留言 composer is up (avoid overlap).
-            composerPresented: c.composerController.isPresented,
-            // 商品 sheet 開啟時抑制上下滑動換片（rb-flutter-block-swipe-nav-when-sheet-open）：
-            // 鏡射自 ProductSheetsOverlayView.onPresentationChange（下方）、容器再轉發回這裡。
-            sheetsPresented: c.productSheetsPresented,
-            // Playback-progress-bar control plane (rb-flutter-vod-playback-progress-bar) —
-            // straight pass-through, both nullable (see PlayerOverlayContext doc comments).
-            onTogglePlayPause: c.onTogglePlayPause,
-            onSeek: c.onSeek,
+        // rb-flutter-player-hide-chrome-until-loaded: hidden while startPhase == .loading on
+        // the real runtime path (see `_hideWhileLoading` doc comment); demo/golden unaffected.
+        _hideWhileLoading(
+          live: c.live,
+          template: c.template,
+          // The shell rebuilds when the 留言 composer toggles so it can hide the LIVE bottom bar
+          // while the opaque composer is up (parity iOS rb-ios-chat-composer-opaque-hide-bottom-bar).
+          child: ListenableBuilder(
+            listenable: c.composerController,
+            builder: (context, _) => PlayerShellView(
+              template: c.template,
+              theme: c.theme,
+              onMinimize: c.onMinimize,
+              onToggleMute: c.onToggleMute,
+              onToggleSubscribe: c.onToggleSubscribe,
+              // 訂閱鈕顯示/隱藏（rb-flutter-subscribe-favorite-visibility-toggle）— raw hand-off.
+              showSubscribe: c.showSubscribe,
+              // PlayerHeader 觀看人數徽章顯示/隱藏（rb-flutter-viewer-count-visibility-toggle，
+              // parity iOS/Android `showViewerCount`）— raw hand-off,預設 `true`。
+              showViewerCount: c.showViewerCount,
+              // 標題跑馬燈的商家能力閘（rb-flutter-marquee-title-scroll）：原樣帶 host 注入的
+              // raw `extensions.video_title_scroll`，design seam **不**正規化、**不**讀 sdkConfig
+              // （由 `PlayerHeaderBarView` 的 `normalizeTitleScroll` 單一入口負責）。
+              titleScroll: c.titleScroll,
+              // 右上角按鈕圖示 minimize ↔ close（rb-flutter-player-direct-close-button）：design
+              // seam **不**正規化、**不**讀 LivebuySDK（由容器 `_overlayContext()` 的
+              // `resolvedEnableDirectCloseButton(...)` 單一入口負責解析）。
+              showCloseIcon: c.showCloseIcon,
+              onTapRailItem: c.onTapRailItem,
+              onTapPinnedProduct: c.onTapPinnedProduct,
+              // 頻道分享（rb-flutter-player-share-default-sheet）：LIVE / 回放底部 bar + 純 VOD 側欄 rail
+              // 分享鈕改走與商品詳情分享同一條 c.onShare fallback（= config.onShare ?? Share.share
+              // (channel.share_url) 系統分享），不再只派 VIDEO_SHARE_REQUEST 事件（unwired host = 死按鈕）。
+              onShare: c.onShare,
+              // 聯絡商家 override（dropin-service-link-default-browser-flutter）：原樣傳遞，null →
+              // PlayerShellView 自己 fallback 到既有 onTapRailItem(serviceLink)。
+              onServiceLink: c.onServiceLink,
+              // VOD 介紹卡輪播某張卡開明細 → core simulateProductTap（與商品列同出口）。
+              onTapNowIntroducingProduct: c.onProductTap,
+              // Header avatar loads the real shop logo at runtime (rb-flutter-player-header-
+              // real-shop-logo parity). Targeted to the shell header; product images keep
+              // the container's placeholder posture (`c.live`). At demo/golden the model's
+              // shopLogo is empty → liveProductImage falls back to the monogram (no network).
+              live: true,
+              onComment: c.onComment,
+              // 暱稱鈕 → 容器本地呈現 設定暱稱 modal（parity iOS / Android / RN）。
+              onNickname: c.onNickname,
+              // 「現正直播」提示鈕（rb-flutter-live-now-pill）：原樣轉發容器已解析好的
+              // hasLiveNow / onGoLive。
+              hasLiveNow: c.hasLiveNow,
+              onGoLive: c.onGoLive,
+              // Swipe overrides — turnkey container always passes null (host-feed swipeFeed
+              // removed; swipe uses the shell's built-in channel-adjacency + close-on-empty).
+              onSwipeUp: c.onSwipeUp,
+              onSwipeDown: c.onSwipeDown,
+              // Swipe toward an empty direction (no next/prev) → close (swipe-nav-close-on-empty).
+              onCloseRequest: c.onCloseRequest,
+              // Report the switched video id after a swipe in-place switch (swipe-video-switched-notify).
+              onDidSwitchVideo: c.onSwipeDidSwitchVideo,
+              // Direct-reload seam (flutter-swipe-video-load-requester-wiring-reference-ui): the
+              // container's own `_controller.load(id)` + mute re-apply bypass for the dead
+              // `VideoLoadRequester` — see `PlayerShellView.onSwipeVideoLoad`'s doc comment.
+              onSwipeVideoLoad: c.onSwipeVideoLoad,
+              // Report info-panel open/close up so the container hides the chat feed while it's up.
+              onInfoPanelOpenChange: c.onInfoPanelOpenChange,
+              // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：把翻轉冒泡給容器（design.md D5）。
+              onCleanModeChange: c.onCleanModeChange,
+              // 「更多」選單開合冒泡給容器，用來隱藏合流聊天 feed（rb-flutter-live-more-sheet-above-chat）。
+              onMoreMenuOpenChange: c.onMoreMenuOpenChange,
+              // 展開進度條讓出空間（rb-flutter-scrub-expanded-chrome-lift）：把 scrub 狀態冒泡給容器，
+              // 讓容器算出合流聊天室（FeedWinOverlayView，非本 shell 直接組出的 sibling surface）
+              // 該不該額外上推，比照上面既有 onCleanModeChange / onMoreMenuOpenChange 冒泡管線。
+              onScrubbingChange: c.onScrubbingChange,
+              onScrubBarExpandedChange: c.onScrubBarExpandedChange,
+              // Hide the LIVE bottom bar while the opaque 留言 composer is up (avoid overlap).
+              composerPresented: c.composerController.isPresented,
+              // 商品 sheet 開啟時抑制上下滑動換片（rb-flutter-block-swipe-nav-when-sheet-open）：
+              // 鏡射自 ProductSheetsOverlayView.onPresentationChange（下方）、容器再轉發回這裡。
+              sheetsPresented: c.productSheetsPresented,
+              // Playback-progress-bar control plane (rb-flutter-vod-playback-progress-bar) —
+              // straight pass-through, both nullable (see PlayerOverlayContext doc comments).
+              onTogglePlayPause: c.onTogglePlayPause,
+              onSeek: c.onSeek,
+            ),
           ),
         ),
-        FeedWinOverlayView(
-          template: c.template,
-          theme: c.theme,
-          // Runtime: scrollable chat (binds deeper feedHistory) so the user can scroll
-          // up to view history (rb-flutter-chat-feed-scrollable parity #5b/#6).
-          chatScrollable: true,
-          // Hide the chat feed while the info panel is up (parity rb-ios-info-panel-not-covered-
-          // by-chat); FeedWinOverlayView also drops it entirely in VOD (LIVE-only).
-          infoPanelOpen: c.infoPanelOpen,
-          // Keep the chat in the design's LEFT column (LBLiveChatOverlay right:120) so it clears
-          // the side rail / floating bag / win entry on the right (parity iOS liveChatTrailingClearance).
-          chatTrailingInset: 120,
-          // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：轉發自容器（design.md D5）。
-          cleanMode: c.cleanMode,
-          // 「更多」選單開合（rb-flutter-live-more-sheet-above-chat）：轉發自容器，開啟時隱藏合流
-          // 聊天 feed，避免其被聊天列遮蓋/吃點擊。
-          moreMenuOpen: c.moreMenuOpen,
-          onJoinEvent: c.onJoinEvent,
-          // rb-flutter-event-join-reaches-core — the keyword-carrying default that
-          // actually reaches core `requestEventJoin` (the container's only join send).
-          onJoinEventWithKeyword: c.onJoinEventWithKeyword,
-          // rb-flutter-event-join-gate — the container-injected three-tier gate (登入 → 暱稱 →
-          // 放行); null (demo / golden) → no gating, baseline byte-identical.
-          joinGate: c.joinGate,
-          onSubmitClaim: c.onSubmitClaim,
-        ),
-        ProductSheetsOverlayView(
-          template: c.template,
-          theme: c.theme,
-          // rb-flutter-product-sheets-live-images-wiring: host-runtime real-image gate,
-          // forwarded from the container (parity `PlayerShellView`'s `live: true` above and
-          // Android `MinimalDesign.kt`'s `live = context.live` at this same call site). This
-          // was PREVIOUSLY OMITTED entirely — `ProductSheetsOverlayView` silently fell back to
-          // its own constructor default (`live = false`), so `c.live` was a dead field here
-          // regardless of what the container set it to; every product sheet (list / detail /
-          // restock / zoom) showed only placeholders in production.
+        _hideWhileLoading(
           live: c.live,
-          // Product LIST drawer is container-driven (default closed; GOODS rail/bag tap opens it),
-          // NOT self-opening — parity iOS onOpenProductList.
-          presented: c.productListPresented,
-          onDismissList: c.onDismissProductList,
-          // Stock-caption merchant gate (`extensions.show_stock`, host-injected via
-          // `LivebuyPlayerConfig.showStock`) — forwarded RAW; the sheet owns the single
-          // `normalizeShowStock` fallback. It reaches ONLY the product detail /
-          // add-to-cart sheets: the restock sheet's「尚無庫存」is a sold-out status line
-          // and stays inert (rb-flutter-show-stock-caption-toggle).
-          showStock: c.showStock,
-          // 收藏鈕顯示/隱藏（rb-flutter-subscribe-favorite-visibility-toggle）— raw hand-off.
-          showFavorite: c.showFavorite,
-          onProductTap: c.onProductTap,
-          onShare: c.onShare,
-          onSeekToProductIntro: c.onSeekToProductIntro,
-          onShareProduct: c.onShareProduct,
-          // 加購「需登入」gate's 前往登入 → host login flow (`config.onLogin`), the SAME host hook the
-          // comment login-gate uses (cart-needs-login-gate). reference-ui NEVER logs in itself.
-          onRequestLogin: c.onLogin,
-          // 商品明細「更多商品」推薦卡播放圖示 → 換片 (rb-flutter-product-detail-recommendations §4).
-          onSwitchRecommendationVideo: c.onSwitchRecommendationVideo,
-          // 任一商品 sheet/modal 開合 → 回報容器（rb-flutter-block-swipe-nav-when-sheet-open），
-          // 容器鏡射後轉發回上面 PlayerShellView 的 sheetsPresented，抑制上下滑動換片。
-          onPresentationChange: c.onProductSheetsPresentedChange,
+          template: c.template,
+          child: FeedWinOverlayView(
+            template: c.template,
+            theme: c.theme,
+            // Runtime: scrollable chat (binds deeper feedHistory) so the user can scroll
+            // up to view history (rb-flutter-chat-feed-scrollable parity #5b/#6).
+            chatScrollable: true,
+            // Hide the chat feed while the info panel is up (parity rb-ios-info-panel-not-covered-
+            // by-chat); FeedWinOverlayView also drops it entirely in VOD (LIVE-only).
+            infoPanelOpen: c.infoPanelOpen,
+            // Keep the chat in the design's LEFT column (LBLiveChatOverlay right:120) so it clears
+            // the side rail / floating bag / win entry on the right (parity iOS liveChatTrailingClearance).
+            chatTrailingInset: 120,
+            // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：轉發自容器（design.md D5）。
+            cleanMode: c.cleanMode,
+            // 「更多」選單開合（rb-flutter-live-more-sheet-above-chat）：轉發自容器，開啟時隱藏合流
+            // 聊天 feed，避免其被聊天列遮蓋/吃點擊。
+            moreMenuOpen: c.moreMenuOpen,
+            // 展開進度條讓出空間（rb-flutter-scrub-expanded-chrome-lift）：容器已把 PlayerShellView
+            // 冒泡上來的 scrub 狀態算成這個 bool，轉發給聊天 feed 額外上推
+            // scrubChromeLift，讓它跟已經會上推的釘選卡/公告 banner 對齊。
+            scrubHoldLifted: c.scrubHoldLifted,
+            // 系統底部安全區（fix-flutter-player-shell-bottom-safearea-gaps）：容器鏡像
+            // PlayerShellView 已讀取的 MediaQuery.of(context).padding.bottom，轉發給聊天 feed，
+            // 補齊真機 home indicator 缺口，與 scrubHoldLifted 各自獨立疊加。
+            safeAreaBottom: c.safeAreaBottom,
+            // 拖曳播放進度條期間隱藏合流聊天 feed（fix-flutter-scrub-hide-announce-chat-pinned，
+            // parity iOS/Android）：容器已把 PlayerShellView 冒泡上來的 scrub 狀態原樣轉發，跟
+            // PlayerShellView 自己直接套用在 LiveOverlayChromeView 的公告橫幅／釘選卡是同一份
+            // 判斷（`_isScrubbing`），只是聊天 feed 是容器組出的 sibling surface，須走這條冒泡管線。
+            isScrubbing: c.isScrubbing,
+            onJoinEvent: c.onJoinEvent,
+            // rb-flutter-event-join-reaches-core — the keyword-carrying default that
+            // actually reaches core `requestEventJoin` (the container's only join send).
+            onJoinEventWithKeyword: c.onJoinEventWithKeyword,
+            // rb-flutter-event-join-gate — the container-injected three-tier gate (登入 → 暱稱 →
+            // 放行); null (demo / golden) → no gating, baseline byte-identical.
+            joinGate: c.joinGate,
+            onSubmitClaim: c.onSubmitClaim,
+          ),
+        ),
+        _hideWhileLoading(
+          live: c.live,
+          template: c.template,
+          child: ProductSheetsOverlayView(
+            template: c.template,
+            theme: c.theme,
+            // rb-flutter-product-sheets-live-images-wiring: host-runtime real-image gate,
+            // forwarded from the container (parity `PlayerShellView`'s `live: true` above and
+            // Android `MinimalDesign.kt`'s `live = context.live` at this same call site). This
+            // was PREVIOUSLY OMITTED entirely — `ProductSheetsOverlayView` silently fell back to
+            // its own constructor default (`live = false`), so `c.live` was a dead field here
+            // regardless of what the container set it to; every product sheet (list / detail /
+            // restock / zoom) showed only placeholders in production.
+            live: c.live,
+            // Product LIST drawer is container-driven (default closed; GOODS rail/bag tap opens it),
+            // NOT self-opening — parity iOS onOpenProductList.
+            presented: c.productListPresented,
+            onDismissList: c.onDismissProductList,
+            // Stock-caption merchant gate (`extensions.show_stock`, host-injected via
+            // `LivebuyPlayerConfig.showStock`) — forwarded RAW; the sheet owns the single
+            // `normalizeShowStock` fallback. It reaches ONLY the product detail /
+            // add-to-cart sheets: the restock sheet's「尚無庫存」is a sold-out status line
+            // and stays inert (rb-flutter-show-stock-caption-toggle).
+            showStock: c.showStock,
+            // 收藏鈕顯示/隱藏（rb-flutter-subscribe-favorite-visibility-toggle）— raw hand-off.
+            showFavorite: c.showFavorite,
+            onProductTap: c.onProductTap,
+            onShare: c.onShare,
+            onSeekToProductIntro: c.onSeekToProductIntro,
+            onShareProduct: c.onShareProduct,
+            // 加購「需登入」gate's 前往登入 → host login flow (`config.onLogin`), the SAME host hook the
+            // comment login-gate uses (cart-needs-login-gate). reference-ui NEVER logs in itself.
+            onRequestLogin: c.onLogin,
+            // 商品明細「更多商品」推薦卡播放圖示 → 換片 (rb-flutter-product-detail-recommendations §4).
+            onSwitchRecommendationVideo: c.onSwitchRecommendationVideo,
+            // 任一商品 sheet/modal 開合 → 回報容器（rb-flutter-block-swipe-nav-when-sheet-open），
+            // 容器鏡射後轉發回上面 PlayerShellView 的 sheetsPresented，抑制上下滑動換片。
+            onPresentationChange: c.onProductSheetsPresentedChange,
+          ),
         ),
         MomentsOverlayView(
           template: c.template,
@@ -631,6 +784,7 @@ class MinimalDesign extends ReferenceUIDesign {
           onWatchNext: c.onWatchNext,
           onPickHot: c.onPickHot,
           onCancel: c.onCancel,
+          onViewCart: c.onViewCart,
           onRetry: c.onRetry,
           onDismiss: c.onDismiss,
         ),

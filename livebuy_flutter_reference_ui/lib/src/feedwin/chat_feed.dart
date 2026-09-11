@@ -103,14 +103,18 @@ const Color _chatBubbleFill = Color(0x6B000000); // 0x6B ≈ 0.42 alpha
 /// the `.join` white slot — updated unified ACT_SLOT, parity iOS/Android).
 const Color _avatarGlyphColor = Color(0xFF3A2E25);
 
-/// `_HostChatLine`'s non-host nickname text color `#FBB0B7` (rb-flutter-chat-
-/// message-line-restyle, design R30) — used ONLY when a `_HostChatLine` row has
-/// `isHost == false` (the `isAI`-only / `replyText`-only edge case that still
-/// routes to this widget). Scope is deliberately narrow: `_ChatLine`'s own viewer
-/// nickname prefix (`_onGlassDim`) is OUT OF R30's scope and MUST NOT read this
-/// constant — see `design.md` (this change) Decision 2 for why the two paths stay
-/// on different colors even though the design source treats them as one branch.
-const Color _hostChatLineNonHostNickname = Color(0xFFFBB0B7);
+/// Shared chat-nickname pink `#FBB0B7` (design `moments.jsx` `LBChatLine`
+/// `!isHost` branch, line ~436). Originally introduced (rb-flutter-chat-message-
+/// line-restyle, design R30) scoped ONLY to `_HostChatLine`'s non-host branch
+/// (`isHost == false` — the `isAI`-only / `replyText`-only edge case that still
+/// routes to that widget), with `_ChatLine`'s own viewer nickname prefix
+/// deliberately excluded pending a separate scope decision (that R30 change's
+/// `design.md` Decision 2 predicted this exact follow-up). Renamed from the
+/// narrower `_hostChatLineNonHostNickname` and its consumption widened
+/// (rb-flutter-chat-audience-bubble-pink-nickname-full-lines) so `_ChatLine`'s
+/// own nickname prefix now shares this SAME constant instead of a second
+/// literal hex declaration — both call sites read one definition.
+const Color _chatNicknamePink = Color(0xFFFBB0B7);
 
 /// Event-join 已參加 chip fill `rgba(255,255,255,0.2)` (LBEventJoinLine restyle,
 /// rb-flutter-loading-announce-restyle — raised from the pre-restyle 0.16 now that the
@@ -245,11 +249,16 @@ class ChatFeedView extends StatelessWidget {
   /// （baseline byte-identical）。Parity iOS `ChatFeedView.pinned` / RN。
   final PinnedMessage? pinned;
 
-  /// 主播名（rb-flutter-loading-announce-restyle）—`LBFeedKind.eventJoin` 列的 restyled
-  /// header 顯示此值（跟主播留言同款「主播名 +「主播」badge」）。`required` snapshot 值，跟
-  /// `items` 同層級 always-present（鏡像 `PlayerShellModel.hostName` 對 `template.header.
-  /// hostName` 的單一真相讀法，由 `FeedWinModel.hostName` 提供）——`LBFeedItem` 本身不帶主播
-  /// 名欄位（channel 全域層級快照，非逐則訊息欄位），本 widget MUST NOT 自行從 `items` 推導。
+  /// 主播名（rb-flutter-loading-announce-restyle）— channel 全域層級的共用快照（`required`，跟
+  /// `items` 同層級 always-present；鏡像 `PlayerShellModel.hostName` 對 `template.header.
+  /// hostName` 的單一真相讀法，由 `FeedWinModel.hostName` 提供）。此 `ChatFeedView.hostName`
+  /// 具名建構子參數本身 MUST NOT 自行從 `items` 推導——它獨立於個別訊息之外。
+  ///
+  /// `LBFeedKind.eventJoin` 列的 restyled header **不再一律**顯示此值：自
+  /// rb-flutter-event-join-streamer-name 起，`_chatFeedRow` 優先讀該筆 item 自己的
+  /// `LBFeedItem.userName`（前置 template change `event-join-streamer-name-template-flutter`
+  /// 已補上此欄位），`userName` 為 `null` 或空字串時才 fallback 回此共用值（訂正過期敘述
+  /// 「`LBFeedItem` 本身不帶主播名欄位」——`eventJoin` items 現在可以）。
   final String hostName;
 
   const ChatFeedView({
@@ -511,10 +520,13 @@ class _ActivityToastViewState extends State<ActivityToastView> {
 
 /// Dispatch one [LBFeedItem] to its row renderer by `kind` (D-2). Shared by the
 /// static [ChatFeedView] and the runtime [_ScrollableChatFeed]. `hostName` is the
-/// (rb-flutter-loading-announce-restyle) snapshot value forwarded to `.eventJoin`
-/// rows' restyled header — a pure internal forwarding param, defaulted to `''`
-/// only because Dart requires SOME default for an optional positional (every real
-/// call site always supplies the caller's actual `hostName`).
+/// (rb-flutter-loading-announce-restyle) shared channel-level snapshot — a pure
+/// internal forwarding param, defaulted to `''` only because Dart requires SOME
+/// default for an optional positional (every real call site always supplies the
+/// caller's actual `hostName`). For `.eventJoin` rows, this value is now only a
+/// FALLBACK (rb-flutter-event-join-streamer-name): the row's header prefers the
+/// item's own `userName` when it is non-null and non-empty, and only falls back
+/// to this shared `hostName` otherwise — see the `.eventJoin` case below.
 ///
 /// `onJoinWithKeyword` (rb-flutter-event-join-reaches-core) is the keyword-carrying
 /// join dispatch: when wired it supersedes the eid-only `onJoin` for `.eventJoin`
@@ -549,10 +561,20 @@ Widget _chatFeedRow(ReferenceUITheme theme, LBFeedItem item, void Function(int e
         child: _ChatLine(theme: theme, userName: item.userName ?? '', text: item.text),
       );
     case LBFeedKind.eventJoin:
+      // rb-flutter-event-join-streamer-name — the header badge SHALL prefer this
+      // message's OWN streamer name (`item.userName`, threaded through by the
+      // prerequisite template change `event-join-streamer-name-template-flutter`)
+      // over the shared channel-level `hostName` (= shop name). Fallback applies
+      // when `item.userName` is `null` OR an empty string — a real push message
+      // with "no name" is observed as `''` on the wire, `null` only shows up when
+      // a test calls the lower-level API without a named argument. Checking only
+      // `!= null` would make this fallback a dead branch in production.
+      final hasEventUserName = item.userName != null && item.userName!.isNotEmpty;
+      final eventDisplayName = hasEventUserName ? item.userName! : hostName;
       return _EventJoinLine(
         theme: theme,
         text: item.text,
-        hostName: hostName,
+        hostName: eventDisplayName,
         joined: item.joined,
         // event-join-cta gating：keyword 非空才畫 CTA（活動進行中帶 ek）；空 → 純公告（活動結束 ek unset）。
         hasCTA: (item.keyword ?? '').isNotEmpty,
@@ -745,31 +767,35 @@ class _ScrollableChatFeedState extends State<_ScrollableChatFeed> {
           ),
           if (_showPill)
             Positioned(
+              left: 0,
               right: 0,
               bottom: 6,
-              child: GestureDetector(
-                key: LbTestKeys.chatScrollToBottom,
-                onTap: _returnToLatest,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: widget.theme.accent,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      const ArrowDownGlyph(size: 10, color: Colors.white),
-                      const SizedBox(width: 4),
-                      Text(
-                        '最新訊息',
-                        style: TextStyle(
-                          color: const Color(0xFFFFFFFF),
-                          fontSize: 11.5 * widget.theme.fontScale,
-                          fontWeight: FontWeight.w600,
+              child: Center(
+                child: GestureDetector(
+                  key: LbTestKeys.chatScrollToBottom,
+                  onTap: _returnToLatest,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        ArrowDownGlyph(size: 10, color: widget.theme.accent),
+                        const SizedBox(width: 4),
+                        Text(
+                          '最新訊息',
+                          style: TextStyle(
+                            color: widget.theme.accent,
+                            fontSize: 11.5 * widget.theme.fontScale,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -786,11 +812,15 @@ class _ScrollableChatFeedState extends State<_ScrollableChatFeed> {
 //
 // Mirrors `moments.jsx` `LBChatLine`: a 24dp round name-colored avatar + a
 // translucent dark bubble (radius 12). When the chat row carries an author nickname
-// (`userName`, chat-nickname-render) the bubble LEADS with a dimmed INLINE prefix
-// (`<span opacity .72 weight 600>{user}</span><span>{text}</span>` — same line, one
-// bubble) and the avatar is keyed by the nickname; a row WITHOUT a nickname stays
-// text-only (avatar keyed by `text`), BYTE-IDENTICAL to the pre-nickname layout. The
-// prebuilt `text` is the message only — NOT name-embedded (parity iOS `LBChatLineRow`).
+// (`userName`, chat-nickname-render) the bubble LEADS with a pink INLINE prefix
+// (`<span color:'#FBB0B7' weight 600>{user}</span><span>{text}</span>` — same line,
+// one bubble; pink since rb-flutter-chat-audience-bubble-pink-nickname-full-lines,
+// was dimmed white `_onGlassDim` before) and the avatar is keyed by the nickname; a
+// row WITHOUT a nickname stays text-only (avatar keyed by `text`), BYTE-IDENTICAL to
+// the pre-nickname layout. The prebuilt `text` is the message only — NOT
+// name-embedded (parity iOS `LBChatLineRow`). Message text is NOT line-capped
+// (rb-flutter-chat-audience-bubble-pink-nickname-full-lines — was `maxLines: 2` +
+// ellipsis before this change).
 
 class _ChatLine extends StatelessWidget {
   final ReferenceUITheme theme;
@@ -829,10 +859,12 @@ class _ChatLine extends StatelessWidget {
           _avatarSlot(hasName ? userName : text),
           const SizedBox(width: 8),
         ],
-        // Translucent dark bubble. With a nickname it leads with a dimmed INLINE prefix
+        // Translucent dark bubble. With a nickname it leads with a pink INLINE prefix
         // (design `LBChatLine`) then the message; without one it is just the message
         // (byte-identical legacy bubble). The message body is the backend-prebuilt text,
-        // NOT name-embedded. Width-capped so a long message wraps to 2 lines. ACT_BUBBLE:
+        // NOT name-embedded. Message text wraps to as many lines as needed — NOT
+        // capped (rb-flutter-chat-audience-bubble-pink-nickname-full-lines: no
+        // `maxLines` / `overflow`, replacing the prior 2-line + ellipsis cap). ACT_BUBBLE:
         // radius 12, black 0.42, padding h11/v5.
         Flexible(
           child: Container(
@@ -846,30 +878,43 @@ class _ChatLine extends StatelessWidget {
                 ? Text.rich(
                     TextSpan(
                       children: [
-                        // Dimmed inline nickname prefix + a full-width colon separator
+                        // Pink inline nickname + a full-width colon separator
                         // (chat-message-colon-separator, design re-sync `843d09f5`:
                         // moments.jsx `LBChatLine` !isHost branch now appends `：` after
                         // `{m.user}` and drops the `marginRight` gap — `isHost ? 6 : 0`).
-                        // The prefix carries the colon itself so there is no separate
-                        // trailing-space run between name and message.
+                        // Nickname and colon are two SEPARATE `TextSpan`s — parity with
+                        // moments.jsx, which renders the nickname and `：` as two
+                        // independent `<span>`s (`<span style={{color:'#FBB0B7'}}>{m.user}
+                        // </span><span style={{color:'#fff'}}>：</span>`), the colon
+                        // ALWAYS white regardless of role. `rb-flutter-chat-audience-
+                        // nickname-colon-color-fix`: a prior change
+                        // (`rb-flutter-chat-audience-bubble-pink-nickname-full-lines`)
+                        // merged them into one `TextSpan(text: '$userName：')` sharing one
+                        // `color`, which incorrectly painted the colon pink too — a bug,
+                        // not a deliberate design. `_chatNicknamePink` is the same pink
+                        // constant `_HostChatLine`'s non-host branch already uses; `_onGlass`
+                        // is the same white `_HostChatLine`'s (already-correct) colon uses.
                         TextSpan(
-                          text: '$userName：',
+                          text: userName,
                           style: baseStyle.copyWith(
-                            color: _onGlassDim,
+                            color: _chatNicknamePink,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        TextSpan(
+                          text: '：',
+                          style: baseStyle.copyWith(
+                            color: _onGlass,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                         TextSpan(text: text),
                       ],
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                     style: baseStyle,
                   )
                 : Text(
                     text,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                     style: baseStyle,
                   ),
           ),
@@ -964,8 +1009,10 @@ class _HostChatLine extends StatelessWidget {
                 // header（R30）：isHost → 一個 accent 色底名牌（重用 _roleTag(solid:
                 // true)，內容 = 暱稱本身，取代先前並列的純文字暱稱 +「主播」固定文案標）；
                 // 非 host（僅 isAI 或僅 replyText 觸發角色版型的邊界情況）→ 暱稱維持純文字
-                // 但改固定粉色 _hostChatLineNonHostNickname；isAI 額外掛「AI」外框標（不
-                // 變）；尾端無條件冒號「：」，緊接在名牌/暱稱 + AI 標之後、無多餘間距——
+                // 但改固定粉色 _chatNicknamePink（現與 _ChatLine 觀眾留言暱稱共用同一顆
+                // 色票，rb-flutter-chat-audience-bubble-pink-nickname-full-lines）；isAI
+                // 額外掛「AI」外框標（不變）；尾端無條件冒號「：」，緊接在名牌/暱稱 + AI
+                // 標之後、無多餘間距——
                 // SizedBox(5) 只在 AI 標會被組裝時才插入，避免名牌/暱稱與冒號之間留白。
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -976,7 +1023,7 @@ class _HostChatLine extends StatelessWidget {
                       Text(
                         userName,
                         style: TextStyle(
-                          color: _hostChatLineNonHostNickname,
+                          color: _chatNicknamePink,
                           fontSize: 10.5 * theme.fontScale,
                           fontWeight: FontWeight.w600,
                         ),
@@ -1175,8 +1222,12 @@ class _PinnedBanner extends StatelessWidget {
 class _EventJoinLine extends StatelessWidget {
   final ReferenceUITheme theme;
   final String text;
-  /// 主播名（restyle 新增）— header 顯示，跟 `_HostChatLine.userName` 同款渲染. Forwarded from
-  /// `ChatFeedView.hostName` (channel 全域快照，非逐則訊息欄位).
+  /// 主播名（restyle 新增）— header 顯示，跟 `_HostChatLine.userName` 同款渲染. This value is
+  /// RESOLVED by the `_chatFeedRow` call site (rb-flutter-event-join-streamer-name), NOT a raw
+  /// forward of `ChatFeedView.hostName` anymore: it is this message's OWN `LBFeedItem.userName`
+  /// when that is non-null and non-empty, else the shared `ChatFeedView.hostName` (channel-level
+  /// snapshot = shop name) as a fallback. `_EventJoinLine` itself stays a pure display widget —
+  /// it does not know or care which of the two sources produced this string.
   final String hostName;
   final bool joined;
   // 後端「ek isset 才顯示 CTA」契約：keyword 非空 → 畫加入活動 CTA；空（活動結束 / 純公告）→ 只留

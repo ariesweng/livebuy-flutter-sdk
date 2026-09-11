@@ -114,8 +114,8 @@ final Color _soldOutColor = colorFromHex('#9A96A3') ?? const Color(0xFF9A96A3);
 
 /// Product-photo placeholder gradient stops (mirrors `ProductDetailSheet` — the
 /// design's warm media chip; deterministic, NO network image).
-final Color _photoStart = colorFromHex('#FFD7A8') ?? const Color(0xFFFFD7A8);
-final Color _photoEnd = colorFromHex('#E27D5A') ?? const Color(0xFFE27D5A);
+final Color _photoStart = colorFromHex('#C7C7CC') ?? const Color(0xFFC7C7CC);
+final Color _photoEnd = colorFromHex('#8E8E93') ?? const Color(0xFF8E8E93);
 
 // MARK: - Static copy (LBPMiniCart labels)
 

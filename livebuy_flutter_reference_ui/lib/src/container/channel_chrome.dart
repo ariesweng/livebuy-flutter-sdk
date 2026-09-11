@@ -32,8 +32,14 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show isFinishedLiveR
 /// existing top-level pure function `isFinishedLiveReplay(info.type, info.liveStatus)`
 /// (`flutter_ui`, `livebuy_flutter_ui` barrel export) — `channel-type-bridge-core-flutter`
 /// added `info.type` to `LBPlayerChannelInfo` specifically so this derivation could be
-/// completed here (isfinishedlivereplay-wiring-reference-ui-flutter). Returns a record —
-/// a one-off structural value with no identity/methods, matching this file's existing
+/// completed here (isfinishedlivereplay-wiring-reference-ui-flutter). `isFlashSale` ←
+/// `info.isFlashSale` verbatim raw passthrough (`channel-flash-sale-flag-core-flutter` added
+/// the field to `LBPlayerChannelInfo`; `channel-flash-sale-flag-template-flutter` added the
+/// `handleHeaderChrome(isFlashSale:)` parameter this derivation now actually feeds —
+/// rb-flutter-flash-sale-live-signal-wiring). Independent of `isLive` /
+/// `isFinishedLiveReplay` — a flash-sale channel can be live, VOD, or a finished replay, and
+/// this field does not gate or interact with either. Returns a record — a one-off
+/// structural value with no identity/methods, matching this file's existing
 /// `({int eid, String keyword})?` convention rather than a new named class.
 ({
   String title,
@@ -42,6 +48,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show isFinishedLiveR
   String shareUrl,
   bool isLive,
   bool isFinishedLiveReplay,
+  bool isFlashSale,
 }) deriveHeaderChromeFields(LBPlayerChannelInfo info) => (
       title: info.title,
       hostName: info.shopName,
@@ -49,9 +56,27 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show isFinishedLiveR
       shareUrl: info.shareUrl,
       isLive: info.liveStatus == 1,
       isFinishedLiveReplay: isFinishedLiveReplay(info.type, info.liveStatus),
+      isFlashSale: info.isFlashSale,
     );
 
 /// Derive the side-rail「聯繫商家」enabled flag from the channel's serviceLink
 /// (parity iOS `!ch.shop.serviceLink.isEmpty`). `''` (no service link configured,
 /// or `onChannelChange` not yet fired) → `false`.
 bool deriveServiceLinkAvailable(String serviceLink) => serviceLink.isNotEmpty;
+
+/// flutter-rail-enablement-channel-derive-reference-ui — derive the「留言」rail item's
+/// enabled flag from THIS channel-change tick's own `liveStatus` / `guestComment`
+/// (parity iOS `ingestChannel`'s `ch.liveStatus == 1 && ch.guestComment == 1`). Same
+/// formula `TemplateAttachment`'s existing `LBEvent.pollReceived` case already uses
+/// (`template_attachment.dart`) — this just makes it available at channel-load time too,
+/// instead of only on the next `POLL_RECEIVED` (which never fires for a finished-live
+/// replay — native `PollManager` only runs while `liveStatus == 1`).
+bool deriveChatEnabled(int liveStatus, int guestComment) =>
+    liveStatus == 1 && guestComment == 1;
+
+/// flutter-rail-enablement-channel-derive-reference-ui — derive the「設定暱稱」rail item's
+/// enabled flag from THIS channel-change tick's own `guestComment` (parity iOS
+/// `ingestChannel`'s `ch.guestComment == 1`, deliberately narrower than
+/// [deriveChatEnabled] — no `liveStatus` gate). Same formula `TemplateAttachment`'s
+/// existing `LBEvent.pollReceived` case already uses.
+bool deriveGuestEditAvailable(int guestComment) => guestComment == 1;

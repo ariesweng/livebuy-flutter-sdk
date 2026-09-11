@@ -2,14 +2,16 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart' show Material, MaterialType;
 import 'package:flutter/widgets.dart';
-import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem, LivebuySDK;
+import 'package:livebuy_flutter/livebuy_flutter.dart'
+    show LBSdkTheme, LBVideoItem, LivebuySDK;
 
 import '../reference_ui_theme.dart';
 import '../widget/live_buy_widget_visibility.dart';
 import 'live_buy_player.dart';
 import 'live_entry_close_gate.dart' show LiveEntryCloseGate;
 import 'live_entry_position_timing.dart'
-    show LBFloatingEntryPosition, lbLiveEntryClampDx;
+    show LBFloatingEntryPosition, LiveEntryEdgeInset, lbLiveEntryClampDx, lbLiveEntryEdgeInset,
+        normalizeFloatingPosition;
 import 'reference_ui_design.dart';
 
 // CollapsibleLivebuyPlayer — collapsible player presenter (Flutter, rb-flutter-collapsible-player).
@@ -117,6 +119,26 @@ Offset clampFloatingOffset({
   return Offset(clampedX, clampedY);
 }
 
+/// Resolve the theme [CollapsibleLivebuyPlayer]'s floating card renders with
+/// (rb-flutter-collapsible-player-theme-default, parity iOS `LivebuyPlayerPresenter
+/// .resolvedTheme`): an explicit [explicitTheme] (host passed `theme:`) ALWAYS wins;
+/// omitted (`null`) → resolve [coreTheme] through the SAME [ReferenceUIThemeResolver] the
+/// wrapped keep-alive full-screen [LivebuyPlayer] uses internally
+/// (`_LivebuyPlayerState._resolveTheme()`, `live_buy_player.dart`). Pure — no widget / async
+/// dependency of its own, so it is unit-testable directly without constructing this
+/// presenter (which cannot be pumped with a non-null `video` in the test sandbox — see this
+/// file's test suite's R5 honest-limit note).
+///
+/// Convergence does NOT depend on timing or a shared code path between the two widgets: both
+/// independently call the SAME global `LivebuySDK.getSdkConfig()` source and feed the SAME
+/// pure resolver, so for the SAME [coreTheme] value the result is mathematically identical —
+/// the floating card and the full-screen player it wraps can never disagree on color.
+ReferenceUITheme resolveCollapsibleTheme({
+  required ReferenceUITheme? explicitTheme,
+  required LBSdkTheme? coreTheme,
+}) =>
+    explicitTheme ?? ReferenceUIThemeResolver.resolve(coreTheme: coreTheme);
+
 /// The turnkey collapsible player OVERLAY: full-screen [LivebuyPlayer] for the bound [video],
 /// with a built-in minimize → bottom-right floating preview. Place it in a root `Stack` ABOVE
 /// the host's app shell so the floating preview survives navigation (issue 3). `video == null`
@@ -132,8 +154,17 @@ class CollapsibleLivebuyPlayer extends StatefulWidget {
   /// passes through unchanged.
   final LivebuyPlayerConfig config;
 
-  /// Resolved reference-ui theme for the floating card.
-  final ReferenceUITheme theme;
+  /// Resolved reference-ui theme for the floating card. OPTIONAL (DEFAULT `null`,
+  /// rb-flutter-collapsible-player-theme-default, parity iOS `LivebuyPlayerPresenter
+  /// .themeOverride`): an explicit value ALWAYS wins — byte-identical to this parameter's
+  /// pre-existing `required` behavior for hosts that already pass one. Omitted (`null`) →
+  /// this presenter self-resolves via `_resolvedTheme`, the SAME `sdkConfig.theme`-fetch +
+  /// `ReferenceUIThemeResolver` mechanism `LivebuyPlayer._resolveTheme()` uses internally
+  /// (`live_buy_player.dart`) — both independently call the SAME global
+  /// `LivebuySDK.getSdkConfig()` source and feed the SAME pure resolver, so the floating card
+  /// converges on the IDENTICAL theme the wrapped keep-alive full-screen `LivebuyPlayer`
+  /// resolves for itself. See [resolveCollapsibleTheme].
+  final ReferenceUITheme? theme;
 
   /// Open-intent token (`rb-flutter-collapsible-player-switch-sync-and-reopen-signal`, DEFAULT
   /// `0`, parity Android `openSignal`). `didUpdateWidget`'s reopen re-evaluation SHALL trigger on
@@ -148,7 +179,7 @@ class CollapsibleLivebuyPlayer extends StatefulWidget {
     super.key,
     required this.video,
     required this.onVideoChanged,
-    required this.theme,
+    this.theme,
     this.config = const LivebuyPlayerConfig(),
     this.openSignal = 0,
   });
@@ -158,8 +189,20 @@ class CollapsibleLivebuyPlayer extends StatefulWidget {
 }
 
 class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
-  /// Resting bottom-right padding of the floating card (parity iOS `floatingInset`).
-  static const Offset _floatingInset = Offset(12, 24);
+  /// Resolved resting-corner inset for the floating card (rb-flutter-collapsible-player-
+  /// floating-position-inset, parity iOS `floatingInset` / sibling `LivebuyLiveEntryConfig
+  /// .inset`): `widget.config.inset` when the host supplied one, else the pre-existing hardcoded
+  /// default `Offset(12, 24)` — byte-identical to before this field existed. Was a `static const`
+  /// before this change; promoted to an instance getter because it now reads `widget.config`.
+  Offset get _resolvedInset => widget.config.inset ?? const Offset(12, 24);
+
+  /// Resolved resting corner (rb-flutter-collapsible-player-floating-position-inset, parity
+  /// sibling `LivebuyLiveEntryConfig.position`): the raw wire value `widget.config.position`
+  /// normalized via the SAME strict-equality `normalizeFloatingPosition` the sibling container
+  /// `LivebuyLiveEntry` uses — omitted / non-whitelisted values fall back to
+  /// `LBFloatingEntryPosition.rightBottom`, byte-identical to before this field existed.
+  LBFloatingEntryPosition get _position =>
+      normalizeFloatingPosition(widget.config.position);
 
   bool _isMinimized = false;
   Offset _committedOffset = Offset.zero;
@@ -176,15 +219,44 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
   /// (same as Android / RN; no latch needed — auto-restore keys on the host `video.id`).
   LBVideoItem? _shownVideo;
 
+  /// Resolved core theme (`sdkConfig.theme`), fetched async in [initState] ONLY when the host
+  /// omitted `widget.theme` (rb-flutter-collapsible-player-theme-default) — mirrors
+  /// `_LivebuyPlayerState._coreTheme` verbatim (`live_buy_player.dart`). `null` initial value
+  /// → the safe minimal-palette fallback via [resolveCollapsibleTheme] until the fetch
+  /// completes / if it fails.
+  LBSdkTheme? _coreTheme;
+
   @override
   void initState() {
     super.initState();
     _shownVideo = widget.video;
+    // rb-flutter-collapsible-player-theme-default: only self-resolve when the host omitted an
+    // explicit `theme:` — a host that already passes one must see zero additional async work
+    // (no extra `LivebuySDK.getSdkConfig()` call, even though its result would go unused).
+    if (widget.theme == null) _loadCoreTheme();
     // Seed the opt-in cover bridge from the INITIAL phase (parity iOS onAppear): a host that mounts
     // the presenter already bound to a non-null video (straight to full-screen) declares covered at
     // once; a null-video mount stays at the default false (no-op). See `presenterWidgetCovered`.
     _syncWidgetCover();
   }
+
+  /// Fetch `sdkConfig.theme` for [resolveCollapsibleTheme] (best-effort; minimal fallback on
+  /// failure). Mirrors `_LivebuyPlayerState._loadCoreTheme()` (`live_buy_player.dart`)
+  /// verbatim — same source, same try/catch shape — so this presenter's self-resolved theme
+  /// converges on the SAME value the wrapped full-screen `LivebuyPlayer` independently
+  /// resolves for itself.
+  Future<void> _loadCoreTheme() async {
+    try {
+      final cfg = await LivebuySDK.getSdkConfig();
+      if (mounted) setState(() => _coreTheme = cfg.theme);
+    } catch (_) {
+      // Keep the minimal fallback — theme degrades gracefully, never crashes.
+    }
+  }
+
+  /// The theme this presenter's floating card renders with. See [resolveCollapsibleTheme].
+  ReferenceUITheme get _resolvedTheme =>
+      resolveCollapsibleTheme(explicitTheme: widget.theme, coreTheme: _coreTheme);
 
   @override
   void didUpdateWidget(CollapsibleLivebuyPlayer oldWidget) {
@@ -373,6 +445,17 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final containerSize = Size(constraints.maxWidth, constraints.maxHeight);
+        // Resting corner + current drag offset → `Positioned` edge insets
+        // (rb-flutter-collapsible-player-floating-position-inset). Resting AND mid-drag share the
+        // SAME geometry (`lbLiveEntryEdgeInset`, `offset: Offset.zero` when not dragging), matching
+        // the sibling `LivebuyLiveEntry` container — the two render branches can never diverge.
+        // Cheap/pure to compute unconditionally even while not minimized (the floating branch below
+        // is the only consumer).
+        final LiveEntryEdgeInset edge = lbLiveEntryEdgeInset(
+          position: _position,
+          inset: _resolvedInset,
+          offset: _committedOffset + _dragTranslation,
+        );
         // rb-flutter-player-material-ancestor-fix — this `Stack` has TWO sibling branches
         // (the full-screen player below, and the minimized floating-preview card further
         // down); `LivebuyPlayer` guarantees its OWN `Material` ancestor internally
@@ -404,12 +487,15 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
                 ),
               ),
 
-              // Bottom-right floating preview while minimized. Draggable (clamped on-screen);
-              // a tap restores, the close button clears.
+              // Floating preview while minimized, resting corner driven by `_position`
+              // (rb-flutter-collapsible-player-floating-position-inset; DEFAULT right-bottom,
+              // byte-identical to before this field existed). Draggable (clamped on-screen); a
+              // tap restores, the close button clears.
               if (_isMinimized)
                 Positioned(
-                  right: _floatingInset.dx - (_committedOffset.dx + _dragTranslation.dx),
-                  bottom: _floatingInset.dy - (_committedOffset.dy + _dragTranslation.dy),
+                  left: edge.left,
+                  right: edge.right,
+                  bottom: edge.bottom,
                   child: GestureDetector(
                     onPanUpdate: (d) => setState(() => _dragTranslation += d.delta),
                     onPanEnd: (_) => setState(() {
@@ -418,7 +504,8 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
                         translation: _dragTranslation,
                         cardSize: _cardSize,
                         containerSize: containerSize,
-                        inset: _floatingInset,
+                        inset: _resolvedInset,
+                        position: _position,
                       );
                       _dragTranslation = Offset.zero;
                     }),
@@ -429,7 +516,7 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
                       // `FloatingWidgetView`; a host injects its own via `config.design`.
                       child: widget.config.design.floatingPlayerCard(
                         FloatingCardContext(
-                          theme: widget.theme,
+                          theme: _resolvedTheme,
                           // The SWITCHED video (rb-flutter-collapsible-player-track-switch): an
                           // in-place switch updates `_shownVideo` so the card shows the switched
                           // video, not the entry `v`.

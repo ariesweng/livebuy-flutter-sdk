@@ -247,6 +247,17 @@ class PlayerShellModel {
   List<LBProduct> get liveActiveProducts =>
       template == null ? const [] : template!.liveActiveProducts;
 
+  /// The FULL, UNFILTERED product list (rb-flutter-product-image-loading-polish) —
+  /// `DefaultPlayerTemplate.productOverlay.products`, the same underlying source
+  /// [vodActiveProducts] (time-window filter) and [liveActiveProducts]
+  /// (`narrate_status==2` filter) both read internally before filtering. Exposed here
+  /// so `PlayerShellView` can background-`precacheImage` every product's photo the
+  /// moment the FULL list is known, well before any individual product's own
+  /// introducing window opens and its card actually gets built — a pure read of an
+  /// existing public getter, no new template capability. demo（無 template）→ `[]`.
+  List<LBProduct> get allProducts =>
+      template == null ? const [] : template!.productOverlay.products;
+
   /// LIVE 釘選卡輪播來源：非空 [liveActiveProducts]（多商品輪播 + 分頁點）；ELSE 單一 [pinnedProduct]
   /// （`activeProduct` ?? demo seed）一元清單。皆空 → 無卡。純 computed。Mirrors iOS / RN
   /// `PlayerShellModel.livePinnedProducts`.

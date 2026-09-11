@@ -61,6 +61,24 @@ class DefaultStartScreenState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Reset [phase] back to [LBPStartPhase.loading] for a NEW session
+  /// (flutter-startscreen-reset-on-new-session-template). `DefaultPlayerTemplate` is a
+  /// process-global singleton (docs/reference-ui/parity-debt-ledger.md #9) — unlike iOS /
+  /// Android / RN, which construct a brand-new template per player instance (so `phase`
+  /// starts at its `loading` default synchronously, with nothing to leak from a PREVIOUS
+  /// video), Flutter's `_phase` only updates when a genuine native state-change event
+  /// round-trips across the bridge. Opening a new video therefore reads whatever `_phase`
+  /// was left at by the PREVIOUS session (typically `done`) until that event arrives. This
+  /// is a PUBLIC, SYNCHRONOUS method (unlike `handleStateChange`, which is `@internal` and
+  /// event-driven) so a caller holding this template — e.g. the reference-ui container,
+  /// right when it calls `load(videoId)` — can force the correct starting value in the SAME
+  /// call stack, before any UI reads it. Diff-then-notify: a no-op when already `loading`.
+  void resetForNewSession() {
+    if (_phase == LBPStartPhase.loading) return;
+    _phase = LBPStartPhase.loading;
+    notifyListeners();
+  }
+
   static LBPStartPhase _mapPhase(String name, {required bool hasStart}) {
     switch (name) {
       case 'loading':
@@ -464,6 +482,12 @@ class DefaultPlayerHeaderState extends ChangeNotifier {
   // 回放（已結束直播）flag — host-fed (`type == 3 || (type == 2 && liveStatus == 3)`). 與 _isLive
   // 並列、語意分離、互斥。下游 host 讀此把回放渲染成 LIVE 版型 + 「聊天室已關閉」留言態。Default false.
   bool _isFinishedLiveReplay = false;
+  // channel-flash-sale-flag-template-flutter — 搶購中 flag, host-fed raw passthrough
+  // (source: `LBPlayerChannelInfo.isFlashSale` ← `channel.isFlashSale`, a TOP-LEVEL
+  // field NOT nested under `shop`). Independent axis from `_isLive` /
+  // `_isFinishedLiveReplay` — a flash-sale channel can be live, VOD, or a replay;
+  // this flag does NOT gate or interact with either. Default false.
+  bool _isFlashSale = false;
 
   bool get isSubscribed => _isSubscribed;
   int get viewerCount => _viewerCount;
@@ -479,6 +503,16 @@ class DefaultPlayerHeaderState extends ChangeNotifier {
   /// 自組的 reference-ui）讀此把回放渲染成 LIVE 版型 + 「聊天室已關閉」留言態；純 VOD（`type == 1`）
   /// 兩旗標皆 `false` → VOD 版型。Default `false`. parity iOS/Android/RN.
   bool get isFinishedLiveReplay => _isFinishedLiveReplay;
+
+  /// 搶購中（flash sale）flag — host-fed raw passthrough of `channel.isFlashSale`
+  /// (`true` iff upstream `sale_type == 2`). 與 [isLive] / [isFinishedLiveReplay] 為
+  /// 完全獨立的軸：一個搶購場可以同時是直播中、VOD、或回放——本旗標不參與、不影響前兩者的
+  /// 判斷，也不被前兩者影響。下游（host app 自組的 reference-ui）讀此決定商品名稱標籤與
+  /// narrating 文案是否切到「搶購中」/「開標中」分支（下一個獨立 reference-ui change 的
+  /// 職責，本 change 只暴露資料）。Default `false`
+  /// （channel-flash-sale-flag-template-flutter；Flutter-only，其餘三端 template 層尚未落地，
+  /// 各自獨立處理不在本 change 範圍）。
+  bool get isFlashSale => _isFlashSale;
 
   /// Host-pill title (= `channel.title`). Empty until channel loads (D3).
   String get title => _title;
@@ -514,13 +548,17 @@ class DefaultPlayerHeaderState extends ChangeNotifier {
     // 回放（已結束直播）flag — host-fed (`type == 3 || (type == 2 && liveStatus == 3)`,
     // via `isFinishedLiveReplay()`). 與 isLive 並列、語意分離、互斥。Default false（源碼相容）。
     bool isFinishedLiveReplay = false,
+    // 搶購中 flag — host-fed raw passthrough of `channel.isFlashSale`. 與 isLive /
+    // isFinishedLiveReplay 為獨立軸，互不影響。Default false（源碼相容）。
+    bool isFlashSale = false,
   }) {
     if (title == _title &&
         hostName == _hostName &&
         shopLogo == _shopLogo &&
         shareUrl == _shareUrl &&
         isLive == _isLive &&
-        isFinishedLiveReplay == _isFinishedLiveReplay) {
+        isFinishedLiveReplay == _isFinishedLiveReplay &&
+        isFlashSale == _isFlashSale) {
       return;
     }
     _title = title;
@@ -529,6 +567,7 @@ class DefaultPlayerHeaderState extends ChangeNotifier {
     _shareUrl = shareUrl;
     _isLive = isLive;
     _isFinishedLiveReplay = isFinishedLiveReplay;
+    _isFlashSale = isFlashSale;
     notifyListeners();
   }
 

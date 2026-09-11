@@ -53,6 +53,18 @@ import '../testing/lb_test_keys.dart';
 //
 // SUB-VIEW INPUT PATTERN: `theme` first, snapshot values, then callbacks defaulting to null so
 // this renders correctly (inert) with every callback omitted (demo / golden / widget tests).
+//
+// DRAG-SEEK THROTTLE (rb-flutter-progress-bar-drag-seek-throttle): the live [_dragRatio] visual
+// (thumb position / fill) updates on EVERY reported drag pixel via local `setState` — that stays
+// unthrottled, it is cheap. What IS throttled is the [onSeek] callback itself: its default
+// wiring (`live_buy_player.dart`'s `LivebuyPlayerConfig.onSeek` default) calls
+// `LivebuyPlayerController.seek()`, a REAL `MethodChannel.invokeMethod` round trip to the native
+// player, which then echoes an async `playbackProgress` event back into
+// `LivebuyUI.playerTemplate` that can trigger a broader repaint — firing that on every dragged
+// pixel (the previous, unthrottled behavior) was the actual source of the reported drag jank,
+// not the local `setState`. [shouldEmitDragSeek] gates [onSeek] to at most once per
+// [_dragSeekThrottleMs] during a drag; touch-down and release/cancel always emit immediately so
+// the gesture still feels responsive and the final position is never dropped.
 
 /// Total width of the transport bar's leading play/pause button + its gap to the track
 /// (`28 (button) + 8 (gap)`), used to translate a drag's local x-offset into a track-relative
@@ -84,6 +96,31 @@ const double _playPauseIconSize = 14;
 /// `playPauseButtonSize` / Android `playPauseButtonSize`, both `28`). Named so the icon-vs-button
 /// size distinction is explicit at every call site (rb-flutter-progress-bar-expanded-ui-parity).
 const double _playPauseButtonSize = 28;
+
+/// Minimum real-time gap (milliseconds) between two consecutive drag-triggered
+/// [PlaybackProgressBarView.onSeek] emissions during an in-progress drag (touch-down and
+/// release/cancel are exempt — see [shouldEmitDragSeek] / [_PlaybackProgressBarViewState._handleUp]).
+/// `120` is comfortably below what reads as "instant" to a user (~8 emits/sec) while collapsing
+/// what used to be one real native-seek round trip PER REPORTED PIXEL down to a small, bounded
+/// rate (rb-flutter-progress-bar-drag-seek-throttle).
+const int _dragSeekThrottleMs = 120;
+
+/// PURE: throttle decision for [PlaybackProgressBarView]'s drag → [PlaybackProgressBarView.onSeek]
+/// emission (rb-flutter-progress-bar-drag-seek-throttle; unit-testable without a widget/Timer —
+/// takes plain millisecond ints, no `DateTime`/`Clock` dependency). [lastEmitMs] is the wall-clock
+/// timestamp (`DateTime.now().millisecondsSinceEpoch`) of the last ACTUALLY-emitted `onSeek` call
+/// this drag gesture, or `null` if none has fired yet. [nowMs] is the current timestamp for this
+/// candidate emission. [force] (touch-down / release / cancel — the two gesture edges that MUST
+/// NEVER be silently dropped) always returns `true` regardless of elapsed time. Otherwise this
+/// permits an emission only once at least [minIntervalMs] (default [_dragSeekThrottleMs]) have
+/// elapsed since [lastEmitMs] — including the very first non-forced call ever (`lastEmitMs ==
+/// null`), which always emits (there is nothing to throttle against yet).
+bool shouldEmitDragSeek(int? lastEmitMs, int nowMs,
+    {required bool force, int minIntervalMs = _dragSeekThrottleMs}) {
+  if (force) return true;
+  if (lastEmitMs == null) return true;
+  return (nowMs - lastEmitMs) >= minIntervalMs;
+}
 
 /// PURE: the expanded-state track's interactive/rendered width for a given full container
 /// [containerWidth] — subtracts the leading [_transportBarInset] (button + gap, unchanged) and
@@ -142,8 +179,10 @@ class PlaybackProgressBarView extends StatefulWidget {
   /// Tap the play/pause button (expanded state only). Default null → inert (demo / golden).
   final VoidCallback? onTogglePlayPause;
 
-  /// Fired on every drag position change (touch-down included) with the resolved absolute
-  /// seconds (`ratio * duration`). No debounce — every move reports.
+  /// Fired during a drag with the resolved absolute seconds (`ratio * duration`). Touch-down and
+  /// release/cancel ALWAYS fire immediately; intermediate moves are throttled to at most once per
+  /// [_dragSeekThrottleMs] (see [shouldEmitDragSeek] — rb-flutter-progress-bar-drag-seek-throttle;
+  /// the live visual thumb position is NOT throttled, only this callback).
   final void Function(double seconds)? onSeek;
 
   /// Touch-down in the hit area / track (zero minimum distance — see [_transportBarInset]).
@@ -180,18 +219,41 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
   double get _ratio =>
       _dragRatio ?? playbackProgressRatio(widget.position, widget.duration);
 
+  /// Wall-clock timestamp (ms) of the last drag gesture's ACTUALLY-emitted [PlaybackProgressBarView.onSeek]
+  /// call, or `null` before the first one this drag. Feeds [shouldEmitDragSeek] — see that
+  /// function's doc comment for the throttle policy (rb-flutter-progress-bar-drag-seek-throttle).
+  int? _lastSeekEmitMs;
+
   void _handleDrag(double localDx, double inset, double trackWidth,
       {required bool isStart}) {
     final ratio = trackWidth <= 0
         ? 0.0
         : ((localDx - inset) / trackWidth).clamp(0.0, 1.0);
+    // Visual thumb / fill position updates on EVERY reported pixel, unthrottled — this is the
+    // cheap local `setState` the throttle deliberately does NOT touch.
     setState(() => _dragRatio = ratio);
     if (isStart) widget.onScrubStart?.call();
+    // Touch-down (isStart) always forces an immediate emission (parity with the pre-existing
+    // "touch-down included" contract); intermediate moves go through the throttle.
+    _emitSeek(ratio, force: isStart);
+  }
+
+  /// Gates the actual [PlaybackProgressBarView.onSeek] call through [shouldEmitDragSeek]. [force]
+  /// bypasses the throttle entirely (touch-down / release / cancel).
+  void _emitSeek(double ratio, {required bool force}) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (!shouldEmitDragSeek(_lastSeekEmitMs, nowMs, force: force)) return;
+    _lastSeekEmitMs = nowMs;
     widget.onSeek?.call(ratio * widget.duration);
   }
 
   void _handleUp() {
+    // Capture the true final drag ratio BEFORE clearing it, and force-emit it even if the drag's
+    // last intermediate move was throttled away — the released position MUST NOT be dropped
+    // (rb-flutter-progress-bar-drag-seek-throttle).
+    final finalRatio = _dragRatio;
     setState(() => _dragRatio = null);
+    if (finalRatio != null) _emitSeek(finalRatio, force: true);
     widget.onScrubEnd?.call();
   }
 

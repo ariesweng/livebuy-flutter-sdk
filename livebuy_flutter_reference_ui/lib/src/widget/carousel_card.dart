@@ -65,6 +65,20 @@ import 'widget_model.dart' show WidgetGoods, WidgetModel;
 // placeholder's monogram (`_monogram(item.title)`, drawn inside the thumbnail
 // regardless of `showTitle` — an unrelated, always-rendered element).
 //
+// VIEWER-COUNT VISIBILITY FLAG (`showViewerCount`, rb-flutter-live-entry-hide-viewer-
+// count): the LIVE-only viewer-count pill (above) is ALSO gated by a `showViewerCount:
+// bool` constructor parameter (default `true`), ANDed with the existing `item.showPvNum
+// == 1` data gate: the pill shows only when BOTH are true. `showViewerCount` is a purely
+// caller-level display opt-out (orthogonal to `item.showPvNum`, which is the backend's
+// own "should this video show a viewer count at all" signal) — it does NOT reinterpret
+// or bypass `showPvNum`. `CarouselView` / `VideoShopGridView` never pass it (default
+// `true`, pixels unchanged). `FloatingWidgetView` forwards its own `showViewerCount`
+// parameter verbatim; of `FloatingWidgetView`'s three consumers, only the drop-in
+// `LivebuyLiveEntry` container passes `showViewerCount: false` — the `LivebuyWidget`
+// FLOATING content mode (`widget_overlay_view.dart`) and the collapsible player's
+// minimize card (`reference_ui_design.dart`'s `floatingPlayerCard`) both omit it and
+// keep showing the viewer count. See `_showsViewerBadge` below for the merged gate.
+//
 // PRODUCT-CARD MODES (rb-flutter-widget-product-card-modes, design R14; the `below`
 // PLACEMENT then reversed by R17 / rb-flutter-widget-product-card-below-slot-reposition;
 // the COLOR of both `inside` and `below` then changed by R33 /
@@ -255,6 +269,19 @@ class CarouselCardView extends StatelessWidget {
   /// always derived from `item.title`'s first character regardless of this flag).
   final bool showTitle;
 
+  /// Whether the LIVE-only viewer-count pill (person glyph + `item.watchNum`, next to the
+  /// LIVE tag) may show at all (rb-flutter-live-entry-hide-viewer-count). `true` (the
+  /// DEFAULT, and what `CarouselView` / `VideoShopGridView` both implicitly pass by
+  /// omission) → the pill's visibility is governed SOLELY by the existing
+  /// `item.showPvNum == 1` data gate, unchanged from before this flag existed. `false`
+  /// (used ONLY by `FloatingWidgetView` when constructed for the `LivebuyLiveEntry`
+  /// drop-in container) → the pill MUST NOT show regardless of `item.showPvNum`. The two
+  /// gates are ANDed (`showViewerCount && item.showPvNum == 1`, see `_showsViewerBadge`)
+  /// — this flag is a caller-level display opt-out, orthogonal to `item.showPvNum`'s
+  /// backend-authoritative "should this video show a viewer count" signal, and never
+  /// reinterprets it.
+  final bool showViewerCount;
+
   /// Card tap → host-wired exit (→ host → core open player for `item.id`). null for
   /// demo / golden instances — the card is inert. NEVER opens the player / calls
   /// core `simulate*` itself.
@@ -269,6 +296,7 @@ class CarouselCardView extends StatelessWidget {
     this.live = false,
     this.productCard,
     this.showTitle = true,
+    this.showViewerCount = true,
     this.onTap,
   });
 
@@ -371,23 +399,34 @@ class CarouselCardView extends StatelessWidget {
             // 9:16 media layer, priority preview → cover → placeholder, parity iOS
             // `mediaThumbnail` / Android / RN `CarouselCardView`. rb-flutter-widget-card-
             // looping-preview: `live == true` + non-empty `item.preview` → a muted, looping
-            // `LoopingVideoView` (animated preview) over the placeholder. Otherwise the existing
-            // `liveProductImage`: `live == true` + non-empty cover URL → real cover; `live ==
-            // false` (demo / golden) → placeholder ONLY (no network / no video controller →
-            // byte-stable goldens).
+            // `LoopingVideoView` (animated preview) LAYERED OVER the `liveProductImage` cover/
+            // placeholder (NOT a ternary choosing one or the other — see
+            // flutter-refui-widget-uncovered-navigation-blank-cover). `LoopingVideoView` paints
+            // nothing (`SizedBox.expand`) until its `VideoPlayerController` initializes, and on
+            // any load/decoder error it stays transparent forever (by design — see its own doc
+            // comment), so the cover/placeholder layer underneath MUST already be in the tree for
+            // that transparency to actually reveal something instead of a permanently blank
+            // region. `liveProductImage` is therefore always built as the BASE layer; the preview
+            // is an OPTIONAL layer on top, keyed on `item.preview` so a channel switch (real
+            // world reuse of the same card) tears down and rebuilds the video layer.
             Positioned.fill(
-              child: (live && item.preview.isNotEmpty)
-                  ? LoopingVideoView(uri: item.preview)
-                  : liveProductImage(
-                      live: live,
-                      url: item.cover,
-                      placeholder: _coverPlaceholder(),
-                      // Fills the 9:16 cover container (crop, no letterbox) — default
-                      // `BoxFit.cover` from `liveProductImage`, parity with in-player product
-                      // cards and this card's own `LoopingVideoView` preview branch above.
-                      // rb-flutter-widget-carousel-card-image-cover reverses the prior
-                      // `BoxFit.contain` override (rb-flutter-widget-card-fidelity).
-                    ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  liveProductImage(
+                    live: live,
+                    url: item.cover,
+                    placeholder: _coverPlaceholder(),
+                    // Fills the 9:16 cover container (crop, no letterbox) — default
+                    // `BoxFit.cover` from `liveProductImage`, parity with in-player product
+                    // cards and this card's own `LoopingVideoView` preview layer above.
+                    // rb-flutter-widget-carousel-card-image-cover reverses the prior
+                    // `BoxFit.contain` override (rb-flutter-widget-card-fidelity).
+                  ),
+                  if (live && item.preview.isNotEmpty)
+                    LoopingVideoView(key: ValueKey(item.preview), uri: item.preview),
+                ],
+              ),
             ),
             // UPCOMING (直播預告): a full-bleed rgba(0,0,0,0.25) dark mask + a centred
             // date (small) + big time, REPLACING the top-left kind badge (the centre
@@ -428,6 +467,7 @@ class CarouselCardView extends StatelessWidget {
   /// `<ProductMock>` rounded media chip.
   Widget _coverPlaceholder() {
     return DecoratedBox(
+      key: LbTestKeys.carouselCardCoverPlaceholder,
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
@@ -554,17 +594,22 @@ class CarouselCardView extends StatelessWidget {
     );
   }
 
-  // MARK: - Viewer-count pill (LIVE only, gated by `item.showPvNum`)
+  // MARK: - Viewer-count pill (LIVE only, gated by `item.showPvNum` AND `showViewerCount`)
 
-  /// Whether the viewer-count pill is shown next to the LIVE tag: `item.showPvNum ==
-  /// 1` (the CLAUDE.md Bool-as-Int convention — core encodes bool flags as 0/1 ints).
-  /// Only meaningful when [_isLive] (the sole caller, [_kindBadge], is only reached on
-  /// the LIVE branch). The design's own demo leaves `item.viewers` ungated (a plain
-  /// truthy check); this reference-ui layer instead gates on the backend's own
-  /// visibility flag, per the brief's guidance to mirror the main player header's
-  /// `viewerCountVisible`-style convention (`design/contract/claude-design-sync.md`
-  /// R33 leaves the flag deliberately unwired in its own demo).
-  bool get _showsViewerBadge => item.showPvNum == 1;
+  /// Whether the viewer-count pill is shown next to the LIVE tag: `showViewerCount &&
+  /// item.showPvNum == 1` (the CLAUDE.md Bool-as-Int convention — core encodes bool
+  /// flags as 0/1 ints). Two independent gates, ANDed (rb-flutter-live-entry-hide-
+  /// viewer-count): `item.showPvNum` is the backend's own per-video visibility signal;
+  /// `showViewerCount` is a caller-level display opt-out (default `true`, see the
+  /// constructor field doc) that never reinterprets `item.showPvNum` — it only adds an
+  /// additional, orthogonal reason to hide. Only meaningful when [_isLive] (the sole
+  /// caller, [_kindBadge], is only reached on the LIVE branch). The design's own demo
+  /// leaves `item.viewers` ungated (a plain truthy check); this reference-ui layer
+  /// instead gates on the backend's own visibility flag, per the brief's guidance to
+  /// mirror the main player header's `viewerCountVisible`-style convention
+  /// (`design/contract/claude-design-sync.md` R33 leaves the flag deliberately unwired
+  /// in its own demo).
+  bool get _showsViewerBadge => showViewerCount && item.showPvNum == 1;
 
   /// Viewer-count pill (LBPCarouselCard 199-211): a small person glyph + `item.watchNum`
   /// on a translucent-black, rounded capsule. Renders the raw count verbatim (no
@@ -653,7 +698,7 @@ class CarouselCardView extends StatelessWidget {
                     gradient: LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: [Color(0xFFFFD7A8), Color(0xFFE27D5A)],
+                      colors: [Color(0xFFC7C7CC), Color(0xFF8E8E93)],
                     ),
                   ),
                 ),
@@ -760,7 +805,7 @@ class CarouselCardView extends StatelessWidget {
                     gradient: LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: [Color(0xFFFFD7A8), Color(0xFFE27D5A)],
+                      colors: [Color(0xFFC7C7CC), Color(0xFF8E8E93)],
                     ),
                   ),
                 ),

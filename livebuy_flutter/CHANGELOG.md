@@ -6,7 +6,141 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
-（無 —— 目前累積內容已折入下方 `2.2.0`）
+## 2.3.0 - 2026-09-11
+
+> **三套件皆有實際內容變動**（lockstep）。自 `2.2.0` 以來累積 90 個內容 commit，主軸是
+> Android 真機測試回報的三個播放器崩潰/黑畫面修復、`mute-preference-persist-across-session`
+> parity 收尾、iOS 自動 PiP、介紹中商品卡在 iOS/Android 兩端的資料缺口，以及一個延續多輪的
+> reference-ui 視覺打磨批次（CC 字幕/tooltip、底部安全區、公告橫幅、聊天室配色、等化器動畫、
+> 商品名稱標籤系統）。**含 2 項 ⚠️ BREAKING**（詳見下方專節）。四支 Android bridge core pin
+> 追新記錄（`4.13.1`→`4.16.0`→`4.17.0`→`4.18.0`）已在 `[Unreleased]` 段落逐輪記錄過，本輪一併
+> 折入正式版號，不重複列出細節。
+
+### Added
+
+- **Mute 偏好跨 App session 持久化，Flutter 收尾**（`flutter-player-instantiation-hook-core`、
+  `mute-preference-persist-across-session-flutter-core`、`-template`）：新增
+  `LivebuyPlayerController.onInstantiate` per-instance hook（parity iOS/Android）與
+  `isMuted(): Future<bool>` 查詢出口；已確認 Flutter native 音訊層對 iOS/Android 這輪新增的
+  app-session 持久化行為是 no-op（純轉發、無獨立引擎狀態），template 層改用 hook 對齊
+  mute 圖示 attach 種子的 per-instance parity。
+- **iOS 自動 PiP entry**（`flutter-ios-auto-pip-entry`）：Flutter iOS bridge 補上 app
+  切背景時自動觸發 PiP 的生命週期監聽，parity Android sibling，並訂正該 sibling change
+  當初「iOS 天然覆蓋、無此缺口」的錯誤假設。
+- **介紹中商品卡 / 商品袋資料缺口補齊（iOS + Android）**（`flutter-ios-moment-products-bridge-core`、
+  `flutter-android-moment-products-bridge-core`、`flutter-moment-products-wiring-reference-ui`）：
+  `momentStateChange` 擴充 `products`/`narratingProduct` 欄位並接線容器，修復商品袋在 iOS/Android
+  真機顯示空清單、介紹中商品卡不即時更新的問題。
+- **頻道公告文字提早送達**（`channel-notice-bridge-core-flutter`、
+  `live-announce-immediate-display-reference-ui-flutter`）：`channelChange` 新增
+  `notice`/`sysNotice` 欄位並轉發進 template，公告橫幅不必等首輪 poll 即可顯示。
+- **`currentShopId` 讀回介面 + 現正直播 pill 自動 shopId turnkey**
+  （`flutter-live-now-pill-auto-shopid-turnkey-core`、`-reference-ui`、
+  `flutter-example-wire-live-now-pill-shopid`）：`LivebuySDK.currentShopId` 讀回
+  `configure()` 最後一次傳入的 shopId，`LivebuyPlayerConfig` 新增
+  `showsLiveNowPill`/自動 shopId fallback，parity iOS。**含 1 項 BREAKING，見下方專節**。
+- **`isFlashSale` 頻道旗標**（`channel-flash-sale-flag-core-flutter`、`-template-flutter`、
+  `rb-flutter-flash-sale-live-signal-wiring`）：`LBPlayerChannelInfo` 新增
+  `isFlashSale`，商品名稱標籤系統新增搶購中分支、narrating 文案二選一，parity iOS/Android/RN。
+- **回放聊天室依時間顯示完整鏈路**（`flutter-replay-chat-history-reveal-template` 及其修正、
+  `fix-flutter-replay-chat-progressive-reveal-template`/`-reference-ui`）：補接
+  `CHAT_HISTORY_LOADED` 事件顯示歷史留言，移除誤接的一次性全灌驅動改為漸進式，reference-ui
+  容器接上正確資料來源，parity iOS/Android。
+- **加入活動列自帶主播名**（`event-join-streamer-name-template-flutter`、
+  `rb-flutter-event-join-streamer-name`），parity Sibling iOS/Android/RN。
+- **商品名稱標籤系統 / 等化器動畫（design R39/R40）落地**：`rb-flutter-product-row-name-tag-system`
+  （直播價/熱賣中/即將售完）、`rb-flutter-live-equalizer-motion`（呼吸動畫能力）、
+  `rb-flutter-product-row-live-equalizer-wiring`、`rb-flutter-vod-and-pinned-equalizer-wiring`
+  （VOD遮罩/直播釘選卡接上動畫，`parity-debt-ledger#4` 全數清除）、
+  `rb-flutter-collapsible-player-floating-position-inset`（host 覆寫 position/inset）、
+  `rb-flutter-collapsible-player-theme-default`（`theme` 改選填自解析）。
+- **CC 字幕鈕圖示重新設計**（`rb-flutter-cc-icon-availability-redesign`、
+  `rb-flutter-cc-icon-active-fill-state` ×2）：不可用時恆渲染＋提示泡泡，啟用時改 active 填色態。
+- **直播公告橫幅圖示改自訂向量**（`rb-flutter-live-announce-bullhorn-icon`），parity Sibling
+  iOS/Android/RN。
+- **商品照片載入體驗優化**（`rb-flutter-product-image-loading-polish`）：提早 prefetch、
+  淡入轉場、佔位色改中性灰，parity iOS/Android/RN。
+- **觀眾留言暱稱改粉色 + 訊息不限行數**（`rb-flutter-chat-audience-bubble-pink-nickname-full-lines`）。
+- **聊天室最新訊息 pill 改白底 accent 字並水平置中**（`rb-flutter-chat-pill-color-align`）。
+- **分享失敗新增 `onShareFailed` host callback**（`flutter-share-failure-onshare-failed-callback-reference-ui`）：
+  正式推翻 2026-09-07 崩潰防護規則的錯誤回報限制（使用者授權），`onServiceLink` 不受影響。
+- **loading 底改用封面圖 + 深色遮罩**（`player-loading-cover-background-reference-ui-flutter`），
+  parity iOS/Android/RN。
+- **VOD 介紹中商品卡顯示時機比照側欄/浮動商品袋**（`rb-flutter-now-introducing-carousel-buffering-gate`），
+  parity Flutter/iOS。
+- **直播模式點商品縮圖跳過關閉商品列表抽屜**（`rb-flutter-product-sheet-keep-open-on-live-seek`）。
+- **底部安全區系統性修正**（`fix-flutter-player-shell-bottom-safearea-gaps`、
+  `rb-flutter-player-shell-bottom-chrome-safearea`）：進度條/聊天室/開場略過鈕/VOD字幕疊層/
+  VOD商品卡等五個表面補齊 `MediaQuery.padding.bottom` 疊加，clean-mode 退出鈕/浮動購物袋/
+  VOD側欄/LIVE底部bar 對齊 iOS 原生避開 home indicator。**含 1 項 BREAKING，見下方專節**。
+- **進度條拖曳節流**（`rb-flutter-progress-bar-drag-seek-throttle`）：`onSeek` 加節流，避免每個
+  拖曳 pixel 都觸發跨 process native seek IPC 往返造成卡頓。
+
+### Fixed
+
+- **真機測試發現的三個 Android 播放器崩潰/顯示缺陷**：聊天室完全收不到訊息（EventChannel 跨
+  執行緒呼叫崩潰，`flutter-android-poll-received-main-thread-fix`）、直播 SurfaceView 蓋過
+  Flutter 疊層（改走 Hybrid Composition，`flutter-android-player-hybrid-composition`）、換片
+  時原生 view 重建繞過 `VIDEO_SWITCH`／公告橫幅死碼未接線／rail 可用性讀舊值三部曲
+  （`flutter-video-open-reset-backstop-template` 等三個 change 合併修復）。
+- **Android bridge core pin 例行追新**：`4.13.1`→`4.16.0`（補記治理缺口）→`4.17.0`→`4.18.0`
+  （四個獨立 commit，逐輪已核對 `livebuy-android-sdk/CHANGELOG.md` 對應版本條目；`4.18.0`
+  那輪確認新增 `isMuted` getter 並以 `javap` 反組譯驗證）。
+- **widget 卡片封面圖永久空白**（`flutter-refui-widget-uncovered-navigation-blank-cover`）：
+  preview/cover/placeholder 原本三選一改為 Stack 疊層。
+- **`share_plus` iOS 26 crash**（`fix-flutter-share-plus-ios26-crash-upgrade`）：升級至
+  12.0.2 修復無 `sharePositionOrigin` 時 crash；example app 另以 `dependency_overrides`
+  釘住相容版本解 compileSdk 34 衝突。
+- **換片重置補齊**：`loadingCover`（`flutter-loadingcover-reset-on-new-session-template`）、
+  `startScreen`（`flutter-startscreen-reset-on-new-session-template`）、聊天室/活動 feed
+  快取還原（`chat-history-video-switch-cache-flutter`）、商品明細 sheet-stack 五個
+  view-model 重置（`flutter-product-sheet-stack-video-switch-reset-template`，parity RN）、
+  聊天訊息相鄰輪 poll resend 重複顯示（`flutter-chat-push-id-dedupe-template`，Deferred RN）。
+- **拖曳播放進度條期間隱藏公告橫幅/聊天室/pin商品卡**（`fix-flutter-scrub-hide-announce-chat-pinned`，
+  parity iOS/Android）；**進度條展開暫留期間**同三元件改往上推避讓 transport bar
+  （`rb-flutter-scrub-expanded-chrome-lift`）。
+- **CC tooltip 系列修復**：LIVE 底部列泡泡文字被寬度鎖死裁切（`rb-flutter-cc-tooltip-bubble-width-clip-fix`）、
+  VOD 側欄箭頭三角形頂點座標寫反（`rb-flutter-cc-tooltip-left-arrow-direction-fix`）、
+  邊界夾制後箭頭改反向補償維持指向按鈕（`rb-flutter-cc-tooltip-arrow-anchor-fix`）。
+- **字幕疊層 / 回放隱藏公式系列**：VOD 字幕疊層底部固定預留商品卡空間
+  （`rb-flutter-vod-caption-reserve-card-space`）、窄框內水平置中並在回放開字幕時隱藏聊天室
+  （`rb-flutter-caption-overlay-align-hide-chat`）、垂直定位改單一事實來源避免與底部列重疊
+  （`rb-flutter-caption-overlay-bottom-bar-clearance-fix`，Android/RN 記入 ledger #23）、回放
+  聊天室隱藏公式補 `subtitleAvailable` 判斷（`rb-flutter-caption-chat-hide-availability-gate`）、
+  已結束直播回放改嚴格 `isLive` 排除讓真正 VTT/CC 字幕可顯示（`rb-flutter-replay-caption-overlay-fix`）。
+- **聊天室底部間距對齊**（`flutter-live-chat-clearance-realign`）：無公告時對齊置頂商品卡，有
+  公告時緩衝加倍。
+- **觀眾留言暱稱冒號改回白色**（`rb-flutter-chat-audience-nickname-colon-color-fix`，重生 3 張
+  golden baseline）。
+- **商品明細「更多商品」推薦區塊捲動位置重置**（`rb-flutter-recommendation-switch-scroll-reset`）。
+- **`LivebuyLiveEntry` 補 Material 祖先**（`rb-flutter-live-entry-material-ancestor-fix`）：修復
+  LIVE 標籤黃底線。
+- **「介紹中」equalizer 特效改回恆動畫**（`rb-flutter-equalizer-live-gate-removal`），不再受
+  isLive/live 凍結，parity Already-parity iOS/Android/RN。
+- **narrating 橫幅撤回搶購場二選一**（`rb-flutter-narrating-banner-revert-flash-sale-text`），
+  恆顯示介紹中。
+- **容器 loading/開場收斂修復**：loading 階段隱藏 chrome 避免先閃現才被覆蓋
+  （`rb-flutter-player-hide-chrome-until-loaded`）、開場容器補不透明兜底背景避免透出底下舊路由
+  （`rb-flutter-player-open-opaque-backdrop`）、換片時同步清空 `loadingCover`
+  （`rb-flutter-player-reset-loadingcover-on-new-session`）。
+- **GuestNameEditModalView 徽章圖示尺寸對齊 iOS/Android/RN**（`rb-flutter-icon-parity-guestname-badge-icon-size`，
+  重生對應 golden）。
+- **LIVE 公告橫幅改雙行顯示**（`flutter-live-announce-two-line-clearance-fix`），聊天室避讓距離
+  校正，重生受影響 golden baseline。
+- **Example app 修復**：`LivebuySDK` pod 釘版每次重跑改為比對後才刷新（`flutter-example-bootstrap`）、
+  暫時停用手勢引導提示展示（`flutter-example-suppress-gesture-hint-demo`）。
+
+### ⚠️ BREAKING
+
+- **`LivebuyPlayerConfig` 現正直播 pill 預設行為「關」→「開」**（reference-ui，
+  `flutter-live-now-pill-auto-shopid-turnkey-reference-ui`）——修復回放/VOD 缺少「前往直播」
+  pill 的根因後，預設值連帶翻轉為顯示；不想要的 host 需明確傳 `showsLiveNowPill: false`
+  關閉。Android/RN 對等 turnkey 尚未跟進，記錄於 `parity-debt-ledger` #16（Deferred，待使用者
+  確認後再排入）。
+- **細線進度條 idle 態底部定位公式變更**（reference-ui，
+  `fix-flutter-player-shell-bottom-safearea-gaps`）——移除「恆為 `bottom: 0`」的短路，改與展開
+  態套用同一套系統底部安全區公式；沒有安全區的裝置（無 home indicator / 無手勢列）視覺不變，
+  有安全區的裝置進度條會往上抬升安全區高度，非公開 API 簽章變更，純既有像素表面行為調整。
 
 ## 2.2.0 - 2026-09-08
 

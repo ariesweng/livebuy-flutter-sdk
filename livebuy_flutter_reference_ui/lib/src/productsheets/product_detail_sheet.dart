@@ -192,8 +192,8 @@ final Color _bgSunken = colorFromHex('#F4F4F6') ?? const Color(0xFFF4F4F6);
 final Color _soldOutColor = colorFromHex('#9A96A3') ?? const Color(0xFF9A96A3);
 
 /// Product-photo placeholder gradient stops (the design's 4:3 warm media chip).
-final Color _photoStart = colorFromHex('#FFD7A8') ?? const Color(0xFFFFD7A8);
-final Color _photoEnd = colorFromHex('#E27D5A') ?? const Color(0xFFE27D5A);
+final Color _photoStart = colorFromHex('#C7C7CC') ?? const Color(0xFFC7C7CC);
+final Color _photoEnd = colorFromHex('#8E8E93') ?? const Color(0xFF8E8E93);
 
 // MARK: - Fixed localized copy (static presentation strings — parity to iOS/Android)
 
@@ -702,6 +702,15 @@ class ProductDetailSheet extends StatelessWidget {
               // rb-flutter-sheetkit-resize-dismiss-unify）—— 現為全部 5 個 sheet 統一具備，不再是
               // opt-in（`draggable` 參數已移除）。
               onDismiss: onDismiss,
+              // 換片時捲動位置重置到最上方（rb-flutter-recommendation-switch-scroll-reset）：
+              // 「更多商品」推薦卡點擊（`onOpenRecommendation`）或加購鈕（`onQuickAddRecommendation`）
+              // 會讓容器（`product_sheets_view.dart` 的 `_buildDetailOrRestockSheet`）以新
+              // `detail` 重建這個同一個 widget slot（無 `Key` 差異、不會 remount，`LBSheetScaffold`
+              // 的 `State` 因此原本會沿用切換前殘留的捲動位置）。`detail.productId` 是這個
+              // sheet 唯一穩定的商品身分識別，作為 `scrollResetKey` 傳入——`LBSheetScaffold` 只在
+              // 這個值真的變動時才把 body 捲回頂部，其餘重建（例如僅 `qty`/`variantSelection`
+              // 改變、同一商品）不受影響。
+              scrollResetKey: detail.productId,
               header: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,

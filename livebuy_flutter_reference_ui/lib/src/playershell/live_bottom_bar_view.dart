@@ -1,12 +1,21 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+// `OverflowBoxFit` (used by the `OverflowBox` in `_CcTrailingButtonState.build()`,
+// rb-flutter-cc-tooltip-bubble-width-clip-fix) is declared in `rendering/shifted_box.dart` and
+// only selectively re-exported through `material.dart`'s `widgets.dart` → `rendering.dart` chain
+// (`export 'rendering.dart' show TextSelectionHandleType;` — `OverflowBoxFit` is NOT in that
+// `show` list), so it needs this explicit import to be resolvable here.
+import 'package:flutter/rendering.dart';
 
 import '../reference_ui_theme.dart';
 import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
 import 'bag_glyph.dart';
 import 'cc_glyph.dart';
+import 'cc_tooltip_layout.dart';
+import 'cc_unavailable_tooltip.dart';
 import 'more_glyph.dart';
 import 'person_edit_glyph.dart';
 
@@ -135,7 +144,10 @@ class LiveBottomBarView extends StatelessWidget {
   ///   - the trailing slot (share's position) becomes a CC (字幕) toggle instead, forwarding the
   ///     EXISTING [onToggleCC] — that field / its `player_shell_view.dart` call-site wiring
   ///     already existed as pure source-compat dead weight (no `build()` branch ever rendered a
-  ///     button reading it); this is its first real rendering consumer, not a new field.
+  ///     button reading it); this is its first real rendering consumer, not a new field. Its
+  ///     active-fill visual state (white background + accent glyph while [subtitleEnabled])
+  ///     is driven by [subtitleEnabled], NOT by this flag
+  ///     (`rb-flutter-live-bottom-bar-cc-icon-active-fill-state`).
   ///   - the like button is UNAFFECTED (still rendered, still forwards [onLike]) — a finished
   ///     replay retains the ability to like, mirrored from iOS ground truth.
   /// Takes precedence below [bagOnly] / [isUpcoming] (mirrors iOS `commentAreaKind` /
@@ -147,6 +159,32 @@ class LiveBottomBarView extends StatelessWidget {
   /// icon WHITE (was unconditionally `theme.accent` before R37); the call site sets this `true`
   /// for the duration of `resolveLiveLikeBurstPlan().likedDuration` after a tap, then reverts.
   final bool liked;
+
+  /// CC (字幕) toggle active-fill state (`rb-flutter-live-bottom-bar-cc-icon-active-fill-state`,
+  /// parity design `live-chrome.jsx:244-245`'s `ccOn` — the SAME source data as the VOD side
+  /// rail's `subtitle` pill active state, `rb-flutter-cc-icon-active-fill-state`). Only consulted
+  /// by the [LiveBottomBarTrailingActionKind.cc] trailing-slot branch (i.e. only takes effect
+  /// when [isFinishedLiveReplay] is `true` — every other variant's trailing slot is `share` and
+  /// never reads this field). Default `false` keeps every existing call site / golden
+  /// byte-identical (same "later, defaulted visual flag" convention as [liked] — NOT the
+  /// `OperationRailView`-style required-parameter convention). `true` → the CC button's
+  /// background turns white and its [CcGlyph] turns `theme.accent` (see the trailing-slot `.cc`
+  /// branch in [build]); `false` (or omitted) → the button keeps its pre-existing translucent-dark
+  /// background + white glyph.
+  final bool subtitleEnabled;
+
+  /// Whether a caption source exists for this video (R42,
+  /// `rb-flutter-cc-icon-availability-redesign` — parity `OperationRailView.subtitleAvailable`,
+  /// SAME source: `PlayerShellModel.railItems`' `subtitle` item's `enabled`). Only consulted by
+  /// the [LiveBottomBarTrailingActionKind.cc] trailing-slot branch, same reach as
+  /// [subtitleEnabled]. Default `true` keeps every existing call site / golden byte-identical —
+  /// before this field existed the CC button always rendered its available (`on`/`off`) glyph
+  /// regardless of actual caption availability; `true` reproduces that exactly. `false` → the CC
+  /// button renders `CcGlyphState.unavailable` (fixed-grey, non-square glyph, translucent-dark
+  /// background — NEVER the white "active" style even if [subtitleEnabled] is somehow `true`) and
+  /// its tap shows a short-lived tooltip INSTEAD of forwarding [onToggleCC] (see
+  /// `_CcTrailingButton`).
+  final bool subtitleAvailable;
 
   final VoidCallback? onBag;
   final VoidCallback? onComment;
@@ -162,6 +200,16 @@ class LiveBottomBarView extends StatelessWidget {
   /// `null` → inert (demo / snapshot).
   final VoidCallback? onMore;
 
+  /// Total rendered height of this bar (`rb-flutter-caption-overlay-bottom-bar-clearance-fix`):
+  /// `_barTopPadding + _iconSize + _barBottomPadding` = `8 + 36 + 16` = `60`. Exposed as a single
+  /// source of truth for other family-1 surfaces (currently `player_shell_view.dart`'s VOD/replay
+  /// caption overlay, `captionOverlayBottomInset`) that need to know how tall this bar renders
+  /// WITHOUT duplicating or guessing the three internal layout constants themselves — parity iOS
+  /// `LiveBottomBarView.barHeight` (`rb-ios-caption-overlay-bottom-bar-clearance-fix`). Any future
+  /// change to the three constituent constants above automatically flows through here — no
+  /// separate value to keep in sync.
+  static const double barHeight = _barTopPadding + _iconSize + _barBottomPadding;
+
   const LiveBottomBarView({
     super.key,
     required this.theme,
@@ -171,6 +219,8 @@ class LiveBottomBarView extends StatelessWidget {
     this.bagOnly = false,
     this.isFinishedLiveReplay = false,
     this.liked = false,
+    this.subtitleEnabled = false,
+    this.subtitleAvailable = true,
     this.onBag,
     this.onComment,
     this.onNickname,
@@ -281,11 +331,11 @@ class LiveBottomBarView extends StatelessWidget {
                   onTap: onShare,
                   child: ShareGlyph(color: Colors.white, size: _iconGlyphSize),
                 ),
-              LiveBottomBarTrailingActionKind.cc => _IconButton(
-                  key: LbTestKeys.liveCC,
-                  tint: Colors.white,
+              LiveBottomBarTrailingActionKind.cc => _CcTrailingButton(
+                  theme: theme,
+                  subtitleAvailable: subtitleAvailable,
+                  subtitleEnabled: subtitleEnabled,
                   onTap: onToggleCC,
-                  child: CcGlyph(color: Colors.white, size: _iconGlyphSize),
                 ),
             },
             const SizedBox(width: _barGap),
@@ -552,7 +602,22 @@ class _IconButton extends StatelessWidget {
   /// (rb-flutter-share-icon-design-align). Exactly one of [icon] / [child] is provided.
   final Widget? child;
 
-  const _IconButton({super.key, this.icon, required this.tint, this.onTap, this.child});
+  /// Optional background-color override (rb-flutter-live-bottom-bar-cc-icon-active-fill-state).
+  /// `null` (default) → the existing translucent-dark [_iconButtonBackground] — every pre-existing
+  /// call site (nickname / more / share / like) omits this and is unaffected. Non-`null` → used
+  /// verbatim as the round container's fill; currently only the CC trailing-slot branch's active
+  /// state passes `Colors.white` here. Distinct from [tint], which colors the [icon] / [child]
+  /// glyph, not the container behind it.
+  final Color? background;
+
+  const _IconButton({
+    super.key,
+    this.icon,
+    required this.tint,
+    this.onTap,
+    this.child,
+    this.background,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -563,12 +628,201 @@ class _IconButton extends StatelessWidget {
         width: _iconSize,
         height: _iconSize,
         alignment: Alignment.center,
-        decoration: const BoxDecoration(
-          color: _iconButtonBackground,
+        decoration: BoxDecoration(
+          color: background ?? _iconButtonBackground,
           shape: BoxShape.circle,
         ),
         child: child ?? Icon(icon, size: _iconGlyphSize, color: tint),
       ),
+    );
+  }
+}
+
+// MARK: - CC trailing button (R42, `rb-flutter-cc-icon-availability-redesign`)
+
+/// Generous fixed estimate of the CC-unavailable tooltip bubble's rendered width (11-glyph CJK
+/// string `未提供字幕/隱藏式輔助字幕` @ fontSize 12.5, `FontWeight.w600`, plus the bubble's 9+9
+/// horizontal padding — see `cc_unavailable_tooltip.dart`), used by
+/// [_CcTrailingButtonState._resolveHorizontalShift] (`rb-flutter-cc-tooltip-viewport-clamp`). The
+/// bubble's text is a FIXED design-literal (never host-supplied), so a static estimate is safe
+/// here — measuring it live via `TextPainter` on every tap would buy little accuracy (CJK glyph
+/// advance widths barely vary across the fallback fonts this SDK ships with) for a real cost
+/// (a text-layout call per tap, and divergent metrics between the headless test environment's
+/// CJK tofu fallback and a real device's fonts).
+const double _ccTooltipBubbleWidthEstimate = 190;
+
+/// Minimum breathing room (px) kept between the tooltip bubble and the viewport edge
+/// (`rb-flutter-cc-tooltip-viewport-clamp`).
+const double _ccTooltipEdgeMargin = 8.0;
+
+/// The `isFinishedLiveReplay` trailing-slot CC toggle. Reproduces [_IconButton]'s chrome (36×36
+/// round icon button) but owns its own tap handling — [subtitleAvailable] `false` shows a
+/// short-lived [CcUnavailableTooltip] INSTEAD of forwarding [onTap] (1.8s auto-hide, same local
+/// `Timer` convention as `operation_rail.dart`'s `_CcPillButton` / `product_sheets_view.dart`'s
+/// cart toast). Three [CcGlyphState]s, parity `_CcPillButton`:
+///
+///   • [subtitleAvailable] `true` + [subtitleEnabled] `true`  → `CcGlyphState.on`  (white
+///     background + `theme.accent` glyph, rb-flutter-live-bottom-bar-cc-icon-active-fill-state).
+///   • [subtitleAvailable] `true` + [subtitleEnabled] `false` → `CcGlyphState.off` (existing
+///     translucent-dark background + white glyph).
+///   • [subtitleAvailable] `false` (any [subtitleEnabled])    → `CcGlyphState.unavailable` (fixed
+///     grey glyph, translucent-dark background — NEVER the white "active" style).
+class _CcTrailingButton extends StatefulWidget {
+  final ReferenceUITheme theme;
+  final bool subtitleAvailable;
+  final bool subtitleEnabled;
+  final VoidCallback? onTap;
+
+  const _CcTrailingButton({
+    required this.theme,
+    required this.subtitleAvailable,
+    required this.subtitleEnabled,
+    this.onTap,
+  });
+
+  @override
+  State<_CcTrailingButton> createState() => _CcTrailingButtonState();
+}
+
+class _CcTrailingButtonState extends State<_CcTrailingButton> {
+  bool _showTip = false;
+  Timer? _tipTimer;
+
+  /// Horizontal correction (px) applied on top of the tooltip's existing `Align.center`
+  /// (`rb-flutter-cc-tooltip-viewport-clamp`). `0` in the common case (button not near a screen
+  /// edge) — see [_resolveHorizontalShift].
+  double _horizontalShift = 0;
+
+  @override
+  void dispose() {
+    _tipTimer?.cancel();
+    super.dispose();
+  }
+
+  void _handleTap() {
+    if (widget.subtitleAvailable) {
+      widget.onTap?.call();
+      return;
+    }
+    _tipTimer?.cancel();
+    setState(() {
+      _horizontalShift = _resolveHorizontalShift();
+      _showTip = true;
+    });
+    _tipTimer = Timer(const Duration(milliseconds: 1800), () {
+      if (mounted) setState(() => _showTip = false);
+    });
+  }
+
+  /// Reads this button's own on-screen center X — already laid out by the time a tap is
+  /// delivered, so `context.findRenderObject()` is safe to call synchronously here — plus the
+  /// ambient viewport width, and returns how far the tooltip bubble (normally centered exactly
+  /// on this button) must shift so it stays fully on-screen (`rb-flutter-cc-tooltip-viewport-
+  /// clamp`). Returns `0` (falls back to the pre-existing centered behavior, never throws) when
+  /// there is no render box / no ambient `MediaQuery` — defensive; should not happen from a tap
+  /// handler in practice.
+  double _resolveHorizontalShift() {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return 0;
+    final viewportWidth = MediaQuery.maybeSizeOf(context)?.width;
+    if (viewportWidth == null) return 0;
+    final anchorCenterX = box.localToGlobal(Offset(box.size.width / 2, 0)).dx;
+    final clampedCenterX = clampCcTooltipCenterX(
+      viewportWidth: viewportWidth,
+      desiredCenterX: anchorCenterX,
+      bubbleWidth: _ccTooltipBubbleWidthEstimate,
+      edgeMargin: _ccTooltipEdgeMargin,
+    );
+    return clampedCenterX - anchorCenterX;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final active = widget.subtitleAvailable && widget.subtitleEnabled;
+    final state = !widget.subtitleAvailable
+        ? CcGlyphState.unavailable
+        : (widget.subtitleEnabled ? CcGlyphState.on : CcGlyphState.off);
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        _IconButton(
+          key: LbTestKeys.liveCC,
+          tint: active ? widget.theme.accent : Colors.white,
+          background: active ? Colors.white : null,
+          onTap: _handleTap,
+          child: CcGlyph(
+            state: state,
+            color: active ? widget.theme.accent : Colors.white,
+            size: _iconGlyphSize,
+          ),
+        ),
+        // Design `placement="top"` (`LBPTooltip show={ccTip} placement="top" ...`) — the bubble
+        // sits ABOVE the button. `Transform.translate` layers the viewport-edge clamp on top of
+        // the existing `Align.center` (`rb-flutter-cc-tooltip-viewport-clamp`) — `_horizontalShift`
+        // is `0` in the common case, so this is a no-op there. `arrowOffset` is the arrow's OWN
+        // independent compensation (`rb-flutter-cc-tooltip-arrow-anchor-fix`) — without it, the
+        // arrow would move WITH the bubble under this same `_horizontalShift` and stop pointing
+        // at the real button whenever the clamp engages.
+        Positioned(
+          bottom: _iconSize + 8,
+          left: 0,
+          right: 0,
+          child: Align(
+            alignment: Alignment.center,
+            // rb-flutter-cc-tooltip-bubble-width-clip-fix: `Positioned(left: 0, right: 0)` above
+            // ties this slot's width to the SURROUNDING `Stack`'s own size — which, since the
+            // Stack's only non-positioned child is the 36×36 `_IconButton`, is 36px. `Align`'s
+            // `constraints.loosen()` only relaxes the MINIMUM, never the maximum, so without this
+            // `OverflowBox` every descendant below (including the tooltip bubble `Text`) is
+            // capped at 36px wide — far narrower than the fixed design-literal copy「未提供字幕/
+            // 隱藏式輔助字幕」needs (~190px, `_ccTooltipBubbleWidthEstimate` below), silently
+            // clipping it (`Text`'s default `TextOverflow.clip`) down to a couple of glyphs.
+            // `OverflowBox(minWidth: 0, maxWidth: double.infinity)` makes this slot ignore that
+            // imposed max-width, letting the subtree lay out at its own natural width while
+            // staying centered within (and overflowing past, matching the existing
+            // `Stack(clipBehavior: Clip.none)`) the 36px slot — WITHOUT the debug
+            // yellow/black overflow-indicator warning `UnconstrainedBox` would paint here
+            // (`RenderConstraintsTransformBox.paint()`, `clipBehavior: Clip.none` default, flags
+            // ANY child overflow as an error condition — the wrong tool for an INTENTIONAL
+            // overflow like this one; `RenderConstrainedOverflowBox`, which backs `OverflowBox`,
+            // has no such warning — it is the framework's purpose-built "let this child overflow
+            // on purpose" primitive). Purely a width fix — the `Positioned`/`Align` structure, the
+            // `bottom:` vertical offset, and the existing `_horizontalShift` (rb-flutter-cc-
+            // tooltip-viewport-clamp) / `arrowOffset` (rb-flutter-cc-tooltip-arrow-anchor-fix)
+            // math below are all untouched: both read this button's own `Stack` size (fixed
+            // 36×36, governed solely by the non-positioned `_IconButton`) and pure constants,
+            // never the tooltip subtree's own rendered width, so neither has any data dependency
+            // on this change.
+            child: OverflowBox(
+              minWidth: 0,
+              maxWidth: double.infinity,
+              // `fit: deferToChild` (NOT the `OverflowBox` default `.max`): `.max` reports this
+              // box's OWN size back to `Align` as `constraints.biggest` — since the INCOMING
+              // height constraint here is unbounded (`Positioned` above sets only `bottom:`, never
+              // `top:`), that is a LITERAL infinite height, which crashes `Align`'s own
+              // shrink-wrap-the-unbounded-axis sizing upstream (`RenderPositionedBox` ends up
+              // `Size(36, Infinity)`, then `RenderStack`'s `bottom:` placement math on a
+              // Positioned with an infinite-size child produces `NaN`). `deferToChild` instead
+              // reports `constraints.constrain(child.size)` — the actual (finite) child size,
+              // clamped into this box's own incoming constraints (36 tight width, unbounded
+              // height) — i.e. width stays reported as 36 (unchanged from pre-fix), height
+              // reports the tooltip's real (finite) height. The child itself is still laid out
+              // and PAINTED at its full natural (wider) size via `alignChild()`'s centering — only
+              // the size reported UPWARD changes, not what actually renders.
+              fit: OverflowBoxFit.deferToChild,
+              child: Transform.translate(
+                offset: Offset(_horizontalShift, 0),
+                child: CcUnavailableTooltip(
+                  show: _showTip,
+                  placement: CcTooltipPlacement.top,
+                  arrowOffset: arrowCompensationOffset(_horizontalShift),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

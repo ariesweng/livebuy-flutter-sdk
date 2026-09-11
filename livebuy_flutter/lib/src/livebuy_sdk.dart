@@ -24,6 +24,14 @@ class LivebuySDK {
   /// (`flutter-player-direct-close-button-default-true`).
   static bool _enableDirectCloseButton = true;
 
+  /// Dart-only backing store for [currentShopId]
+  /// (`flutter-live-now-pill-auto-shopid-turnkey-core`). Unlike
+  /// [_enableDirectCloseButton], the underlying `shopId` value IS still sent
+  /// over the `tv.livebuy/sdk` method channel — this field is a parallel
+  /// Dart-side cache of the same value, not a replacement for the existing
+  /// native forward. `null` before [configure] has ever been called.
+  static String? _currentShopId;
+
   // MARK: - Configure
 
   /// Initialize the SDK. Must be called once at App launch.
@@ -40,6 +48,15 @@ class LivebuySDK {
     // is a host UI preference, not part of "is the SDK configured" state, and
     // is NEVER forwarded to native (see [enableDirectCloseButton] doc).
     _enableDirectCloseButton = options.enableDirectCloseButton;
+    // flutter-live-now-pill-auto-shopid-turnkey-core: cache the shopId this
+    // call was made with, synchronously and unconditionally, before the
+    // round-trip below — so a host reading [currentShopId] back sees the
+    // value it just attempted to configure with even if the round-trip
+    // itself throws `NOT_CONFIGURED` on an HMAC failure. This does NOT
+    // change or replace the existing native forward of `shopId` below — it
+    // is a parallel Dart-side echo of the same input value (see
+    // [currentShopId] doc).
+    _currentShopId = options.shopId;
     await _channel.invokeMethod('configure', {
       'apiKey': options.apiKey,
       'secret': options.secret,
@@ -74,6 +91,36 @@ class LivebuySDK {
   @visibleForTesting
   static void resetEnableDirectCloseButtonForTesting() {
     _enableDirectCloseButton = true;
+  }
+
+  // MARK: - shopId readback (flutter-live-now-pill-auto-shopid-turnkey-core, Dart-only)
+
+  /// Read back the `shopId` last passed to [configure]
+  /// (`flutter-live-now-pill-auto-shopid-turnkey-core`). Mirrors
+  /// [enableDirectCloseButton]'s Dart-only-cache pattern — a pure,
+  /// synchronous, side-effect-free value captured at [configure] call time,
+  /// no method-channel round-trip. `null` before [configure] has ever been
+  /// called.
+  ///
+  /// Unlike [enableDirectCloseButton] (a Dart-only host UI preference that is
+  /// NEVER sent to native), the underlying `shopId` value here still IS
+  /// forwarded to native on every [configure] call exactly as before — this
+  /// getter is a parallel Dart-side echo of that same input, not a
+  /// replacement for it. It reflects whatever [configure] was last called
+  /// with even if that call subsequently threw `NOT_CONFIGURED` on an HMAC
+  /// failure, since the cached value is just an echo of the caller's own
+  /// input, not a claim that configuration succeeded.
+  ///
+  /// Lets a reference-ui drop-in surface (e.g. `LivebuyPlayerConfig`'s
+  /// 「現正直播」pill) default to the configured shop instead of requiring
+  /// the host to re-supply a value it already gave [configure].
+  static String? get currentShopId => _currentShopId;
+
+  /// Test-only. Resets [currentShopId] back to its `null` default.
+  /// Production code never calls this.
+  @visibleForTesting
+  static void resetCurrentShopIdForTesting() {
+    _currentShopId = null;
   }
 
   // MARK: - Conversion attribution (opt-in, conversion-attribution-context)

@@ -66,7 +66,13 @@ class LBFeedItem {
   /// Backend pre-composed, already-i18n'd string. Single field by contract.
   final String text;
 
-  /// Chat author display name; non-null only for chat items.
+  /// Chat author display name; non-null for chat items. Also non-null, when
+  /// supplied, for event-join items (`event-join-streamer-name-template-flutter`)
+  /// — the STREAMER name carried on that specific push message (`push.name`),
+  /// MUST NOT be confused with the channel-level shared `hostName`
+  /// (`channel.shop.name`, the shop name). `null` when the source push message
+  /// did not carry a name; display fallback for that case is a host/reference-ui
+  /// decision, not this layer's concern.
   final String? userName;
 
   /// Winner payload; non-null only for win-tier activity items.
@@ -164,11 +170,16 @@ class LBFeedItem {
       LBFeedItem._(kind: LBFeedKind.productSale, text: name, price: price);
 
   /// Build an event-join item (core event-begin push). [joined] starts false.
+  /// [userName] (`event-join-streamer-name-template-flutter`) is the STREAMER
+  /// name carried on this specific push message (`push.name`), optional
+  /// (`null` when the source message did not carry one) — MUST NOT be
+  /// confused with the channel-level shared `hostName`.
   factory LBFeedItem.eventJoin({
     required int eid,
     required String keyword,
     String text = '',
     bool joined = false,
+    String? userName,
   }) =>
       LBFeedItem._(
         kind: LBFeedKind.eventJoin,
@@ -176,6 +187,7 @@ class LBFeedItem {
         eid: eid,
         keyword: keyword,
         joined: joined,
+        userName: userName,
       );
 
   bool get isActivity => kind == LBFeedKind.activity;
@@ -367,8 +379,18 @@ class DefaultActivityFeed extends ChangeNotifier {
   /// draws `LBEventJoinLine`). `joined` starts false. Always merged (it derives
   /// from a chat push, not an activity notice). event-END pushes MUST NOT reach
   /// here — they stay plain chat rows (see `DefaultPlayerTemplate.handlePush`).
-  void onEventJoin({required int eid, required String keyword, String text = ''}) =>
-      _append(LBFeedItem.eventJoin(eid: eid, keyword: keyword, text: text));
+  /// [userName] (`event-join-streamer-name-template-flutter`) is the STREAMER
+  /// name carried on this specific push message (optional, `null` when the
+  /// source message did not carry one) — MUST NOT be the channel-level shared
+  /// `hostName`.
+  void onEventJoin({
+    required int eid,
+    required String keyword,
+    String text = '',
+    String? userName,
+  }) =>
+      _append(LBFeedItem.eventJoin(
+          eid: eid, keyword: keyword, text: text, userName: userName));
 
   /// Template-optimistic join mark: flip every still-unjoined event-join item
   /// for [eid] to `joined = true`. Fires one coalesced notification iff anything
@@ -442,6 +464,24 @@ class DefaultActivityFeed extends ChangeNotifier {
   /// one change notification so a bound host re-reads the now-empty [items] (D1).
   void clear() {
     _items.clear();
+    _recentSignatures.clear();
+    notifyListeners();
+  }
+
+  /// Restore a previously-saved history buffer (chat-history-video-switch-cache-flutter) —
+  /// REPLACES the whole buffer with [items] instead of clearing to empty. Used when an in-place
+  /// video switch (`DefaultPlayerTemplate.handleVideoSwitch`) lands on a videoId this session
+  /// already visited: restoring its last-known history rather than showing an empty feed until
+  /// new messages happen to trickle in (design.md D1 — the caller pairs this with restoring
+  /// `_seenPushIds` so the push-id de-dup bookkeeping and the visible history stay consistent as
+  /// one atomic unit). [items] is re-trimmed via the existing [trimmedByType] (this instance's
+  /// current [chatRetain]/[activityRetain] caps) rather than assumed pre-trimmed, so a restore is
+  /// safe even if the saving instance used different caps. Fires ONE coalesced notification
+  /// (parity [clear] / [_append]).
+  void restore(List<LBFeedItem> items) {
+    _items
+      ..clear()
+      ..addAll(trimmedByType(items, chatRetain, activityRetain));
     _recentSignatures.clear();
     notifyListeners();
   }

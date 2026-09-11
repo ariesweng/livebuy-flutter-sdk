@@ -1,5 +1,10 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
+// `PlatformViewHitTestBehavior` (used by the Hybrid Composition
+// `AndroidViewSurface` mount below) lives in `rendering/platform_view.dart`,
+// which `package:flutter/widgets.dart` does NOT re-export unqualified.
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'models.dart';
@@ -305,8 +310,65 @@ class EndScreenController {
 
 // MARK: - Controller
 
+/// Pure trigger logic for the per-instance instantiation hook
+/// (flutter-player-instantiation-hook-core). Extracted out of
+/// `_LivebuyPlayerCoreState._onPlatformViewCreated` as a standalone function
+/// (rather than inlined) so it can be unit tested WITHOUT a real platform
+/// view — `_onPlatformViewCreated` itself is unreachable from this repo's
+/// test target (`PlatformViewsService` is unavailable in unit tests, the
+/// same constraint documented on [LivebuyPlayerController.attachForTesting]).
+///
+/// Fires [LivebuyPlayerController.onInstantiate] with [controller] iff
+/// [controller] is non-null (design.md D3 — no hook without a host-supplied
+/// controller); a no-op otherwise. Also a no-op when no hook is registered.
+void _fireInstantiationHook(LivebuyPlayerController? controller) {
+  if (controller != null) {
+    LivebuyPlayerController.onInstantiate?.call(controller);
+  }
+}
+
+/// Test-only accessor for [_fireInstantiationHook] (the per-instance
+/// instantiation-hook trigger used by `LivebuyPlayerCore`'s
+/// `_onPlatformViewCreated`). Per `docs/unit-test-discipline.md` `*ForTesting`
+/// naming; not part of the public API.
+@visibleForTesting
+void fireInstantiationHookForTesting(LivebuyPlayerController? controller) =>
+    _fireInstantiationHook(controller);
+
 class LivebuyPlayerController {
   MethodChannel? _channel;
+
+  /// Template-agnostic per-instance instantiation hook
+  /// (flutter-player-instantiation-hook-core; parity iOS
+  /// `LivebuyPlayerViewController.onInstantiate` / Android
+  /// `LivebuyPlayerView.onInstantiate`, capability `ui-attach-hook`).
+  ///
+  /// Unlike iOS/Android — whose `onInstantiate` fires on the native `self`
+  /// instance and is unreachable from Dart — this is a Dart-side hook for
+  /// Flutter's Player only. It fires exactly ONCE for each new native Player
+  /// platform view (`LivebuyPlayerCore`'s `_onPlatformViewCreated`), right
+  /// after this controller has been attached to that instance's per-view
+  /// method channel (so `play()` / `isMuted()` / etc. already round-trip),
+  /// and is called with THAT instance's controller.
+  ///
+  /// Single-owner (later assignment replaces the prior one) — same convention
+  /// as the native `onInstantiate` fields. Default `null`; unset ⇒ zero
+  /// behavior change (headless).
+  ///
+  /// Does NOT fire for a `LivebuyPlayerCore` built WITHOUT a `controller`
+  /// (`controller: null`) — Flutter has no "instance exists even without a
+  /// host-supplied controller" object to hand to the hook (design.md D3).
+  /// Does NOT re-fire on an in-place video switch (`didUpdateWidget` /
+  /// `videoId` change) — this hook is per NEW native instance, not per load.
+  /// Coexists with, and does NOT replace or affect, the existing
+  /// `LivebuySDK.setListener(...)` unified event-channel subscription
+  /// mechanism (`flutter-ui`'s `TemplateAttachment`). Scoped to Player only —
+  /// `LivebuyWidgetCore` / `LivebuyFloatingWidget` are NOT covered.
+  ///
+  /// No production consumer wires this yet — this change only builds the
+  /// mechanism; consuming it (e.g. to seed a mute-icon from `isMuted()`) is
+  /// deferred to an independent Flutter template-layer change.
+  static void Function(LivebuyPlayerController controller)? onInstantiate;
 
   // Sub-component controllers (expand-simulate-bridge-parity)
   final chatView = ChatViewController();
@@ -339,6 +401,36 @@ class LivebuyPlayerController {
   Future<void> play() => _invoke('play');
   Future<void> pause() => _invoke('pause');
   Future<void> setMuted(bool muted) => _invoke('setMuted', {'muted': muted});
+
+  /// Query the native player's actual CURRENT mute state
+  /// (mute-preference-persist-across-session-flutter-core; parity iOS
+  /// `LivebuyPlayerViewController.isMuted` / Android `LivebuyPlayerView.isMuted`,
+  /// both already-public read-only `Bool`/`Boolean` getters added by the sibling
+  /// core changes `mute-preference-persist-across-session-{ios,android}-core`).
+  ///
+  /// Lets a host / future template-layer consumer seed its own presentation
+  /// `muted` icon from the REAL native state instead of a hardcoded default —
+  /// e.g. right after a new player instance's platform view is created, which
+  /// may have inherited a non-default app-session mute preference via the
+  /// native `MutePreferenceStore` (see the core spec's "主播放靜音偏好於 App
+  /// Session 內跨 Player Instance 沿用" requirement). No production call site
+  /// invokes this yet — Flutter's `flutter-ui` template attach seed is a
+  /// process-wide singleton that does not re-run per player instance; wiring
+  /// a consumer is deferred to an independent Flutter template change.
+  ///
+  /// Not attached (`_channel == null`), or a native response that is not a
+  /// `bool`, resolves to `false` — same best-effort fallback posture as
+  /// [OperationPanelController]'s `_invokeBool` ("not attached → false",
+  /// never throws) and [activeEvents]'s "not attached → []". Deliberately
+  /// uses an UNTYPED `invokeMethod` (like [activeEvents], NOT
+  /// `_invokeBool`'s `invokeMethod<bool>`) + a manual `is bool` check —
+  /// `invokeMethod<T>` performs a hard `as T?` cast internally that THROWS
+  /// (not resolves to `null`) for a genuinely non-bool response, which would
+  /// contradict the "never throws" contract above.
+  Future<bool> isMuted() async {
+    final raw = await _channel?.invokeMethod('isMuted');
+    return raw is bool ? raw : false;
+  }
 
   /// Absolute seek (VOD-1; parity iOS `Player.seek(seconds:)` / Android
   /// `LivebuyPlayerView.seek(seconds:)`).
@@ -788,7 +880,11 @@ class _LivebuyPlayerCoreState extends State<LivebuyPlayerCore> {
 
   void _onPlatformViewCreated(int id) {
     _methodChannel = MethodChannel('tv.livebuy/player_$id');
-    widget.controller?._attach(_methodChannel);
+    final controller = widget.controller;
+    controller?._attach(_methodChannel);
+    // flutter-player-instantiation-hook-core: fire the Dart-side per-instance
+    // hook right after attach (so the controller can already round-trip).
+    _fireInstantiationHook(controller);
     _methodChannel.invokeMethod('load', {'videoId': widget.videoId});
   }
 
@@ -862,11 +958,44 @@ class _LivebuyPlayerCoreState extends State<LivebuyPlayerCore> {
     };
 
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return AndroidView(
+      // flutter-android-player-hybrid-composition: explicit Hybrid Composition
+      // (NOT the bare `AndroidView(...)` constructor, which leaves the engine
+      // to pick its own default composition mode). A genuinely-live channel's
+      // native `SurfaceView` (AWS IVS Player, android-ivs-player-live-engine-
+      // core) has been confirmed on-device to visually paint over every
+      // Flutter-drawn overlay (header / rail / sheets) under the engine's
+      // default Texture Layer Hybrid Composition on some device/GPU
+      // combinations — hit-testing still routes correctly (only the pixels
+      // are wrong). Hybrid Composition inserts this platform view directly
+      // into the real Android view hierarchy so the OS resolves `SurfaceView`
+      // z-order the same way it does for a normal (non-Flutter) app. See
+      // design.md Decision 1. `creationParams` / `creationParamsCodec` /
+      // `_onPlatformViewCreated` are forwarded unchanged. Scoped to THIS
+      // view only (`LivebuyPlayerCore`) — `LivebuyWidgetCore` /
+      // `LivebuyFloatingWidget` below keep the existing `AndroidView(...)`
+      // mount (see design.md Non-Goals: unverified on those surfaces).
+      return PlatformViewLink(
         viewType: viewType,
-        onPlatformViewCreated: _onPlatformViewCreated,
-        creationParams: creationParams,
-        creationParamsCodec: const StandardMessageCodec(),
+        surfaceFactory: (context, controller) {
+          return AndroidViewSurface(
+            controller: controller as AndroidViewController,
+            gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
+            hitTestBehavior: PlatformViewHitTestBehavior.opaque,
+          );
+        },
+        onCreatePlatformView: (params) {
+          return PlatformViewsService.initExpensiveAndroidView(
+            id: params.id,
+            viewType: viewType,
+            layoutDirection: TextDirection.ltr,
+            creationParams: creationParams,
+            creationParamsCodec: const StandardMessageCodec(),
+            onFocus: () => params.onFocusChanged(true),
+          )
+            ..addOnPlatformViewCreatedListener(params.onPlatformViewCreated)
+            ..addOnPlatformViewCreatedListener(_onPlatformViewCreated)
+            ..create();
+        },
       );
     }
     return UiKitView(

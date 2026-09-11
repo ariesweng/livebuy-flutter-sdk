@@ -8,6 +8,7 @@ import '../productsheets/product_status_badge.dart';
 import '../productsheets/sheet_scaffold.dart' show liveProductImage;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import 'megaphone_glyph.dart';
 import 'now_introducing_carousel.dart' show PageDots;
 
 /// Horizontal swipe velocity (px/s) that commits a pinned-card page flip (parity now-introducing).
@@ -61,9 +62,10 @@ const double _pinnedSwipeVelocity = 80;
 // SNAPSHOT DETERMINISM (parity to the iOS "no ScrollView/Lazy" rule + the Roborazzi
 // gotchas): plain `Stack` / `Column` / `Row` only — NO `ListView` / `GridView` /
 // `SingleChildScrollView`, NO network image (`Image.network` / `NetworkImage`). The
-// announce copy renders as a single-line truncated `Text` (the iOS `MarqueeText`
-// first frame is offset 0, so the static truncated line IS the deterministic
-// baseline — no animation state here). No randomness.
+// announce copy renders as an up-to-two-line truncated `Text` (rb-flutter-live-
+// announce-two-line-clearance-fix; the iOS `MarqueeText` first frame is offset 0,
+// so the static truncated lines ARE the deterministic baseline — no animation
+// state here). No randomness.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The family-1 LIVE overlay chrome surface. Paints the announcement banner,
@@ -161,6 +163,14 @@ class LiveOverlayChromeView extends StatelessWidget {
   /// doc comment for why the two are semantically distinct).
   final bool autoFadeGestureHints;
 
+  /// Extra bottom padding applied to the announce-banner/pinned-card row (additive to the
+  /// existing `bottom: 64`), so `PlayerShellView` can lift them clear of the expanded playback-
+  /// progress transport bar during its ~2.8s post-release hold window (`scrubBarExpanded &&
+  /// !isScrubbing`) — rb-flutter-scrub-expanded-chrome-lift, parity iOS `LiveOverlayChromeView
+  /// .bottomInset` / Android `LiveOverlayChrome`'s own `bottomInset: Dp`. Default `0` → every
+  /// existing call site / golden baseline is byte-identical.
+  final double bottomInset;
+
   const LiveOverlayChromeView({
     super.key,
     required this.theme,
@@ -174,6 +184,7 @@ class LiveOverlayChromeView extends StatelessWidget {
     this.onTapAnnounce,
     this.isLive = true,
     this.autoFadeGestureHints = false,
+    this.bottomInset = 0,
   });
 
   @override
@@ -222,7 +233,9 @@ class LiveOverlayChromeView extends StatelessWidget {
         Align(
           alignment: Alignment.bottomCenter,
           child: Padding(
-            padding: const EdgeInsets.only(left: 8, right: 10, bottom: 64),
+            // bottom: 64 base + bottomInset (rb-flutter-scrub-expanded-chrome-lift; default 0 →
+            // byte-identical to the prior `const` padding).
+            padding: EdgeInsets.only(left: 8, right: 10, bottom: 64 + bottomInset),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -254,11 +267,12 @@ class LiveOverlayChromeView extends StatelessWidget {
   // ── LBLiveAnnounce — announcement banner ─────────────────────────────────
 
   /// Bottom-left translucent-dark-glass announcement banner with a red icon badge
-  /// and single-line truncated copy. Mirrors `LBLiveAnnounce` (`rgba(0,0,0,0.42)`
+  /// and up-to-two-line truncated copy (rb-flutter-live-announce-two-line-
+  /// clearance-fix). Mirrors `LBLiveAnnounce` (`rgba(0,0,0,0.42)`
   /// bg, `#F03246` icon badge, white text — 2026-09-03 design recolor,
   /// `design/contract/claude-design-sync.md` R30; was yellow `#FFE08A` bg / dark
   /// `#15131A` text). The iOS `MarqueeText` first frame is offset 0 — the static
-  /// truncated line is the deterministic baseline (no animation here).
+  /// truncated lines are the deterministic baseline (no animation here).
   Widget _announceBanner() {
     return Container(
       // design LBLiveAnnounce left:8 right:120 on the 393 frame = 393 − 8 − 120 = 265
@@ -282,14 +296,20 @@ class LiveOverlayChromeView extends StatelessWidget {
               borderRadius: BorderRadius.circular(5),
             ),
             alignment: Alignment.center,
-            child: const Icon(Icons.campaign, size: 13, color: Colors.white),
+            // rb-flutter-live-announce-bullhorn-icon: self-drawn FontAwesome bullhorn vector
+            // path (design `Icons.megaphone`), replacing Material `Icons.campaign`.
+            child: const MegaphoneGlyph(color: Colors.white, size: 13),
           ),
           const SizedBox(width: 8),
-          // Announce copy (single-line truncated — `LBPMarqueeText` static frame).
+          // Announce copy (rb-flutter-live-announce-two-line-clearance-fix: up to
+          // TWO lines, truncated with ellipsis beyond that — parity design
+          // `live-chrome.jsx` `WebkitLineClamp: 2` / iOS `.lineLimit(2)` / Android
+          // `maxLines = 2`. Was wrongly single-line here; `feed_win_view.dart`'s
+          // `_liveAnnounceClearance` is derived against this 2-line height).
           Flexible(
             child: Text(
               announceText,
-              maxLines: 1,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.start,
               style: TextStyle(
@@ -382,9 +402,22 @@ class LiveOverlayChromeView extends StatelessWidget {
                           mainAxisSize: MainAxisSize.max,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const EqualizerGlyph(size: 9, color: Color(0xFFFFFFFF)),
+                            // Unconditional `animate: true` (rb-flutter-equalizer-live-gate-
+                            // removal) — was `animate: isLive`, which froze the glyph static
+                            // for an already-finished live replay (isLive == false). This tag
+                            // only renders while the pinned card IS narrating, regardless of
+                            // live/replay, so it should always breathe — parity with iOS /
+                            // Android / RN, which never gated this on isLive to begin with.
+                            EqualizerGlyph(
+                                size: 9,
+                                color: const Color(0xFFFFFFFF),
+                                animate: true),
                             const SizedBox(width: 3),
                             Text(
+                              // 恆為「介紹中」——rb-flutter-flash-sale-live-signal-wiring
+                              // 原本讓本標籤依 isFlashSale 二選一顯示「開標中」，2026-09-09
+                              // 使用者拍板撤回（rb-flutter-narrating-banner-revert-flash-sale-
+                              // text），對應的 isFlashSale 建構參數已一併移除。
                               _narrateTagText,
                               maxLines: 1,
                               overflow: TextOverflow.clip,

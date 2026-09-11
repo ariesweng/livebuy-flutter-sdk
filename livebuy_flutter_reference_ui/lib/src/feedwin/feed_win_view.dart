@@ -13,21 +13,82 @@ import 'win_claim_sheet_view.dart';
 import 'win_entry_view.dart';
 
 // rb-flutter-live-announce-chat-clearance (問題4) — the merged chat feed and the bottom-left
-// LBLiveAnnounce 公告橫幅 share the LIVE overlay's bottom space. The base anchor (96) already clears
+// LBLiveAnnounce 公告橫幅 share the LIVE overlay's bottom space. The base anchor already clears
 // the LIVE bottom bar; when a 公告 is showing the chat lifts by the 公告橫幅's height so its lowest
 // rows don't overlap.
-/// Base chat-feed bottom anchor — clears the LIVE bottom bar (既有值，無公告時不變).
-const double _liveChatBaseClearance = 96;
+//
+// rb-flutter-live-chat-clearance-realign — the base anchor was originally `96` (an arbitrary
+// value that merely cleared the LIVE bottom bar, with no attempt to align with anything else on
+// screen). Two user-reported problems drove a full re-derivation (see the change's design.md
+// D1-D4 for the complete geometry):
+//   (1) with no 公告, the chat feed's bottom edge did NOT line up with the bottom-right pinned
+//       product card (`LBLivePinnedCard`, `live_overlay_chrome_view.dart`'s `bottom: 64`) — a
+//       ~32px gap that read as visually misaligned.
+//   (2) with a 公告 showing, the buffer above the banner (`8px`) was too subtle to register as a
+//       deliberate gap.
+/// Base chat-feed bottom anchor. `64` (rb-flutter-live-chat-clearance-realign, was `96`) —
+/// precisely matches the LIVE overlay's pinned product card `bottom: 64`
+/// (`live_overlay_chrome_view.dart:227`) so the two align on-screen. Verified safe against the
+/// LIVE bottom bar: `LiveBottomBarView`'s visible/interactive content (the icon row, height 36)
+/// occupies `bottom:16` to `bottom:52` (`_barBottomPadding(16)` + `_iconSize(36)`,
+/// `live_bottom_bar_view.dart`), so `64` still leaves a `12px` clearance above it — the SAME
+/// clearance the pinned product card itself already ships with (not a newly-invented margin).
+const double _liveChatBaseClearance = 64;
 
-/// Extra bottom inset for the LBLiveAnnounce 公告橫幅 height (parity iOS `liveAnnounceClearance = 44`).
-const double _liveAnnounceClearance = 44;
+// rb-flutter-live-announce-two-line-clearance-fix (superseded numerically by
+// rb-flutter-live-chat-clearance-realign below, mechanism unchanged) — `44` was a byte-for-byte
+// copy of iOS's OWN `liveAnnounceClearance` (itself derived against iOS's OWN base clearance,
+// `68`). Re-copying platform-literal constants across platforms with different base clearances
+// produces the wrong absolute on-screen position — `_liveAnnounceClearance` MUST always be
+// re-derived against Flutter's OWN `_liveChatBaseClearance`, never copied verbatim from another
+// platform.
+//
+// rb-flutter-live-chat-clearance-realign — re-derived again after `_liveChatBaseClearance`
+// changed above, AND the target buffer itself was widened (problem (2) above: `8px` read as too
+// subtle). The announce banner's absolute on-screen position is unaffected by either of these
+// constants (it is `live_overlay_chrome_view.dart`'s own fixed geometry): `bottom: 64` + 2-line-
+// text height `~40` puts its top edge at `~104`, unchanged by this change. New target: the chat
+// feed's bottom sits `16px` (doubled from `8px`) above that top edge, i.e. absolute `120`.
+// `_liveAnnounceClearance` is therefore `120 - 64 (new _liveChatBaseClearance) = 56`.
+/// Extra bottom inset for the LBLiveAnnounce 公告橫幅 height, recalibrated against Flutter's own
+/// `_liveChatBaseClearance` (see comment above — NOT parity-copied from another platform's
+/// literal value). `56` (rb-flutter-live-chat-clearance-realign, was `16`) — absolute target `120`
+/// = a `16px` buffer above the banner's `~104` top edge (doubled from the prior `8px`).
+const double _liveAnnounceClearance = 56;
+
+// rb-flutter-scrub-expanded-chrome-lift — a THIRD, independently-ANDed extra lift on top of the
+// `hasAnnounce` clearance above: while the playback-progress transport bar has reappeared during
+// its post-release hold window (`scrubBarExpanded && !isScrubbing`, mirrored container-side from
+// `PlayerShellView.onScrubBarExpandedChange` / `onScrubbingChange`), the chat feed lifts clear of
+// it — the SAME lift amount `PlayerShellView` already applies to the LIVE pinned card / announce
+// banner via `LiveOverlayChromeView.bottomInset` (that surface is composed BY `PlayerShellView`
+// itself, so it computes the lift locally; the chat feed is a SIBLING surface composed by the
+// container, so it needs this bubbled-then-forwarded value instead). Parity iOS
+// `MinimalDesign.scrubChromeLift` / Android `SCRUB_CHROME_LIFT` — both `36`.
+const double _scrubChromeLift = 36;
 
 /// The chat feed's bottom inset on the LIVE overlay. `hasAnnounce == false` → the base
-/// [_liveChatBaseClearance] (96, 既有 golden byte-identical); `true` → base + [_liveAnnounceClearance]
-/// (96 + 44 = 140) so the lowest chat rows clear the bottom-left 公告橫幅. Pure — exported for unit
-/// tests (parity iOS `liveChatBottomInset(hasAnnounce:)` 68/112 / RN 96/140).
-double liveChatBottomInset(bool hasAnnounce) =>
-    hasAnnounce ? _liveChatBaseClearance + _liveAnnounceClearance : _liveChatBaseClearance;
+/// [_liveChatBaseClearance] (`64`, aligned with the LIVE pinned product card's `bottom: 64`);
+/// `true` → base + [_liveAnnounceClearance] (`64 + 56 = 120`) so the lowest chat rows sit a
+/// clearly-perceptible `16px` above the bottom-left 公告橫幅. [scrubHoldLifted] (rb-flutter-
+/// scrub-expanded-chrome-lift, default `false` — every existing call site unaffected) ADDS
+/// [_scrubChromeLift] (`36`) on top of whichever of the two bases above applies, independently
+/// of [hasAnnounce] (both extra insets can stack). [safeAreaBottom] (fix-flutter-player-shell-
+/// bottom-safearea-gaps, default `0` — every existing call site / unit-test assertion
+/// byte-identical) is a THIRD, independently-stacking addend — the system bottom safe area
+/// (home indicator / Android gesture bar), mirrored container-side from `PlayerShellView`'s
+/// already-read `MediaQuery.of(context).padding.bottom` via the same bubbling pipeline
+/// [scrubHoldLifted] uses (the chat feed is a container-composed SIBLING surface, unlike
+/// `LiveOverlayChromeView.bottomInset`, which `PlayerShellView` computes and applies locally).
+/// Pure — exported for unit tests.
+double liveChatBottomInset(bool hasAnnounce,
+    {bool scrubHoldLifted = false, double safeAreaBottom = 0}) {
+  var inset =
+      hasAnnounce ? _liveChatBaseClearance + _liveAnnounceClearance : _liveChatBaseClearance;
+  if (scrubHoldLifted) inset += _scrubChromeLift;
+  inset += safeAreaBottom;
+  return inset;
+}
 
 /// The win entry's (`WinEntryView`, default `variant: win`) vertical anchor
 /// (rb-flutter-activity-entry-stack-reversal, R27 — reverses the stacking order
@@ -323,6 +384,40 @@ class FeedWinOverlayView extends StatefulWidget {
   /// site keeps rendering unchanged.
   final bool moreMenuOpen;
 
+  /// Whether the chat feed should lift an EXTRA [_scrubChromeLift] (`36`) on top of its normal
+  /// bottom inset, because the playback-progress transport bar has reappeared during its post-
+  /// release hold window (`scrubBarExpanded && !isScrubbing`) — bubbled through the container
+  /// (`PlayerShellView.onScrubBarExpandedChange`/`onScrubbingChange` →
+  /// `PlayerOverlayContext.scrubHoldLifted` → `MinimalDesign.playerOverlay` forward,
+  /// rb-flutter-scrub-expanded-chrome-lift, bubble pattern copied verbatim from [cleanMode] /
+  /// [moreMenuOpen] above). Unlike those two, this does NOT hide the widget — it only feeds
+  /// [liveChatBottomInset]'s `scrubHoldLifted` argument, so the chat stays visible but moves up.
+  /// Default `false` — every EXISTING call site keeps rendering at its unchanged bottom inset.
+  final bool scrubHoldLifted;
+
+  /// The system bottom safe area (home indicator / Android gesture bar), bubbled through the
+  /// SAME container pipeline as [scrubHoldLifted] (fix-flutter-player-shell-bottom-safearea-gaps)
+  /// — mirrors `PlayerShellView`'s already-read `MediaQuery.of(context).padding.bottom`. Feeds
+  /// [liveChatBottomInset]'s `safeAreaBottom` argument, independently stacking on top of
+  /// [scrubHoldLifted] and the `hasAnnounce` base. Default `0` — every EXISTING call site keeps
+  /// rendering at its unchanged bottom inset.
+  final double safeAreaBottom;
+
+  /// Whether the playback-progress transport bar is actively being dragged (NARROW active-drag
+  /// state, bubbled through the SAME container pipeline as [scrubHoldLifted] —
+  /// `PlayerShellView.onScrubbingChange` → container's raw mirror → `PlayerOverlayContext
+  /// .isScrubbing`, fix-flutter-scrub-hide-announce-chat-pinned). Hides the chat feed while
+  /// dragging (parity iOS `showsChatFeed: ... && !isScrubbingProgressBar` / Android
+  /// `chatFeedVisible(..., isScrubbing: ...)`), so it doesn't overlap the transport bar — the
+  /// SAME hide-during-drag treatment `PlayerShellView` already applies to the sibling announce
+  /// banner / pinned card (`LiveOverlayChromeView.announceText`/`.pinnedProducts`). Unlike
+  /// [scrubHoldLifted] (which only LIFTS the chat, never hides it), this actually drops the
+  /// widget during the active drag; once the finger lifts this flips back to `false` and the
+  /// chat reappears (then optionally lifted via [scrubHoldLifted] during the post-release hold
+  /// window — the two are independent and stack). Default `false` — every EXISTING call site
+  /// keeps rendering unaffected.
+  final bool isScrubbing;
+
   const FeedWinOverlayView({
     super.key,
     this.template,
@@ -336,6 +431,9 @@ class FeedWinOverlayView extends StatefulWidget {
     this.onSubmitClaim,
     this.cleanMode = false,
     this.moreMenuOpen = false,
+    this.scrubHoldLifted = false,
+    this.safeAreaBottom = 0,
+    this.isScrubbing = false,
   });
 
   @override
@@ -398,8 +496,12 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
     // Bind the relevant template ChangeNotifiers so a change re-reads the model.
     // With no live template (demo seeds) there is nothing to listen to — render the
     // seeds directly.
+    // `t.subtitle` (rb-flutter-caption-overlay-align-hide-chat) — `chatVisible` below now reads
+    // `subtitle.enabled`, so a runtime CC toggle MUST re-evaluate this build (parity the other
+    // three listenables already wired for their own live-updating concerns), not only settle on
+    // the next unrelated notify / a full template swap.
     final mergeable = <Listenable>[
-      if (t != null) ...[t.feed, t.winClaim, t.activeEvent],
+      if (t != null) ...[t.feed, t.winClaim, t.activeEvent, t.subtitle],
     ];
 
     Widget content = _buildContent(context);
@@ -428,11 +530,34 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
     // 隱藏粒度（ActivityToastView + ChatFeedView 一起隱藏；WinEntryView / WinClaimSheetView 不受影響）。
     // 「更多」選單開合（rb-flutter-live-more-sheet-above-chat）追加 `&& !widget.moreMenuOpen` ——
     // 冒泡自 `PlayerShellView._moreMenuOpen`，同一個隱藏粒度，避免其被聊天列遮蓋/吃點擊。
-    final chatVisible = ((widget.template?.header.isLive ?? false) ||
-            (widget.template?.header.isFinishedLiveReplay ?? false)) &&
+    //
+    // rb-flutter-caption-overlay-align-hide-chat 追加 `&& !(isFinishedLiveReplay &&
+    // subtitleEnabled)`（parity 設計稿 `screens.jsx` L571 `!ccOn` / L575-577：回放開字幕時聊天室讓位
+    // 給字幕疊層置中）。這個條件 MUST 只在 `isFinishedLiveReplay == true` 時才有機會生效——真直播
+    // （`isLive == true`）與 `isFinishedLiveReplay` 互斥，故此子句對真直播恆為 no-op，字幕開關 MUST NOT
+    // 影響真直播的聊天室可見性。
+    //
+    // rb-flutter-caption-chat-hide-availability-gate 再追加 `&& subtitleAvailable`：`subtitle.enabled`
+    // 依既有設計跨影片保留（`DefaultPlayerTemplate.handleSubtitleChannelInfo` 換片只更新
+    // `available`/`url`，不清除 `enabled`）。若使用者在有字幕的回放影片開了 CC 後切到沒字幕的回放
+    // 影片，CC 鈕會渲染成不可用且 tap 被短路成 tooltip（無法手動關閉），此時若只看 `subtitleEnabled`，
+    // 聊天室會在沒有任何字幕顯示的情況下永久隱藏。`subtitleAvailable` 預設 `true`（非 `false`）：
+    // unbound/demo 場景下 `subtitleEnabled` 本就預設 `false`，這個新增項在該路徑上恆為 no-op，用
+    // `true` 保證它不會在既有任何顯示聊天室的狀態下反過來造成隱藏。
+    //
+    // fix-flutter-scrub-hide-announce-chat-pinned 再追加 `&& !widget.isScrubbing`：拖曳播放進度條
+    // 期間隱藏聊天 feed（parity iOS `showsChatFeed: ... && !isScrubbingProgressBar` / Android
+    // `chatFeedVisible(..., isScrubbing: ...)`），跟既有的 `scrubHoldLifted`（只上移、不隱藏）是兩件
+    // 獨立的事——拖曳中先隱藏，放開後才重新出現並可能被上移。
+    final isFinishedLiveReplay = widget.template?.header.isFinishedLiveReplay ?? false;
+    final subtitleEnabled = widget.template?.subtitle.enabled ?? false;
+    final subtitleAvailable = widget.template?.subtitle.available ?? true;
+    final chatVisible = ((widget.template?.header.isLive ?? false) || isFinishedLiveReplay) &&
+        !(isFinishedLiveReplay && subtitleEnabled && subtitleAvailable) &&
         !widget.infoPanelOpen &&
         !widget.cleanMode &&
-        !widget.moreMenuOpen;
+        !widget.moreMenuOpen &&
+        !widget.isScrubbing;
 
     // rb-flutter-win-claim-pagination — re-derive Surface 3's presentation state every
     // render from `_openClaimWinner` (the captured identity, see its doc comment for why
@@ -471,14 +596,22 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
             child: Padding(
               // Right inset keeps the chat in the design's LEFT column (LBLiveChatOverlay
               // right:120) so it clears the side rail / floating bag / win entry (parity iOS).
-              // bottom: 動態避讓 — 有公告（m.hasAnnounce）時往上讓出 LBLiveAnnounce 橫幅高度（96→140,
-              // rb-flutter-live-announce-chat-clearance 問題4）；無公告 → 96（既有 baseline）。
+              // bottom: 動態避讓 — 有公告（m.hasAnnounce）時往上讓出 LBLiveAnnounce 橫幅高度（64→120,
+              // rb-flutter-live-announce-chat-clearance 問題4，數值由 rb-flutter-live-chat-
+              // clearance-realign 重新校準）；無公告 → 64（對齊置頂商品卡 bottom:64）。放開播放進度
+              // 條到 2.8 秒收回這段期間（widget.scrubHoldLifted，冒泡自 PlayerShellView 的 scrub 狀態）
+              // 再額外上推 36，讓重新出現的聊天避開仍展開的 transport bar
+              // （rb-flutter-scrub-expanded-chrome-lift，parity iOS/Android — 兩個額外避讓互相獨立、
+              // 可疊加）。系統底部安全區（widget.safeAreaBottom，冒泡自同一條 pipeline，fix-flutter-
+              // player-shell-bottom-safearea-gaps）再獨立疊加一次，補齊真機 home indicator 缺口。
               // left: 10 — 對齊 LIVE 底部 bar 購物袋鈕左側邊距（LiveBottomBarView._barHPadding = 10，
               // rb-flutter-live-chat-card-edge-align，parity iOS rb-ios-live-chat-card-edge-align；
               // 舊值 12 為既有平台間分歧，本次一併收斂）。
               padding: EdgeInsets.only(
                   left: 10,
-                  bottom: liveChatBottomInset(m.hasAnnounce),
+                  bottom: liveChatBottomInset(m.hasAnnounce,
+                      scrubHoldLifted: widget.scrubHoldLifted,
+                      safeAreaBottom: widget.safeAreaBottom),
                   right: widget.chatTrailingInset),
               // ActivityToastView (rb-flutter-activity-toast) sits ABOVE the chat stream,
               // both anchored together (Column, mainAxisSize.min) so they grow upward as a
@@ -496,8 +629,9 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
                   ChatFeedView(
                     theme: theme,
                     // Scrollable variant binds the deeper history (scroll up for history);
-                    // the ambient / golden path keeps the N=7 feedItems. The bottom:96 anchor
-                    // already clears the LIVE bottom bar (#2 satisfied by construction).
+                    // the ambient / golden path keeps the N=7 feedItems. The bottom:64 anchor
+                    // already clears the LIVE bottom bar with a 12px margin (#2 satisfied by
+                    // construction — see `_liveChatBaseClearance`'s doc comment).
                     items: widget.chatScrollable ? m.feedHistory : m.feedItems,
                     hostScrollable: widget.chatScrollable,
                     // rb-flutter-loading-announce-restyle — restyled eventJoin header 主播名.

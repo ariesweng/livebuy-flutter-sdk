@@ -342,6 +342,19 @@ class DefaultVariantPicker extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Host-dismiss clear for the picker state (flutter-product-sheet-stack-video-switch-reset-template
+  /// — parity RN `variantPicker.clear()`; no such call exists on Android's `clear()`, a known
+  /// gap tracked outside this change). Empties `groups` / `specifications` / `selection` — the
+  /// same end state as opening a product with no spec groups. Notifies iff it cleared something
+  /// (diff-then-notify, same idiom as [DefaultProductSheet.clearDetail]).
+  void clear() {
+    if (_groups.isEmpty && _specifications.isEmpty && _selection.isEmpty) return;
+    _groups = const [];
+    _specifications = const [];
+    _selection.clear();
+    notifyListeners();
+  }
+
   /// Host picked option [optionIndex] in group [groupIndex]. Updates selection
   /// and notifies (the resolved spec / id may change). Out-of-range indices are
   /// ignored (no notify).
@@ -552,6 +565,18 @@ class DefaultQtyStepper extends ChangeNotifier {
     final next = LBQtyState(qty: qty, min: min, max: max);
     if (next == _state) return;
     _state = next;
+    notifyListeners();
+  }
+
+  /// Host-dismiss clear for the qty-stepper state (flutter-product-sheet-stack-video-switch-reset-template
+  /// — parity Android `qtyStepper.clear()` / RN `qtyStepper.clear()`). Resets to
+  /// `{ qty: 0, min: 0, max: 0 }` — the same "no product open" state a fresh
+  /// [DefaultQtyStepper] starts in. Notifies iff it changed (diff-then-notify, same
+  /// idiom as [DefaultProductSheet.clearDetail]).
+  void clear() {
+    const empty = LBQtyState(qty: 0, min: 0, max: 0);
+    if (_state == empty) return;
+    _state = empty;
     notifyListeners();
   }
 

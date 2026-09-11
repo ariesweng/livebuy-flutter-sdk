@@ -282,7 +282,9 @@ class ProductSheetsOverlayView extends StatefulWidget {
   /// Host-wired 商品列表列**縮圖**點擊 → 影片跳轉到該商品介紹時間（`LBProduct.beginTime`）。
   /// 轉發給 `ProductListSheet.onSeekToIntro`（經 [_handleSeekToProductIntro] 包裝）；host 接到
   /// core `seek(beginTime)`（issue 5）。同一動作 SHALL 連動關閉商品列表抽屜
-  /// （rb-flutter-product-bag-seek-dismiss，見 [_handleSeekToProductIntro]）。Optional.
+  /// （rb-flutter-product-bag-seek-dismiss，見 [_handleSeekToProductIntro]）——**除了**進行中直播
+  /// （`rb-flutter-product-sheet-keep-open-on-live-seek`）：LIVE 模式下抽屜 SHALL 維持開啟，僅轉發
+  /// 這個 seek callback。Optional.
   final void Function(LBProduct product)? onSeekToProductIntro;
 
   /// Host-wired 商品列表列**分享鈕**點擊 → 系統分享，連結帶該商品介紹時間 `?t=beginTime`。
@@ -598,6 +600,10 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
               // ProductListSheet 回退 `live` 派生（golden byte-identical）；live-bound model 供應
               // 真實 mode + 播放秒數。
               mode: m.rowMode,
+              // 搶購中頻道每列名稱前標籤換「搶購中」（design R39,
+              // rb-flutter-flash-sale-live-signal-wiring) — 只在 mode == live 且未售罄時生效,
+              // 見 ProductRowNameTag.resolve.
+              isFlashSale: m.isFlashSale,
               playbackPosition: m.position.floor(),
               // 縮圖左上角編號徽章（design R35，rb-flutter-product-row-number-badge）——後端原始
               // （未依介紹中重排）順序清單，供每列算 1-based 編號；VOD（`mode ==
@@ -853,27 +859,38 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     widget.onProductTap?.call(product);
   }
 
-  /// 商品列表列**縮圖** tap → seek 到商品介紹時間，並**同時**關閉商品列表抽屜
+  /// 商品列表列**縮圖** tap → seek 到商品介紹時間，並（VOD / 回放）**同時**關閉商品列表抽屜
   /// (rb-flutter-product-bag-seek-dismiss, parity iOS `rb-ios-product-bag-seek-dismiss` /
   /// Android `rb-android-product-bag-seek-dismiss` / RN `rb-rn-product-bag-seek-dismiss`).
   /// Closes FIRST (same `widget.onDismissList` path as the header close button / scrim tap —
   /// no second sheet-open flag), THEN forwards the seek — mirrors the existing call ORDER
   /// iOS / RN already use (`onClose` before the seek forward).
   ///
+  /// **LIVE 例外 (rb-flutter-product-sheet-keep-open-on-live-seek, parity iOS
+  /// `rb-ios-product-sheet-keep-open-on-live-seek` / Android
+  /// `rb-android-product-sheet-keep-open-on-live-seek` / RN
+  /// `rb-rn-product-sheet-keep-open-on-live-seek`)**: 進行中直播（`_model.isLive == true`）沒有
+  /// 主播口頭導覽對照可依循，關閉整個商品列表抽屜會讓使用者找不到剛才瀏覽的清單——這個模式下
+  /// SHALL **跳過** `widget.onDismissList?.call()`，只轉發 seek，抽屜維持開啟。判斷依據是容器
+  /// 既有的 `ProductSheetsModel.isLive` getter（`_model.isLive`），不新增第二份 live 狀態。VOD /
+  /// 回放（`isLive == false`）維持既有「先關閉、再轉發」行為不變。
+  ///
   /// [ProductRow._playTap] (product_row.dart) already gates the
   /// `rb-flutter-replay-never-introduced-tap-noop` sentinel — in that exception,
   /// `ProductListSheet.onSeekToIntro` (this method) is never invoked at all, so the drawer
   /// stays open with NO duplicate sentinel check needed here (single source of truth stays in
   /// `ProductRow`). `widget.onSeekToProductIntro` being `null` (unwired demo/snapshot) does
-  /// NOT skip the dismiss — closing the drawer does not depend on whether the host wired the
-  /// seek forwarder, parity iOS/Android/RN.
+  /// NOT skip the dismiss (outside LIVE mode) — closing the drawer does not depend on whether
+  /// the host wired the seek forwarder, parity iOS/Android/RN.
   ///
   /// This close side effect is bound ONLY to this one entry point — every OTHER row
   /// interaction (`_handleOpenProduct` / `_handleQuickAdd` / `_handleNotifyRestock` /
   /// `widget.onShareProduct`, wired unchanged a few lines below in `_buildContent`) MUST NOT
   /// dismiss the list drawer.
   void _handleSeekToProductIntro(LBProduct product) {
-    widget.onDismissList?.call();
+    if (!_model.isLive) {
+      widget.onDismissList?.call();
+    }
     widget.onSeekToProductIntro?.call(product);
   }
 

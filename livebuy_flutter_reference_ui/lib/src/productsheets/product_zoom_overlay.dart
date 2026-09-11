@@ -36,8 +36,8 @@ import 'sheet_scaffold.dart' show liveProductImage;
 // the selected variant; re-deriving the ladder here is precisely how "sheet shows the spec
 // photo, lightbox shows the product photo" happens.
 
-final Color _zoomPhotoStart = colorFromHex('#FFD7A8') ?? const Color(0xFFFFD7A8);
-final Color _zoomPhotoEnd = colorFromHex('#E27D5A') ?? const Color(0xFFE27D5A);
+final Color _zoomPhotoStart = colorFromHex('#C7C7CC') ?? const Color(0xFFC7C7CC);
+final Color _zoomPhotoEnd = colorFromHex('#8E8E93') ?? const Color(0xFF8E8E93);
 
 const double _zoomed = 2.4;
 const String _hintIdle = '點圖片放大';

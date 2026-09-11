@@ -578,14 +578,16 @@ final class LivebuyPlayerViewFactory: NSObject, FlutterPlatformViewFactory {
     }
 }
 
-// player-channel-chrome-bridge-core-flutter: the 15-field channel-chrome projection
+// player-channel-chrome-bridge-core-flutter: the 18-field channel-chrome projection
 // (channel-type-bridge-core-flutter added the 10th, `type`; product-list-bridge-core-flutter
 // added the 11th, `goods`; channel-shop-intro-bridge-core-flutter added the 12th,
 // `shopIntro`; guest-comment-channel-bridge-core-flutter added the 13th,
 // `guestComment`; channel-diversion-bridge-core-flutter added the 14th, `diversion`;
-// rb-flutter-other-goods-channel-bridge-core added the 15th, `otherGoods`) compared as
-// ONE value by the dedupe check below (not a single channel id — see the piggyback
-// block in `onStateChange` for why). Mirrors
+// rb-flutter-other-goods-channel-bridge-core added the 15th, `otherGoods`;
+// channel-flash-sale-flag-core-flutter added the 16th, `isFlashSale`;
+// channel-notice-bridge-core-flutter added the 17th/18th, `notice`/`sysNotice`)
+// compared as ONE value by the dedupe check below (not a single channel id — see
+// the piggyback block in `onStateChange` for why). Mirrors
 // `react-native/ios/LivebuyRNBridge.swift`'s `ChannelInfoSnapshot` shape (fields here,
 // no subtitle fields; those stay in the separate `subtitleChange` piggyback
 // below, which has its own independent dedupe state).
@@ -632,6 +634,18 @@ private struct ChannelChromeSnapshot: Equatable {
     // payload is built separately from `ch.otherGoods` via the existing `lbProductToBody(_:)`
     // helper (see the emit block below), NOT from this fingerprint.
     let otherGoods: [GoodsFingerprint]
+    // channel-flash-sale-flag-core-flutter: raw `channel.isFlashSale` passthrough — a
+    // TOP-LEVEL `LBChannel` field (NOT nested under `channel.shop`, unlike `shopIntro`/
+    // `serviceLink`/`shopName`/`shopLogo` above). `true` iff the upstream `sale_type == 2`;
+    // always present on the wire, independent of `type`/`liveStatus`.
+    let isFlashSale: Bool
+    // channel-notice-bridge-core-flutter: raw `channel.notice` / `channel.sysNotice`
+    // free-text announcement passthrough — TOP-LEVEL `LBChannel` fields (same shape as
+    // `isFlashSale` above, NOT nested under `channel.shop`). Populated at channel-load
+    // time (independent of playback state), UNLIKE the pre-existing `POLL_RECEIVED`-relayed
+    // `notice`/`sys_notice` which only reaches Flutter once the player reaches `.playing`.
+    let notice: String
+    let sysNotice: String
 
     init(_ channel: LBChannel) {
         publishAt = channel.publishAt
@@ -649,6 +663,9 @@ private struct ChannelChromeSnapshot: Equatable {
         guestComment = channel.guestComment
         diversion = channel.diversion
         otherGoods = channel.otherGoods.map(GoodsFingerprint.init)
+        isFlashSale = channel.isFlashSale
+        notice = channel.notice
+        sysNotice = channel.sysNotice
     }
 }
 
@@ -721,14 +738,25 @@ private struct HotItemFingerprint: Equatable {
     }
 }
 
-/// player-moment-fields-bridge-core-flutter: the 6-field moment-state projection
+/// player-moment-fields-bridge-core-flutter: originally the 6-field moment-state projection
 /// (`viewerCount` / `isSubscribed` / `autoNextCountdownActive` / `autoNextRemainingSeconds` /
 /// `nextItem` / `hotItems`) compared as ONE value by the dedupe check in
 /// `LivebuyFlutterPlayerView.init`'s `onMomentStateChange` closure. Deliberately narrower than
 /// native `LBPlayerMomentState`'s full 18 fields — see design.md D2's field-by-field table for
-/// why only these 6 have a currently-starved Dart-side consumer. Independent dedupe state from
-/// `lastChannelChromeSnapshot`/`lastSubtitleChannelId` — none of these three mechanisms gate or
-/// suppress either of the others (design.md D4).
+/// why only these 6 (now 8, see below) have a currently-starved Dart-side consumer. Independent
+/// dedupe state from `lastChannelChromeSnapshot`/`lastSubtitleChannelId` — none of these three
+/// mechanisms gate or suppress either of the others (design.md D4).
+///
+/// flutter-ios-moment-products-bridge-core: extended with `products`/`narratingProduct` —
+/// `channelChange`'s `goods` field is a channel-LOAD-TIME-ONLY snapshot (see
+/// `forwardChannelChangeToTemplate`'s doc comment in `flutter-reference-ui`), never updated as
+/// `narrate_status` changes mid-stream, so it was NOT an "already established" derivation path
+/// for these two fields despite this struct's original 6-field scoping assumption. Mirrors the
+/// Android bridge's `MomentFieldsBridge.Snapshot` (`flutter-android-moment-products-bridge-core`,
+/// archived 2026-09-10) field-for-field on the wire, via an independent (non-shared)
+/// implementation. Reuses the existing `GoodsFingerprint` dedupe-projection type (already used
+/// by `ChannelChromeSnapshot.goods`/`.otherGoods` below) rather than a new fingerprint type —
+/// `LBProduct` itself is not `Equatable`.
 private struct MomentFieldsSnapshot: Equatable {
     let viewerCount: Int
     let isSubscribed: Bool
@@ -736,6 +764,8 @@ private struct MomentFieldsSnapshot: Equatable {
     let autoNextRemainingSeconds: Int
     let nextItem: NavItemFingerprint?
     let hotItems: [HotItemFingerprint]
+    let products: [GoodsFingerprint]
+    let narratingProduct: GoodsFingerprint?
 
     init(_ state: LBPlayerMomentState) {
         viewerCount = state.viewerCount
@@ -744,6 +774,8 @@ private struct MomentFieldsSnapshot: Equatable {
         autoNextRemainingSeconds = state.autoNextRemainingSeconds
         nextItem = state.nextItem.map(NavItemFingerprint.init)
         hotItems = state.hotItems.map(HotItemFingerprint.init)
+        products = state.products.map(GoodsFingerprint.init)
+        narratingProduct = state.narratingProduct.map(GoodsFingerprint.init)
     }
 }
 
@@ -762,7 +794,7 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
     private var lastSubtitleChannelId: String?
 
     // player-channel-chrome-bridge-core-flutter: last channel-chrome snapshot we
-    // emitted a `channelChange` payload for (ALL 13 projected fields, not just
+    // emitted a `channelChange` payload for (ALL 18 projected fields, not just
     // channel id — an upcoming→live `liveStatus` flip keeps the same id but IS a
     // real change this event must still carry). Independent of
     // `lastSubtitleChannelId` above — the two piggybacks do not share dedupe state.
@@ -773,6 +805,20 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
     // `lastChannelChromeSnapshot`/`lastSubtitleChannelId` above (design.md D4) — none of these
     // three mechanisms gate or suppress either of the others.
     private var lastMomentFieldsSnapshot: MomentFieldsSnapshot?
+
+    // flutter-ios-auto-pip-entry: app-lifecycle observers that arm the EXISTING native
+    // `requestAutoPiP()` on background — see this change's proposal.md. Mirrors the pairing
+    // native `LivebuyReferenceUI.LivebuyPlayer.armAutoPiP(for:)` uses (`didEnterBackground` /
+    // `willEnterForeground`), reduced in scope: this bridge does NOT replicate that
+    // container's `ForegroundResumeController` / aux `PIP_STATE_CHANGE` listener (the "user
+    // paused INSIDE the PiP window" deferred-resume edge case) — see design.md Decision 2 for
+    // why that reduction is an explicit, documented scope call, not an oversight.
+    private var bgObserver: NSObjectProtocol?
+    private var fgObserver: NSObjectProtocol?
+    /// Captured in `appDidEnterBackground` BEFORE `requestAutoPiP()` runs — its fallback path
+    /// (`activeEngine.pause()`, when PiP isn't possible) would otherwise make `playerState`
+    /// unusable as the resume signal by the time `willEnterForeground` fires.
+    private var wasPlayingBeforeBackground = false
 
     init(frame: CGRect, viewId: Int64, messenger: FlutterBinaryMessenger, args: Any?) {
         playerVC = LivebuyPlayerViewController()
@@ -848,6 +894,14 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
                         // `lbProductToBody(_:)` helper `goods` above uses, no extra
                         // API call needed.
                         "otherGoods": ch.otherGoods.map { Self.lbProductToBody($0) },
+                        // channel-flash-sale-flag-core-flutter: raw top-level
+                        // `channel.isFlashSale` passthrough (NOT `ch.shop.isFlashSale`).
+                        "isFlashSale": ch.isFlashSale,
+                        // channel-notice-bridge-core-flutter: raw top-level
+                        // `channel.notice` / `channel.sysNotice` passthrough (NOT
+                        // `ch.shop.notice` / `ch.shop.sysNotice`).
+                        "notice": ch.notice,
+                        "sysNotice": ch.sysNotice,
                     ])
                 }
             }
@@ -954,14 +1008,26 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
 
         // player-moment-fields-bridge-core-flutter — a genuinely NEW, dedicated native hook
         // assignment (design D1), not a piggyback: `onMomentStateChange` is itself the
-        // purpose-built hook, already firing on every real moment-state publish on iOS. Scoped
-        // to exactly the 6 fields with a currently-starved Dart-side `flutter-ui` consumer
-        // (design D2) — the other 12 `LBPlayerMomentState` fields each already have an
+        // purpose-built hook, already firing on every real moment-state publish on iOS.
+        // Originally scoped to exactly 6 fields with a currently-starved Dart-side `flutter-ui`
+        // consumer (design D2) — the other 12 `LBPlayerMomentState` fields each already have an
         // established, independent Flutter derivation path and are deliberately NOT bridged
         // here. Whole-snapshot dedupe (design D4) so the high-frequency native publish (fires on
         // subtitle toggles, chat-visibility flips, product-overlay refreshes — none of which are
-        // in our 6 fields) does not spam the EventChannel; a per-second countdown tick DOES
-        // re-emit because `autoNextRemainingSeconds` is itself part of the snapshot.
+        // in our baseline fields) does not spam the EventChannel; a per-second countdown tick
+        // DOES re-emit because `autoNextRemainingSeconds` is itself part of the snapshot.
+        //
+        // flutter-ios-moment-products-bridge-core — `products`/`narratingProduct` now ALSO
+        // bridged (extending the snapshot from 6 to 8 fields): that "already established"
+        // assumption did NOT hold for them — Flutter's only other product data source is
+        // `channelChange`'s `goods`, a channel-LOAD-TIME-ONLY snapshot, never updated as
+        // `narrate_status` changes mid-stream, unlike the moment-state `narratingProduct`
+        // reference-ui actually needs for the LIVE 介紹中商品卡. `products` reuses the SAME
+        // `Self.lbProductToBody(_:)` helper `onPlaybackProgressChange`/`onProductTap` already
+        // use (always present, even empty); `narratingProduct` mirrors the `nextItem`
+        // omit-when-nil convention. Mirrors the Android bridge's equivalent extension
+        // (`flutter-android-moment-products-bridge-core`, archived 2026-09-10) field-for-field
+        // on the wire, via an independent (non-shared) implementation.
         playerVC.onMomentStateChange = { [weak self] state in
             guard let self else { return }
             let snapshot = MomentFieldsSnapshot(state)
@@ -974,11 +1040,15 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
                 "autoNextCountdownActive": state.autoNextCountdownActive,
                 "autoNextRemainingSeconds": state.autoNextRemainingSeconds,
                 "hotItems": state.hotItems.map { Self.lbHotItemToBody($0) },
+                "products": state.products.map { Self.lbProductToBody($0) },
             ]
-            // `nextItem` omitted entirely when nil (mirrors `lbProductToBody`'s
+            // `nextItem`/`narratingProduct` omitted entirely when nil (mirrors `lbProductToBody`'s
             // optional-field omission convention — no explicit-null key, design D6).
             if let next = state.nextItem {
                 payload["nextItem"] = Self.lbNavItemToBody(next)
+            }
+            if let narrating = state.narratingProduct {
+                payload["narratingProduct"] = Self.lbProductToBody(narrating)
             }
             LivebuyEventHandler.shared.emit(payload)
         }
@@ -999,6 +1069,41 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
             ])
         }
 
+        // flutter-ios-auto-pip-entry: thread the DECLARED-but-previously-unwired `enablePiP`
+        // creation param (`flutter/lib/src/livebuy_player.dart`'s `LivebuyPlayerCore
+        // .enablePiP`, always sent in `creationParams`) into the native flag it was always
+        // meant to drive. `LivebuyPlayerViewController.enablePiP` already defaults to `true`,
+        // so an absent/non-Bool key (older Dart caller, or a nil `args`) is a no-op — behavior
+        // is unchanged for every existing call site.
+        if let params = args as? [String: Any], let enablePiP = params["enablePiP"] as? Bool {
+            playerVC.enablePiP = enablePiP
+        }
+
+        // flutter-ios-auto-pip-entry: arm the existing native `requestAutoPiP()` on a real
+        // backgrounding — see this change's proposal.md for the full root-cause chain (this
+        // bridge previously had NO code path that ever called `requestAutoPiP()`, so a Flutter
+        // host backgrounding the app never entered PiP regardless of `enablePiP`). Paired with
+        // `willEnterForeground` so a fallback pause (`requestAutoPiP()`'s own behavior when PiP
+        // isn't possible) doesn't leave the video frozen on return — `wasPlayingBeforeBackground`
+        // is captured BEFORE `requestAutoPiP()` runs, exactly like native `armAutoPiP`'s own
+        // ordering comment explains, since that fallback may itself flip `playerState`.
+        bgObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.wasPlayingBeforeBackground = Self.shouldResumeOnForeground(
+                playerState: self.playerVC.playerState)
+            self.playerVC.requestAutoPiP()
+        }
+        fgObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.wasPlayingBeforeBackground else { return }
+            self.playerVC.play()
+        }
+
         container.addSubview(playerVC.view)
         playerVC.view.frame = container.bounds
         playerVC.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -1013,6 +1118,37 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
     }
 
     func view() -> UIView { container }
+
+    /// flutter-ios-auto-pip-entry: remove both lifecycle observers. Idempotent (safe to call
+    /// from BOTH the `"release"` method-channel case AND `deinit`) — each token is niled after
+    /// removal so a second call is a no-op, mirroring native `armAutoPiP`'s own
+    /// `teardownLifecycleObservers()` precedent (`ios/Sources/LivebuyReferenceUI/Container/
+    /// LivebuyPlayer.swift`).
+    private func teardownLifecycleObservers() {
+        if let bgObserver {
+            NotificationCenter.default.removeObserver(bgObserver)
+            self.bgObserver = nil
+        }
+        if let fgObserver {
+            NotificationCenter.default.removeObserver(fgObserver)
+            self.fgObserver = nil
+        }
+    }
+
+    deinit {
+        teardownLifecycleObservers()
+    }
+
+    /// flutter-ios-auto-pip-entry: pure resume-gate decision for the `willEnterForeground`
+    /// handler above — resume ONLY if the player was ACTUALLY playing (not merely non-paused,
+    /// e.g. `.buffering`/`.awaitingLive`) the instant before backgrounding, mirroring native
+    /// `ForegroundResumeController`'s own `isPlaying: { player?.playerState == .playing }` gate.
+    /// Zero UIKit/Flutter dependency — callable from a plain XCTest given only an `LBPlayerState`
+    /// (this package currently has no test target to host one; see this change's proposal.md
+    /// Testability note).
+    static func shouldResumeOnForeground(playerState: LBPlayerState) -> Bool {
+        playerState == .playing
+    }
 
     /// Serialize a full `LBProduct` to the Flutter bridge wire dict (camelCase keys per design D1,
     /// incl. nested specifications / specOptions). Extracted from the former inline body of
@@ -1155,6 +1291,7 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
             result(nil)
         // Legacy method name preserved as alias for backward compat.
         case "release":
+            teardownLifecycleObservers()
             playerVC.unload()
             playerVC.view.removeFromSuperview()
             result(nil)
@@ -1170,6 +1307,12 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
         case "setMuted":
             if let muted = args?["muted"] as? Bool { playerVC.setMuted(muted) }
             result(nil)
+        // mute-preference-persist-across-session-flutter-core — read-only query
+        // exit forwarding the already-public core getter `playerVC.isMuted`
+        // (mirrors `LivebuyPlayerView.isMuted` on Android). Pure passthrough,
+        // no new state on this side.
+        case "isMuted":
+            result(playerVC.isMuted)
         case "seek":
             if let s = args?["seconds"] as? Double { playerVC.seek(seconds: s) }
             result(nil)

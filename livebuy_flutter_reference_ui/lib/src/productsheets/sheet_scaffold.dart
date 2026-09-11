@@ -166,6 +166,10 @@ bool sheetShouldDismiss(double dragOffset, {double threshold = kSheetDismissThre
 /// slide chrome）本身完全不畫任何把手、也不持有任何拖曳狀態。故拖曳手勢掛在**這裡**，包住呼叫端
 /// 傳入的 [header]，讓這個能力完全留在「本就擁有 cap 計算」的同一個檔案內，對任何 leaf sheet 自己
 /// 的 grab-handle 渲染零改動。
+///
+/// SCROLL RESET（`rb-flutter-recommendation-switch-scroll-reset`）：呼叫端可傳入
+/// [scrollResetKey]（IDENTITY 值，如 `detail.productId`）——該值改變時，可捲動的 [body] 會被重置回
+/// 頂部；預設 `null`／未傳時完全不影響既有行為。詳見該欄位自己的 doc comment。
 class LBSheetScaffold extends StatefulWidget {
   /// Pinned header (title / tabs / close / grab handle). Never scrolls. This is always the
   /// drag-resize/dismiss target (wrapped in a `GestureDetector`).
@@ -192,6 +196,20 @@ class LBSheetScaffold extends StatefulWidget {
   /// for a `null` close callback elsewhere in this package.
   final VoidCallback? onDismiss;
 
+  /// Scroll-reset identity token (rb-flutter-recommendation-switch-scroll-reset). The BODY's
+  /// scroll offset resets to `0` whenever this value CHANGES between two builds of the SAME
+  /// `LBSheetScaffold` `State` (`didUpdateWidget`, compared with `!=`) — e.g. a caller passing
+  /// the current product's id so a same-slot "更多商品" recommendation tap (which swaps the
+  /// bound content in place, no new `Key` / no remount — see `product_sheets_view.dart`'s
+  /// `_buildDetailOrRestockSheet`) scrolls the sheet back to its top instead of preserving
+  /// whatever offset the PREVIOUS product happened to leave it at.
+  ///
+  /// `null` (the DEFAULT) → NEVER resets — every existing call site (none of which pass this
+  /// today) stays byte-identical. A caller that never changes this value between rebuilds
+  /// (e.g. only `qty` / `variantSelection` changed, same product) also never resets — this is
+  /// an IDENTITY comparison, not "did anything change".
+  final Object? scrollResetKey;
+
   const LBSheetScaffold({
     super.key,
     required this.header,
@@ -200,6 +218,7 @@ class LBSheetScaffold extends StatefulWidget {
     this.fillToCap = false,
     this.heightFraction,
     this.onDismiss,
+    this.scrollResetKey,
   });
 
   /// 沒有任何使用者拖曳時這個 scaffold 會用的比例 —— 既有的 `fillToCap ? 0.4 : 0.5` 常數，可被
@@ -280,6 +299,14 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
   /// resize-up — `null` when no bounce is in flight).
   AnimationController? _bounceController;
 
+  /// The BODY's scroll controller (rb-flutter-recommendation-switch-scroll-reset). Persistent
+  /// for the lifetime of this `State` — shared by whichever of the two `SingleChildScrollView`
+  /// branches ([effectiveFillToCap]'s `Expanded` vs `Flexible` wrapper) is currently mounted
+  /// (the two are mutually exclusive at any instant, so a single controller never attaches to
+  /// two `ScrollPosition`s at once). [didUpdateWidget] is the only place it is driven directly
+  /// (via [widget.scrollResetKey]); nothing else in this file reads its offset.
+  final ScrollController _bodyScrollController = ScrollController();
+
   double get _defaultFraction => LBSheetScaffold.defaultFraction(
         fillToCap: widget.fillToCap,
         heightFraction: widget.heightFraction,
@@ -327,6 +354,26 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
       _floorFraction = _defaultFraction;
     } else {
       WidgetsBinding.instance.addPostFrameCallback(_latchFloorFromMeasurement);
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant LBSheetScaffold oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // rb-flutter-recommendation-switch-scroll-reset: an IDENTITY change (not merely
+    // non-null) — a caller that never sets `scrollResetKey` (both `null`) never resets, and a
+    // caller whose value happens to stay the same across a rebuild (same product, only e.g.
+    // `qty`/`variantSelection` changed) also never resets. Mirrors this package's existing
+    // `chat_feed.dart` `_ScrollableChatFeedState.didUpdateWidget` convention: schedule the jump
+    // via `addPostFrameCallback` (this callback runs BEFORE the body's own rebuild lands, so the
+    // scroll controller may not have a `ScrollPosition` attached yet this frame) and guard with
+    // `hasClients` before touching it.
+    if (widget.scrollResetKey != oldWidget.scrollResetKey) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _bodyScrollController.hasClients) {
+          _bodyScrollController.jumpTo(0);
+        }
+      });
     }
   }
 
@@ -436,6 +483,7 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
   @override
   void dispose() {
     _bounceController?.dispose();
+    _bodyScrollController.dispose();
     super.dispose();
   }
 
@@ -488,8 +536,12 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
           // effectiveFillToCap：`Expanded` 填滿剩餘空間（內容頂部、下方留白 / 超出捲動）→ 整張
           // = cap；否則 `Flexible` content-sized（短 sheet 取內容高、長 sheet 捲動）。
           effectiveFillToCap
-              ? Expanded(child: SingleChildScrollView(child: widget.body))
-              : Flexible(child: SingleChildScrollView(child: widget.body)),
+              ? Expanded(
+                  child: SingleChildScrollView(
+                      controller: _bodyScrollController, child: widget.body))
+              : Flexible(
+                  child: SingleChildScrollView(
+                      controller: _bodyScrollController, child: widget.body)),
           widget.footer,
         ],
       ),
@@ -510,6 +562,12 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
 /// byte-stable goldens). `live == true` (host runtime, real video surface) → the real
 /// product photo loads over the placeholder. Parity with iOS `RemoteStillImageView`
 /// gated by the sheets' `live` flag (rb-ios-product-real-images).
+///
+/// **Fade-in on a genuine async decode** (rb-flutter-product-image-loading-polish):
+/// the overlaid image fades in from the placeholder over [kProductImageFadeInDuration]
+/// UNLESS it resolved synchronously from cache (e.g. warmed ahead of time by
+/// `PlayerShellView`'s `precacheImage` prefetch — see `product_image_prefetch.dart`),
+/// in which case it renders instantly with no animation — see [_fadeInFrameBuilder].
 Widget liveProductImage({
   required bool live,
   required String? url,
@@ -539,6 +597,7 @@ Widget liveProductImage({
           loadingBuilder: (context, child, progress) =>
               progress == null ? child : const SizedBox.expand(),
           errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
+          frameBuilder: _fadeInFrameBuilder,
         )
       : Image.network(
           uri.toString(),
@@ -552,6 +611,10 @@ Widget liveProductImage({
           // On any decode / network error, fall back to the placeholder (draw nothing
           // over it — the Stack's placeholder stays visible).
           errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
+          // rb-flutter-product-image-loading-polish: a cache-hit (e.g. warmed by
+          // `PlayerShellView`'s prefetch) renders instantly, unanimated; a genuine
+          // async decode fades in — see `_fadeInFrameBuilder`'s own doc comment.
+          frameBuilder: _fadeInFrameBuilder,
         );
   final Widget overlay = borderRadius == null
       ? image
@@ -562,6 +625,37 @@ Widget liveProductImage({
       placeholder,
       Positioned.fill(child: overlay),
     ],
+  );
+}
+
+/// Fade-in duration for [liveProductImage]'s overlaid photo when it decodes
+/// ASYNCHRONOUSLY (cache miss) — see [_fadeInFrameBuilder]. 180ms.
+const Duration kProductImageFadeInDuration = Duration(milliseconds: 180);
+
+/// Shared `Image.frameBuilder` for [liveProductImage]'s two branches (the real
+/// `Image.network` + the [liveProductImageProviderForTesting] test seam) —
+/// rb-flutter-product-image-loading-polish. `wasSynchronouslyLoaded == true` (the
+/// frame was already available — a cache hit, e.g. one this package's own
+/// `precacheImage` prefetch warmed) returns [child] UNCHANGED, no animation: a warm
+/// cache hit renders exactly as it did before this fade-in existed. `false` (a
+/// genuine async decode) fades in via the canonical Flutter recipe — `AnimatedOpacity`
+/// driven by [frame] itself (`null` while still decoding → opacity `0`, the first
+/// decoded frame → opacity `1`): the SAME `AnimatedOpacity` element persists across
+/// that transition (same position in the tree, across the SAME underlying `Image`
+/// element's rebuilds), which is what makes it animate the opacity change rather than
+/// snap straight to the end value.
+Widget _fadeInFrameBuilder(
+  BuildContext context,
+  Widget child,
+  int? frame,
+  bool wasSynchronouslyLoaded,
+) {
+  if (wasSynchronouslyLoaded) return child;
+  return AnimatedOpacity(
+    opacity: frame == null ? 0.0 : 1.0,
+    duration: kProductImageFadeInDuration,
+    curve: Curves.easeOut,
+    child: child,
   );
 }
 

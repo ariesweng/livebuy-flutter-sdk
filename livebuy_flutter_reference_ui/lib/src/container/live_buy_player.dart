@@ -1,3 +1,5 @@
+import 'dart:async' show Timer;
+
 import 'package:flutter/foundation.dart'
     show debugPrint, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
@@ -128,23 +130,92 @@ bool lbShouldPresentServiceLink(String serviceLink) => serviceLink.isNotEmpty;
 // with no platform view in the test env — the R5 limitation this file's other tests document).
 
 /// Testable seam for the DEFAULT `onShare` wiring's underlying `Share.share` call.
-typedef ShareOpener = Future<void> Function(String url);
+/// [sharePositionOrigin] is the OPTIONAL iPad/Mac popover anchor (see
+/// [performDefaultShare]'s flutter-share-failure-visibility-reference-ui doc below) — a fake
+/// that ignores it still conforms (it is a named, not required, parameter), so every existing
+/// `Throwing*` / capturing fake keeps compiling; a fake that wants to assert the anchor was
+/// threaded correctly can declare it.
+typedef ShareOpener = Future<void> Function(String url,
+    {Rect? sharePositionOrigin});
 
 /// PRODUCTION DEFAULT [ShareOpener]: the real `share_plus` system-share call.
-Future<void> _defaultShareOpener(String url) async {
-  await Share.share(url);
+Future<void> _defaultShareOpener(String url, {Rect? sharePositionOrigin}) async {
+  await Share.share(url, sharePositionOrigin: sharePositionOrigin);
 }
 
+// MARK: - flutter-share-failure-visibility-reference-ui — DEFAULT share popover anchor
+//
+// Real-device symptom (2026-09-10): tapping the share button on a real iOS device did nothing
+// visible. Root-cause recon walked the FULL call chain (rail tap → `PlayerOverlayContext.onShare`
+// → container `_defaultOnShare` → [performDefaultShare] → [opener]) and found the wiring itself
+// correctly connected end to end — no single missing hop, no real device with an attached console
+// was available to pin the exact culprit. Two independently-plausible gaps were identified:
+//   1. The flutter-share-crash-guard-reference-ui `catch` block below only `debugPrint`s, which a
+//      user on a real device (not attached to Xcode/adb console) never sees — a strong CANDIDATE
+//      explanation for "button does nothing". However, that guard's OWN spec
+//      (`reference-ui-rendering` requirement "Flutter drop-in 播放器容器 DEFAULT onShare/
+//      onServiceLink 開啟例外不可往上傳播（崩潰防護）", from the archived
+//      flutter-share-crash-guard-reference-ui change) explicitly states the catch handler "MUST
+//      NOT 新增任何錯誤回報事件或 callback 機制" — a deliberate scope decision, not an oversight.
+//      This change does NOT introduce a new host-visible failure callback (that would violate the
+//      shipped spec); doing so would require a DELIBERATE spec revision this change does not make.
+//      Flagged as an open question for a human/product decision rather than decided here.
+//   2. [ShareOpener]'s new [sharePositionOrigin] — `share_plus`'s own docs call out that iPad/Mac
+//      need `sharePositionOrigin` or the share sheet can silently fail to present (parity iOS
+//      `LivebuyPlayer.swift`'s `pop.sourceView` / `pop.sourceRect` anchoring, which this Flutter
+//      default never had). This gap has NO spec conflict, so this change closes it: even if it is
+//      not THE bug on the reporter's device, it is a genuine pre-existing parity gap worth closing.
+//
+// [sharePositionOrigin] is additive / backward compatible: it defaults to `null` (phones ignore it
+// entirely; `share_plus` degrades to its own pre-existing behavior when absent — same as before
+// this change).
+
+// MARK: - flutter-share-failure-onshare-failed-callback-reference-ui — optional host-facing
+// onShareFailed notification
+//
+// Formal revision of the `reference-ui-rendering` spec's "MUST NOT add a new error-reporting
+// callback" clause (see `openspec/changes/archive/2026-09-07-flutter-share-crash-guard-
+// reference-ui/` for the original clause, and `openspec/changes/archive/2026-09-10-flutter-
+// share-failure-visibility-reference-ui/design.md`'s Open Questions for why this was deferred
+// rather than decided there). A real-device (iOS) tester still saw no visible reaction after
+// tapping share even after the `sharePositionOrigin` anchor fix landed, and cannot attach a
+// console to observe the existing `debugPrint`. The human/product decision authorizing this
+// callback was made explicitly, not inferred.
+//
+// [onShareFailed] is deliberately the SIMPLEST possible shape (`void Function(Object error)?`,
+// no shareUrl / no distinguishing which of onShare vs onShareProduct triggered it) — see this
+// change's design.md Decision 1. Both DEFAULT entry points funnel through this ONE catch block
+// (onShareProduct delegates to this very function via [performDefaultShareProduct]), so they
+// share ONE notification path by construction — no risk of the two drifting.
+
 /// The DEFAULT `onShare` wiring's decision + crash guard. [lbShouldPresentChannelShare] decides
-/// whether to present at all (unchanged); the ONLY new behavior is that [opener]'s exception is
-/// swallowed (debug log + no-op) instead of propagating and crashing the host app. MUST NOT
-/// rethrow.
-Future<void> performDefaultShare(String shareUrl, ShareOpener opener) async {
+/// whether to present at all (unchanged); [opener]'s exception is swallowed (debug log + no-op)
+/// instead of propagating and crashing the host app — MUST NOT rethrow (unchanged from
+/// flutter-share-crash-guard-reference-ui). [sharePositionOrigin] is forwarded to [opener]
+/// untouched (see [ShareOpener]'s doc). [onShareFailed], when set, is called ADDITIONALLY (never
+/// instead of the debug log / no-op) with the caught exception — see this file's MARK block
+/// above for the flutter-share-failure-onshare-failed-callback-reference-ui rationale. The call
+/// to [onShareFailed] is itself guarded: if the HOST's own callback throws, that new exception is
+/// swallowed too, so a broken host implementation cannot defeat this function's own "MUST NOT
+/// rethrow" guarantee (design.md Decision 2).
+Future<void> performDefaultShare(
+  String shareUrl,
+  ShareOpener opener, {
+  Rect? sharePositionOrigin,
+  void Function(Object error)? onShareFailed,
+}) async {
   if (!lbShouldPresentChannelShare(shareUrl)) return;
   try {
-    await opener(shareUrl);
+    await opener(shareUrl, sharePositionOrigin: sharePositionOrigin);
   } catch (e) {
-    debugPrint('[LivebuyPlayer] onShare seam threw (swallowed, safe no-op): $e');
+    debugPrint(
+        '[LivebuyPlayer] onShare seam threw (swallowed, safe no-op): $e');
+    try {
+      onShareFailed?.call(e);
+    } catch (_) {
+      // The host's own onShareFailed misbehaving MUST NOT defeat this guard's "MUST NOT
+      // rethrow" promise — swallow silently, nothing more the SDK can add here.
+    }
   }
 }
 
@@ -160,18 +231,31 @@ Future<void> performDefaultShare(String shareUrl, ShareOpener opener) async {
 /// `_LivebuyPlayerState` method) with `opener` / `onEmptyShareUrl` parameter-injected so a unit
 /// test can drive it with string literals + fakes (R5: no platform view in the test env for
 /// `LivebuyPlayerController`'s MethodChannel — same rationale as [performDefaultShare] itself).
+/// [sharePositionOrigin] is threaded straight through to the underlying [performDefaultShare]
+/// call unchanged (flutter-share-failure-visibility-reference-ui). [onShareFailed] is likewise
+/// threaded straight through unchanged (flutter-share-failure-onshare-failed-callback-
+/// reference-ui) — this function does NOT install a separate catch block of its own; it shares
+/// [performDefaultShare]'s single guard (design.md Decision 3), so [onShareFailed] fires from
+/// exactly the same place for both onShare and onShareProduct.
 Future<void> performDefaultShareProduct(
   String channelShareUrl,
   int? beginTime,
   ShareOpener opener, {
   required VoidCallback onEmptyShareUrl,
+  Rect? sharePositionOrigin,
+  void Function(Object error)? onShareFailed,
 }) {
   final url = productShareUrlString(channelShareUrl, beginTime);
   if (url.isEmpty) {
     onEmptyShareUrl();
     return Future.value();
   }
-  return performDefaultShare(url, opener);
+  return performDefaultShare(
+    url,
+    opener,
+    sharePositionOrigin: sharePositionOrigin,
+    onShareFailed: onShareFailed,
+  );
 }
 
 /// Testable seam for the DEFAULT `onServiceLink` wiring's in-app-browser branch
@@ -216,7 +300,8 @@ Future<void> performDefaultServiceLink(
         await externalOpener(decision.url);
     }
   } catch (e) {
-    debugPrint('[LivebuyPlayer] onServiceLink seam threw (swallowed, safe no-op): $e');
+    debugPrint(
+        '[LivebuyPlayer] onServiceLink seam threw (swallowed, safe no-op): $e');
   }
 }
 
@@ -446,6 +531,94 @@ class ForegroundResumeController {
   }
 }
 
+// MARK: - VodEndedCloseGate — debounced "VOD/回放 ended, no next" auto-close
+// (rb-flutter-endscreen-live-empty-state)
+//
+// Spec: `component-contracts/spec.md` "EndScreen 元件契約"; design
+// `design/templates/minimal/moments.jsx` `LBPEndScreen` (R41 — EndScreen is now
+// LIVE-only). Depends on core `vod-replay-direct-next` (`shouldAutoAdvanceOnEnd`).
+
+/// Testable seam for [VodEndedCloseGate]'s debounce delay. Production default is a
+/// real `Timer`; a unit test injects a `Capturing*` fake that records `(delay,
+/// callback)` without any real wait — invoking `callback` itself, on the test's own
+/// schedule, drives the assertions (docs/unit-test-discipline.md §4 ctor/parameter-
+/// injection-for-side-effects; mirrors [ForegroundResumeController]'s injected-seam
+/// pattern above).
+typedef VodEndedCloseScheduler = void Function(
+    Duration delay, VoidCallback callback);
+
+/// PRODUCTION DEFAULT [VodEndedCloseScheduler]: a real `Timer`.
+void _defaultVodEndedCloseScheduler(Duration delay, VoidCallback callback) {
+  Timer(delay, callback);
+}
+
+/// Debounced "a VOD / 回放 settled in `LBPlayerState.ended` with no `next` to
+/// auto-advance to" close decision, fed every player state change via
+/// [handleStateChange]. A plain object with an injected [onClose] + [scheduler] —
+/// NO Flutter widget / `BuildContext` dependency — so it is directly unit-testable
+/// (the surrounding `LivebuyPlayer` container cannot be constructed in the test env:
+/// `LivebuyPlayerController` goes through a real `MethodChannel` with no platform
+/// view — R5, same limitation [ForegroundResumeController] / `performDefaultShare`
+/// work around the same way).
+///
+/// **Why a debounce.** `vod-replay-direct-next-core` makes the NATIVE core surface a
+/// transient `playerState = .ended` (dispatched over the bridge) BEFORE it
+/// synchronously calls `load()` to auto-advance when a `next` item exists — the raw
+/// `ended` state reaches Dart either way, so a single event cannot tell "terminal, no
+/// next" from "about to auto-advance". Waiting [debounce] lets the auto-advance
+/// path's very next state (typically `loading`) arrive first and cancel the pending
+/// close (ANY state other than `ended` invalidates it, via [_pending]'s token); a
+/// genuinely dead-end video is STILL the same `ended` call when the scheduled
+/// callback runs.
+///
+/// **Why no `isLive` check.** LIVE ending NEVER surfaces `LBPlayerState.ended` at
+/// all — `live-end-no-next-endstate` routes it straight to the DISTINCT
+/// `endScreenShown` state, which `MomentsOverlayView` renders as the countdown /
+/// 空狀態 end screen instead. So `state == ended` is, by construction, ALWAYS the
+/// VOD/回放 path; this gate never fires for a live end.
+class VodEndedCloseGate {
+  VodEndedCloseGate({
+    required this.onClose,
+    this.debounce = const Duration(milliseconds: 400),
+    this.scheduler = _defaultVodEndedCloseScheduler,
+  });
+
+  /// Called once the debounce elapses with the state STILL `ended` (no
+  /// intervening different state arrived). Fired via [scheduler] — for the
+  /// production default, asynchronously off a real `Timer`.
+  final VoidCallback onClose;
+
+  /// How long to wait after `state == ended` before deciding it is terminal.
+  /// Long enough for the auto-advance path's follow-up state to arrive and
+  /// cancel the pending close; short enough that a genuinely dead-end video
+  /// does not sit frozen for long.
+  final Duration debounce;
+
+  /// The injected delay seam (see [VodEndedCloseScheduler]'s doc).
+  final VodEndedCloseScheduler scheduler;
+
+  /// Identity token for the CURRENTLY pending check, or `null` when none is
+  /// pending. Every call replaces it (or clears it), so a stale scheduled
+  /// callback's [identical] check fails and it becomes a silent no-op — no
+  /// explicit `Timer.cancel()` bookkeeping needed.
+  Object? _pending;
+
+  /// Feed one player state change. `state != ended` invalidates ANY pending
+  /// check (covers both "auto-advance under way" and "simply still
+  /// playing/loading/etc"); `state == ended` schedules a NEW check.
+  void handleStateChange(LBPlayerState state) {
+    if (state != LBPlayerState.ended) {
+      _pending = null;
+      return;
+    }
+    final token = Object();
+    _pending = token;
+    scheduler(debounce, () {
+      if (identical(_pending, token)) onClose();
+    });
+  }
+}
+
 // MARK: - 領獎提交 seam（具名純函式 —— 讓「email 真的到得了 core」可被測試釘住）
 //
 // Spec: `reference-ui-rendering/spec.md`
@@ -550,6 +723,36 @@ bool resolvedEnableDirectCloseButton({
   required bool globalValue,
 }) =>
     configValue ?? globalValue;
+
+// flutter-live-now-pill-auto-shopid-turnkey-reference-ui ---------------------------------------
+//
+// See design.md Decision D2: unlike iOS (two separate `LiveNowPollController` construction call
+// sites needing to agree), Flutter has exactly ONE construction call site
+// (`_LivebuyPlayerState.initState()`), so this pure function exists to keep the branchy
+// resolution logic independently unit-testable (docs/unit-test-discipline.md), not to prevent
+// divergence between multiple call sites.
+
+/// Resolves the effective shop id used to decide whether (and with what shopId) to build
+/// [LiveNowPollController] for [LivebuyPlayer]'s「現正直播」提示鈕
+/// (flutter-live-now-pill-auto-shopid-turnkey-reference-ui). Pure / deterministic — takes no
+/// `LivebuySDK` dependency of its own; the one call site hands it `LivebuySDK.currentShopId`
+/// already read.
+///
+/// - `showsLiveNowPill == false` → `null` unconditionally, regardless of [explicitShopId] — the
+///   feature is off, so [_LivebuyPlayerState.initState] MUST NOT build a [LiveNowPollController]
+///   at all (zero extra API calls).
+/// - `showsLiveNowPill == true` (the default) → [explicitShopId] wins when set (host intent
+///   expressed explicitly beats an inferred default); otherwise falls back to
+///   [configuredShopId] (`LivebuySDK.currentShopId` — the shopId last passed to
+///   `LivebuySDK.configure()`, `null` before `configure()` has ever completed).
+String? resolvedLiveNowShopId({
+  required bool showsLiveNowPill,
+  required String? explicitShopId,
+  required String? configuredShopId,
+}) {
+  if (!showsLiveNowPill) return null;
+  return explicitShopId ?? configuredShopId;
+}
 
 /// Per-instance wiring for [LivebuyPlayer]. Every interaction callback is OPTIONAL with a
 /// documented sensible default — a host that passes nothing still gets a working player
@@ -658,6 +861,27 @@ class LivebuyPlayerConfig {
   /// 完全覆蓋（零變更）。收到該 [LBProduct]。Mirrors iOS `onShareProduct` / `presentProductShare`.
   final ValueChanged<LBProduct>? onShareProduct;
 
+  /// DEFAULT `onShare` / `onShareProduct` 的底層開啟呼叫失敗時的可選 host 通知
+  /// (`flutter-share-failure-onshare-failed-callback-reference-ui`)。DEFAULT `null` — 既有
+  /// crash-guard 行為（`debugPrint` + 安全 no-op，見
+  /// `reference-ui-rendering` spec「Flutter drop-in 播放器容器 DEFAULT onShare/onServiceLink
+  /// 開啟例外不可往上傳播（崩潰防護）」requirement）byte-identical，host 不設時零變更。
+  ///
+  /// 設定後，底層 opener（`share_plus` `Share.share` 的等義呼叫）拋出的例外會被**額外**（不取代
+  /// 既有 debug log + no-op）轉交給這個 callback——[performDefaultShare] 的 catch block 仍然
+  /// 一定先記一筆 debug log、一定安全吞下不重新拋出；`onShareFailed` 只是多一個讓 host 能看見失敗
+  /// 發生過的管道（真機不接主控台時 `debugPrint` 看不到）。`onShare`（頻道分享）與
+  /// `onShareProduct`（商品分享）兩條 DEFAULT 路徑共用同一個 [performDefaultShare] 呼叫、共用
+  /// 同一個 `onShareFailed`——不分辨是哪一條路徑觸發的失敗。
+  ///
+  /// 這個 callback 本身若拋出例外會被再包一層防護吞下（不會反過來破壞
+  /// [performDefaultShare] 「MUST NOT rethrow」的既有承諾）。**已知限制**：只覆蓋「opener 經
+  /// Dart `Future` 拋出或 reject」的失敗——若原生端例外是從非同步 callback 拋出、未經
+  /// MethodChannel 錯誤回傳路徑抵達 Dart，這個 callback 同樣不會被呼叫（與既有 crash guard 的
+  /// 已知限制相同）。`onServiceLink` 崩潰防護（`performDefaultServiceLink`）不提供對應的
+  /// host callback，本欄位 MUST NOT 被誤用於觀察聯絡商家的失敗。
+  final void Function(Object error)? onShareFailed;
+
   /// Feed event-join entry. DEFAULT: no-op + host guidance (joining needs the event keyword,
   /// which is event-specific; the host wires `controller.requestEventJoin(eid, keyword)`).
   final ValueChanged<int>? onJoinEvent;
@@ -677,9 +901,28 @@ class LivebuyPlayerConfig {
   /// bound template's auto-next, which is pending the template-read follow-up — R2).
   final VoidCallback? onWatchNext;
 
-  /// 熱門卡 tap. DEFAULT: switch in place to that video (`controller.load(item.id)` +
-  /// `onVideoSwitched`).
+  /// rb-flutter-endscreen-live-empty-state: RETIRED — `MomentsOverlayView` no longer
+  /// forwards this into `EndScreenView` (the 熱門變體 為你推薦 grid it drove was
+  /// removed per the moments.jsx R41 redesign). Kept as a field purely so an existing
+  /// host that already wires `onPickHot:` keeps compiling; the value is read here
+  /// (`c.onPickHot`) and still passed to `MomentsOverlayView.onPickHot` below, but
+  /// nothing inside that container invokes it any more. A full removal across
+  /// `LivebuyPlayerConfig` / `MomentsOverlayView` is a documented follow-up, out of
+  /// scope for this change.
   final ValueChanged<LBEndHotItem>? onPickHot;
+
+  /// 空狀態「查看購物車」CTA (rb-flutter-endscreen-live-empty-state). DEFAULT:
+  /// `controller.requestViewCart()` (no `productId` — the end screen has no
+  /// single-product context, mirroring the product list's bottom-CTA
+  /// `product_id`-omitted call). This is the SAME core seam the product list /
+  /// detail sheet's own cart CTA forwards to (`DefaultPlayerTemplate.openCart()`
+  /// → `viewCartRequester` → `Player.requestViewCart(productId:)`) — it dispatches
+  /// the notification-type `VIEW_CART` event (`event-interceptor` §「查看購物車事件
+  /// VIEW_CART」); the template owns NO cart/checkout page (D4), so the HOST is the
+  /// sole handler (collapses/minimizes the player, navigates to its own cart). NOT
+  /// a "close the player" fallback — design `components.md`'s `LBPCartCTA → none`
+  /// mapping predates this core seam and is stale (see this change's proposal.md).
+  final VoidCallback? onViewCart;
 
   /// 商品明細「更多商品」推薦卡播放圖示 tap → 換片
   /// (rb-flutter-product-detail-recommendations §4, design.md D3 of
@@ -855,14 +1098,23 @@ class LivebuyPlayerConfig {
   /// gate already guarantees the interaction only ever fires while non-live — see design.md).
   final void Function(double seconds, {double? duration})? onSeek;
 
-  // -- rb-flutter-live-now-pill --------------------------------------------------------
+  // -- rb-flutter-live-now-pill / flutter-live-now-pill-auto-shopid-turnkey-reference-ui -------
 
-  /// Shop ID whose ongoing OTHER live is polled to drive the「現正直播」提示鈕
-  /// (`LiveNowPillView`, rb-flutter-live-now-pill). DEFAULT `null` — mirrors
-  /// `LivebuyLiveEntry(shopId:)`'s existing precedent (the SDK has no getter to read back the
-  /// `configure(shopId:)` value, the host must pass it again). `null` → the container builds NO
-  /// `LiveNowPollController` at all (zero extra API calls, the pill never appears), aligning
-  /// with the headless "no opt-in, no extra side effect" convention.
+  /// Whether the「現正直播」提示鈕 (`LiveNowPillView`) feature is enabled at all
+  /// (flutter-live-now-pill-auto-shopid-turnkey-reference-ui). DEFAULT `true`. `false` →
+  /// unconditionally NO `LiveNowPollController` is built, regardless of [shopId] (zero extra API
+  /// calls, the pill never appears) — the one clean off-switch for a host that wants the
+  /// pre-turnkey silent-off behavior back. Mirrors iOS `showsLiveNowPill: Bool = true`.
+  final bool showsLiveNowPill;
+
+  /// Explicit shop ID override for the「現正直播」提示鈕 poll (`LiveNowPillView`,
+  /// rb-flutter-live-now-pill). DEFAULT `null`. When [showsLiveNowPill] is `true` (the default):
+  /// an explicit [shopId] here always wins; when left `null`, the effective shop id
+  /// auto-fallbacks to `LivebuySDK.currentShopId` — the shopId last passed to
+  /// `LivebuySDK.configure()` (`null` before `configure()` has ever completed) — so a host that
+  /// already `configure()`'d with the shop it wants no longer needs to repeat it here. Only set
+  /// this when the pill should watch a DIFFERENT shop than the one `configure()` was called with.
+  /// See `resolvedLiveNowShopId` for the exact resolution logic.
   final String? shopId;
 
   /// Tap on `LiveNowPillView`. DEFAULT: switch in place to the currently-detected other live
@@ -870,6 +1122,26 @@ class LivebuyPlayerConfig {
   /// simpler shape (no extra player-controller parameter; the container closure already
   /// captures `_switchVideo`).
   final ValueChanged<LBVideoItem>? onGoLive;
+
+  // -- rb-flutter-collapsible-player-floating-position-inset ------------------
+  //
+  // 這兩個欄位收的是 host 從 `sdkConfig.extensions['floating_setting']` 讀出來的 **raw wire
+  // 值**。`extensions` 是 opaque raw bag(`sdk-config` capability 明文規定 SDK 不解讀其語意)，所以
+  // 本容器 **不**自己去讀它、**不**解讀後端語意 —— 讀取與注入是 host 責任。只對
+  // `CollapsibleLivebuyPlayer`（收合版）有意義；對本檔的「非收合版」`LivebuyPlayer` 是 no-op（該
+  // 容器沒有浮動小卡概念）。省略兩者 → 行為與這兩個欄位落地前逐字相同。
+
+  /// 收合後浮動小卡停靠角落的 raw wire 值(`'left_bottom'` / `'right_bottom'`)。省略 → `null` →
+  /// 正規化為右下，即本欄位落地前 `CollapsibleLivebuyPlayer` 的唯一行為。正規化走
+  /// `normalizeFloatingPosition`（`live_entry_position_timing.dart`），**嚴格相等**：
+  /// `' left_bottom '` / `'LEFT_BOTTOM'` 與任何白名單外字串一律落回右下。與姊妹容器
+  /// `LivebuyLiveEntryConfig.position` 同一套語意。
+  final String? position;
+
+  /// 收合後浮動小卡停靠角落的留白量。`dx` = 距**所屬**水平邊的距離（右下角落點時為 `right`、左下角
+  /// 落點時為 `left`）、`dy` = 距底緣。省略 → `null` → 沿用 `CollapsibleLivebuyPlayer` 落地前的既有
+  /// 寫死值 `Offset(12, 24)`。與姊妹容器 `LivebuyLiveEntryConfig.inset` 同一套語意。
+  final Offset? inset;
 
   const LivebuyPlayerConfig({
     this.eventListener,
@@ -885,10 +1157,12 @@ class LivebuyPlayerConfig {
     this.onServiceLink,
     this.onSeekToProductIntro,
     this.onShareProduct,
+    this.onShareFailed,
     this.onJoinEvent,
     this.onSubmitClaim,
     this.onWatchNext,
     this.onPickHot,
+    this.onViewCart,
     this.onSwitchRecommendationVideo,
     this.onSkip,
     this.onCancel,
@@ -909,8 +1183,11 @@ class LivebuyPlayerConfig {
     this.design = const MinimalDesign(),
     this.onTogglePlayPause,
     this.onSeek,
+    this.showsLiveNowPill = true,
     this.shopId,
     this.onGoLive,
+    this.position,
+    this.inset,
   });
 
   /// Returns a copy with `onMinimize` / `onDismiss` overridden (all other seams passed through).
@@ -943,10 +1220,16 @@ class LivebuyPlayerConfig {
       onProductTap: onProductTap,
       onShare: onShare,
       onServiceLink: onServiceLink,
+      // flutter-share-failure-onshare-failed-callback-reference-ui — must likewise survive the
+      // collapsible presenter's re-composition (see the ⚠️ note above): dropping this would
+      // silently reset a host's share-failure observer back to `null` on the
+      // `CollapsibleLivebuyPlayer` path.
+      onShareFailed: onShareFailed,
       onJoinEvent: onJoinEvent,
       onSubmitClaim: onSubmitClaim,
       onWatchNext: onWatchNext,
       onPickHot: onPickHot,
+      onViewCart: onViewCart,
       onSwitchRecommendationVideo: onSwitchRecommendationVideo,
       onSkip: onSkip,
       onCancel: onCancel,
@@ -977,9 +1260,16 @@ class LivebuyPlayerConfig {
       // presenter's re-composition (see the ⚠️ note above).
       onTogglePlayPause: onTogglePlayPause,
       onSeek: onSeek,
-      // rb-flutter-live-now-pill — must likewise survive the collapsible presenter's
-      // re-composition (see the ⚠️ note above).
+      // rb-flutter-live-now-pill / flutter-live-now-pill-auto-shopid-turnkey-reference-ui —
+      // must likewise survive the collapsible presenter's re-composition (see the ⚠️ note above).
+      showsLiveNowPill: showsLiveNowPill,
       shopId: shopId,
+      // rb-flutter-collapsible-player-floating-position-inset — must likewise survive the
+      // collapsible presenter's re-composition (see the ⚠️ note above): this is the ONE
+      // consumer of these two fields, so dropping them here would silently reset a host's
+      // floating-card position/inset override back to `null` on the exact path meant to use it.
+      position: position,
+      inset: inset,
       onGoLive: onGoLive,
     );
   }
@@ -1063,10 +1353,13 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// honestly). When null every resume path below is an inert no-op.
   ForegroundResumeController? _resumeController;
 
-  /// 「現正直播」poller (rb-flutter-live-now-pill). `null` when `config.shopId == null` — the
-  /// caller (this State) decides whether to build it at all, mirroring [_resumeController]'s
-  /// own "nullable field, built conditionally inside `initState`" convention (design.md
-  /// Decision 1). Every use site short-circuits on `null` via `_liveNowController?.`.
+  /// 「現正直播」poller (rb-flutter-live-now-pill,
+  /// flutter-live-now-pill-auto-shopid-turnkey-reference-ui). `null` when
+  /// `resolvedLiveNowShopId(...)` resolves to `null` (either `showsLiveNowPill == false`, or an
+  /// unset `shopId` with no `LivebuySDK.currentShopId` fallback yet) — the caller (this State)
+  /// decides whether to build it at all, mirroring [_resumeController]'s own "nullable field,
+  /// built conditionally inside `initState`" convention (design.md Decision D3). Every use site
+  /// short-circuits on `null` via `_liveNowController?.`.
   LiveNowPollController? _liveNowController;
 
   /// Latest player state seen via `VIDEO_STATE_CHANGE` (through the wrapping SDK listener). Feeds
@@ -1077,6 +1370,13 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// Whether the wrapped core is CURRENTLY in real OS PiP (maintained from `PIP_STATE_CHANGE`
   /// `active`). Feeds the controller's `isInPiP` seam.
   bool _isInPiP = false;
+
+  /// rb-flutter-endscreen-live-empty-state — debounced "VOD/回放 ended with no
+  /// next" close decision (see [VodEndedCloseGate]'s doc for the full race
+  /// rationale). A plain injected-seam object (NOT a widget), so its logic is
+  /// unit-testable without constructing this container (R5 — no platform view for
+  /// `LivebuyPlayerController`'s MethodChannel in the test env).
+  late final VodEndedCloseGate _vodEndedCloseGate;
 
   /// Edge-trigger latch for [didChangeAppLifecycleState]: Flutter emits several non-`resumed`
   /// states (`inactive` → `hidden` → `paused`) when leaving the foreground, but the was-playing
@@ -1140,6 +1440,17 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// above. Default false (off).
   bool _moreMenuOpen = false;
 
+  /// Local mirror of `PlayerShellView`'s NARROW playback-progress transport-bar active-drag state
+  /// (rb-flutter-scrub-expanded-chrome-lift, parity iOS `isScrubbingProgressBar`): the shell
+  /// reports every transition via `onScrubbingChange`. Combined with [_scrubBarExpanded] below to
+  /// compute `PlayerOverlayContext.scrubHoldLifted`. Default false.
+  bool _isScrubbingProgressBar = false;
+
+  /// Local mirror of `PlayerShellView`'s WIDE `_scrubBarExpanded` state (touch-down through the
+  /// ~2.8s post-release hold window), reported via `onScrubBarExpandedChange` (rb-flutter-scrub-
+  /// expanded-chrome-lift, parity iOS `isScrubBarExpanded`). Default false.
+  bool _scrubBarExpanded = false;
+
   /// Container-owned product LIST drawer open state (default CLOSED). The GOODS rail / bag tap
   /// opens it; the scrim / close button dismisses it (re-openable). Parity iOS
   /// `ProductSheetsModel.listPresented` (default false) — no longer auto-presents over the video.
@@ -1160,11 +1471,38 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   @override
   void initState() {
     super.initState();
+    // rb-flutter-player-hide-chrome-until-loaded — SYNCHRONOUS, before anything below (in
+    // particular before the first `build()`, which reads `MomentsModel.startPhase`).
+    // `LivebuyUI.playerTemplate` is a process-global singleton (docs/reference-ui/parity-
+    // debt-ledger.md #9): without this call, a SECOND (or later) video open would read
+    // whatever `startScreen.phase` the PREVIOUS video's session left behind (typically
+    // `done`) until a genuine native event round-trips back and corrects it — the window
+    // this change (+ `flutter-startscreen-reset-on-new-session-template`, which provides
+    // this synchronous, diff-then-notify method) closes. iOS/Android get this guarantee for
+    // free by constructing a brand-new template per player instance; Flutter's singleton
+    // needs an explicit reset.
+    LivebuyUI.playerTemplate?.startScreen.resetForNewSession();
+    // rb-flutter-player-reset-loadingcover-on-new-session — same singleton-staleness family as
+    // the `startScreen` reset above, for `loadingCover` (the channel-derived cover photo the
+    // `.loading` surface paints as its backdrop). `loadingCoverNotifier` only updates once
+    // `onChannelChange` round-trips back with the NEW video's channel data, so without this the
+    // loading surface keeps painting the PREVIOUS video's cover photo until that arrives
+    // (real-device report: closing a pink-haired streamer's video then opening a different,
+    // dark-haired one showed the pink-haired cover under the loading mark). `applyLoadingCover`
+    // is the existing public method (`player-loading-cover-background-template-flutter`); reset
+    // to '' falls back to the existing solid `#0C0C10` brand backdrop, never a wrong photo.
+    LivebuyUI.playerTemplate?.applyLoadingCover('');
     _controller = LivebuyPlayerController();
     _composer = ChatComposerController();
     _nickname = NicknamePromptController();
     _login = LoginPromptController();
     _currentVideoId = widget.videoId;
+    // rb-flutter-endscreen-live-empty-state: `mounted` is checked HERE (not inside
+    // `VodEndedCloseGate`, which has no Flutter dependency of its own) — the debounce
+    // timer can still fire after this State is disposed.
+    _vodEndedCloseGate = VodEndedCloseGate(onClose: () {
+      if (mounted) _closePlayer();
+    });
     // 永遠安裝一個包裹 listener：攔 VIDEO_SWITCH 更新 swipe 基準 _currentVideoId（core 自動接續
     // 不經容器 → 否則過時 → swipe 上一支落到前前一支，rb-flutter-swipe-prev-after-autoadvance），
     // 再轉發 host listener（無則回 passthrough，回覆語意不變）。
@@ -1200,9 +1538,19 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
         _currentVideoId = to!;
         widget.config.onVideoSwitchedItem?.call(autoAdvanceSwitchedItem(to));
       }
+      // rb-flutter-endscreen-live-empty-state: NOT iOS-gated (unlike the block below) —
+      // VOD/回放 auto-advance-elision is a core-wide (iOS + Android) behaviour, so every
+      // platform needs the debounced close check. Extends THIS existing wrapping
+      // listener rather than installing a second `setListener` (a second call would
+      // REPLACE this one — livebuy_sdk.dart:382).
+      if (event.eventName == LBEvent.videoStateChange) {
+        final s = event.params['state'];
+        if (s is String) {
+          _vodEndedCloseGate.handleStateChange(lbPlayerStateFromString(s));
+        }
+      }
       // iOS-gated (rc != null): track the latest player state for the was-playing latch, and drive
-      // the deferred PiP-exit resume. Extends THIS existing wrapping listener rather than installing
-      // a second `setListener` (a second call would REPLACE this one — livebuy_sdk.dart:382).
+      // the deferred PiP-exit resume.
       final rc = _resumeController;
       if (rc != null) {
         if (event.eventName == LBEvent.videoStateChange) {
@@ -1211,7 +1559,8 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
         } else if (event.eventName == LBEvent.pipStateChange) {
           final active = event.params['active'] == true;
           _isInPiP = active;
-          if (!active) rc.pipDidExit(); // PiP truly ended → deferred resume (iff intent recorded)
+          if (!active)
+            rc.pipDidExit(); // PiP truly ended → deferred resume (iff intent recorded)
         }
       }
       final hostReply = await hostListener?.call(event);
@@ -1219,11 +1568,16 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       return resolveContainerEventReply(hostReply, templateReply);
     });
     _loadCoreTheme();
-    // rb-flutter-live-now-pill: `config.shopId == null` → build NO controller at all (zero
-    // extra API calls, the pill never appears) — see design.md Decision 1 for why this is a
-    // caller-decides shape (mirrors [_resumeController] above), not iOS/RN's
-    // nullable-ctor-internal-no-op.
-    final shopId = widget.config.shopId;
+    // rb-flutter-live-now-pill / flutter-live-now-pill-auto-shopid-turnkey-reference-ui:
+    // effective shopId `null` (either `showsLiveNowPill == false`, or unset `shopId` with no
+    // configured fallback yet) → build NO controller at all (zero extra API calls, the pill
+    // never appears) — see design.md Decision D3 for why this is a caller-decides shape (mirrors
+    // [_resumeController] above), not iOS/RN's nullable-ctor-internal-no-op.
+    final shopId = resolvedLiveNowShopId(
+      showsLiveNowPill: widget.config.showsLiveNowPill,
+      explicitShopId: widget.config.shopId,
+      configuredShopId: LivebuySDK.currentShopId,
+    );
     if (shopId != null) {
       _liveNowController = LiveNowPollController(shopId: shopId)
         ..addListener(_onLiveNowChanged)
@@ -1237,6 +1591,14 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   void _onLiveNowChanged() {
     if (mounted) setState(() {});
   }
+
+  /// The established "close the player" exit (parity Android `onCloseRequest` /
+  /// `swipe-nav-close-on-empty`): host `config.onDismiss` wins, otherwise falls
+  /// back to core `controller.unload()`. Shared by `PlayerShellView
+  /// .onCloseRequest`'s wiring AND the new VOD-ended-no-next auto-close
+  /// (rb-flutter-endscreen-live-empty-state) so both exits stay byte-identical.
+  void _closePlayer() =>
+      (widget.config.onDismiss ?? () => _controller.unload())();
 
   @override
   void dispose() {
@@ -1305,7 +1667,8 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     // has no channel adjacency cover rows in JS/Dart → empty cover + the correct id (fallback,
     // parity iOS rare-case / RN swipe).
     widget.config.onVideoSwitchedItem?.call(
-      switchedVideoItem(id: id, cover: '', title: '', duration: 0, liveStatus: 1),
+      switchedVideoItem(
+          id: id, cover: '', title: '', duration: 0, liveStatus: 1),
     );
   }
 
@@ -1324,11 +1687,43 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     final t = LivebuyUI.playerTemplate;
     if (t != null) {
       t.toggleMute(); // icon single truth: flip header / side-rail muted
-      _controller.setMuted(t.header.muted); // core audio: forward the flipped truth
+      _controller
+          .setMuted(t.header.muted); // core audio: forward the flipped truth
     } else {
       _muted = !_muted;
       _controller.setMuted(_muted);
     }
+  }
+
+  /// The single mute truth this container currently knows — SAME resolution [_toggleMute] reads
+  /// (`template.header.muted` when a template is installed, else the local [_muted] no-template
+  /// fallback mirror). Extracted so [_onSwipeVideoLoad] can reuse it without duplicating the
+  /// template-null branch.
+  bool _currentMutedTruth() {
+    final t = LivebuyUI.playerTemplate;
+    return t != null ? t.header.muted : _muted;
+  }
+
+  /// Direct swipe-reload bypass (flutter-swipe-video-load-requester-wiring-reference-ui), wired to
+  /// `PlayerOverlayContext.onSwipeVideoLoad` → `PlayerShellView.onSwipeVideoLoad`, fired ALONGSIDE
+  /// [_notifySwitchedVideo] with the SAME resolved adjacent video id.
+  ///
+  /// `PlayerShellView`'s built-in swipe fallback's "official" reload path —
+  /// `PlayerShellModel.navigateToNext()`/`navigateToPrev()` → `DefaultPlayerTemplate
+  /// .navigateToNext()`/`navigateToPrev()` → the injected `VideoLoadRequester` — is a DEAD no-op
+  /// in production: `LivebuyUI.install()` (`flutter-ui/lib/src/livebuy_ui.dart`) constructs its
+  /// `DefaultPlayerTemplate` with `guestNameEditRequester` / `viewCartRequester` wired but
+  /// `videoLoadRequester` OMITTED, so `DefaultPlayerTemplate._videoLoadRequester` stays its
+  /// default no-op `(_) {}`. This method calls [LivebuyPlayerController.load] DIRECTLY on the
+  /// container's own held core controller — the SAME container-controller-direct bypass pattern
+  /// [_toggleMute] already uses for the analogous `MutedSetter` gap — so the reload is immediate
+  /// and deterministic, THEN re-applies the [_currentMutedTruth] to the freshly-(re)loaded engine.
+  /// The re-apply is a defensive fix for the real-device report (manually mute → swipe → sound
+  /// returns): regardless of exactly which frame a stale unmuted default would otherwise win the
+  /// race on, this call always leaves the engine matching the container's own known mute truth.
+  void _onSwipeVideoLoad(String id) {
+    _controller.load(id);
+    _controller.setMuted(_currentMutedTruth());
   }
 
   /// Default product-row tap (flutter-product-tap-diversion-wiring-reference-ui). Thin instance
@@ -1337,7 +1732,8 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// inline closure) only so the `onProductTap:` call site reads as a plain named default,
   /// matching this file's existing convention (`_toggleMute` / `_routeRailItem`).
   void _defaultOnProductTap(LBProduct product) {
-    forwardProductTapToTemplate(product, _lastDiversion, LivebuyUI.playerTemplate);
+    forwardProductTapToTemplate(
+        product, _lastDiversion, LivebuyUI.playerTemplate);
   }
 
   /// Route a side-rail tap to its core `operationPanel.simulate*` exit (kind-routed default).
@@ -1380,6 +1776,17 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       child: Stack(
         fit: StackFit.expand,
         children: [
+          // rb-flutter-player-open-opaque-backdrop — the bottommost Stack layer, ALWAYS
+          // painted, gated on NOTHING (not `startPhase`, not native-texture attach). Without
+          // it, the very first build (before `LivebuyPlayerCore`'s native texture attaches
+          // AND before `MomentsModel.startPhase` — read from the process-global
+          // `DefaultPlayerTemplate` singleton, see `docs/reference-ui/parity-debt-ledger.md`
+          // #9 — reflects THIS session's opening event) leaves the container's own
+          // `Material(type: transparency)` see-through, exposing whatever screen sits behind
+          // it (e.g. the `LivebuyWidget` route that pushed this player). `LivebuyPlayerCore`,
+          // chrome, and the moments loading overlay all naturally paint OVER this once ready
+          // — this layer never needs to know when to hide, only to always be there first.
+          const _PlayerOpaqueBackdrop(),
           LivebuyPlayerCore(
             videoId: widget.videoId,
             controller: _controller,
@@ -1424,6 +1831,30 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
               _lastDiversion = info.diversion;
               forwardChannelChangeToTemplate(info, LivebuyUI.playerTemplate);
             },
+            // flutter-moment-products-wiring-reference-ui — live-updating product state
+            // (`products`/`narratingProduct`, refreshed every native moment-state poll round)
+            // DATA plane. `onMomentStateChange` existed on `LivebuyPlayerCore` since
+            // player-moment-fields-bridge-core-flutter but was never wired at the container
+            // level — the LIVE 介紹中商品卡 / 商品清單 sheet / 商品袋角標 were stuck on
+            // `onChannelChange`'s channel-LOAD-TIME-ONLY `goods` snapshot. Extracted to a
+            // top-level function ([forwardMomentProductsToTemplate]) for the same
+            // unit-testability reason as [forwardChannelChangeToTemplate] /
+            // [forwardSubtitleChangeToTemplate] above.
+            onMomentStateChange: (info) =>
+                forwardMomentProductsToTemplate(info, LivebuyUI.playerTemplate),
+            // fix-flutter-replay-chat-progressive-reveal-reference-ui — replay chat
+            // progressive-reveal DATA plane. `handleReplayChatRevealed` existed on
+            // `DefaultPlayerTemplate` since `flutter-replay-chat-history-reveal-template`, but
+            // had no correct production caller — the prior `TemplateAttachment`
+            // `LBEvent.chatHistoryLoaded` wiring was removed by
+            // `fix-flutter-replay-chat-progressive-reveal-template` because that event is a
+            // native ONE-SHOT (full video's comments), not the PROGRESSIVE reveal this method's
+            // reconcile logic assumes. `onReplayChatRevealed` is core's correct progressive seam
+            // (fires repeatedly as replay playback advances). Extracted to a top-level function
+            // ([forwardReplayChatRevealedToTemplate]) for the same unit-testability reason as
+            // [forwardSubtitleChangeToTemplate] above.
+            onReplayChatRevealed: (comments) =>
+                forwardReplayChatRevealedToTemplate(comments, LivebuyUI.playerTemplate),
           ),
           // The WHOLE overlay (shell / feed-win / product-sheets / moments / gap-surfaces /
           // composer) is composed by the resolved design (granularity A). Default MinimalDesign
@@ -1508,17 +1939,38 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       onMoreMenuOpenChange: (v) {
         if (v != _moreMenuOpen) setState(() => _moreMenuOpen = v);
       },
+      // 展開進度條讓出空間（rb-flutter-scrub-expanded-chrome-lift）：接線比照上面既有 _cleanMode /
+      // _moreMenuOpen——鏡射 PlayerShellView 冒泡上來的 scrub 狀態，算出合流聊天室該不該額外上推
+      // （對齊 PlayerShellView 自己已經會上推的釘選卡 / 公告 banner）。
+      scrubHoldLifted: _scrubBarExpanded && !_isScrubbingProgressBar,
+      // 拖曳播放進度條期間隱藏合流聊天 feed（fix-flutter-scrub-hide-announce-chat-pinned，parity
+      // iOS/Android）：原樣轉發既有的 raw scrub 鏡像，不需要新的 callback——這個欄位跟上面
+      // scrubHoldLifted 讀同一份 `_isScrubbingProgressBar`，只是不經過「released-but-still-held」
+      // 那個 `_scrubBarExpanded &&` 判斷，直接反映「手指是否還按著」本身。
+      isScrubbing: _isScrubbingProgressBar,
+      onScrubbingChange: (v) {
+        if (v != _isScrubbingProgressBar) setState(() => _isScrubbingProgressBar = v);
+      },
+      onScrubBarExpandedChange: (v) {
+        if (v != _scrubBarExpanded) setState(() => _scrubBarExpanded = v);
+      },
+      // 系統底部安全區（fix-flutter-player-shell-bottom-safearea-gaps）：鏡像 PlayerShellView 已讀取
+      // 的 MediaQuery.of(context).padding.bottom，轉發給合流聊天 feed（容器組出的 sibling surface，
+      // 拿不到 PlayerShellView 自己那份 MediaQuery 讀取）。
+      safeAreaBottom: MediaQuery.of(context).padding.bottom,
       // Container-owned product LIST drawer open state (default closed; GOODS rail/bag tap opens
       // it via _routeRailItem; scrim/close dismisses) — parity iOS, no auto-present.
       productListPresented: _productListPresented,
       onDismissProductList: () {
-        if (_productListPresented) setState(() => _productListPresented = false);
+        if (_productListPresented)
+          setState(() => _productListPresented = false);
       },
       // 商品 sheet 開啟時抑制上下滑動換片（rb-flutter-block-swipe-nav-when-sheet-open）：接線
       // 比照上面既有 _cleanMode / _moreMenuOpen。
       productSheetsPresented: _productSheetsPresented,
       onProductSheetsPresentedChange: (v) {
-        if (v != _productSheetsPresented) setState(() => _productSheetsPresented = v);
+        if (v != _productSheetsPresented)
+          setState(() => _productSheetsPresented = v);
       },
       onMinimize: c.onMinimize ?? _controller.minimize,
       onToggleMute: c.onToggleMute ?? _toggleMute,
@@ -1544,11 +1996,12 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // chatEnabled==false）→ 點暱稱也比照留言先呈現「請先登入」modal（與 onComment 共用同一純函式
       // liveCommentRequiresLogin），MUST NOT 開暱稱 modal。
       onNickname: _gatedNickname,
-      // 「現正直播」提示鈕（rb-flutter-live-now-pill）：`hasLiveNow` 讀輪詢結果是否非空；
+      // 「現正直播」提示鈕（rb-flutter-live-now-pill,
+      // flutter-live-now-pill-auto-shopid-turnkey-reference-ui）：`hasLiveNow` 讀輪詢結果是否非空；
       // `onGoLive` 讀出目前偵測到的 `LBVideoItem` → host override 或預設 `_switchVideo`
-      // （比照 `onPickHot` 預設換片）。`_liveNowController == null`（`config.shopId == null`）
-      // 時 `hasLiveNow` 恆 false、`onGoLive` 恆 no-op（鈕本就不會被組出，這裡的空值防禦僅為
-      // 保守起見）。
+      // （比照 `onPickHot` 預設換片）。`_liveNowController == null`（`resolvedLiveNowShopId(...)`
+      // 解析出 `null` —— 見該欄位自己的 doc comment）時 `hasLiveNow` 恆 false、`onGoLive` 恆
+      // no-op（鈕本就不會被組出，這裡的空值防禦僅為保守起見）。
       hasLiveNow: _liveNowController?.liveNow != null,
       onGoLive: () {
         final live = _liveNowController?.liveNow;
@@ -1565,10 +2018,17 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // 滑向「無影片」方向（無 next / prev）→ 關閉播放器（swipe-nav-close-on-empty）：host
       // `config.onDismiss` wins，否則退回 core `controller.unload()`（停 poll/timer、暫停、清
       // video/channel、playerState=ended）。reference-ui 自身 NEVER 直接呼 unload。
-      onCloseRequest: c.onDismiss ?? () => _controller.unload(),
-      // Swipe in-place switch → notify-only (track shown id + raise config.onVideoSwitched);
-      // NO load (swipe already loaded via template forwarder). swipe-video-switched-notify.
+      // Shared with the VOD-ended-no-next auto-close via `_closePlayer`
+      // (rb-flutter-endscreen-live-empty-state).
+      onCloseRequest: _closePlayer,
+      // Swipe in-place switch → notify-only (track shown id + raise config.onVideoSwitched).
+      // swipe-video-switched-notify. flutter-swipe-video-load-requester-wiring-reference-ui: the
+      // OLD comment here ("NO load — swipe already loaded via template forwarder") was WRONG —
+      // that template forwarder (`VideoLoadRequester`) is a dead no-op in production (see
+      // `_onSwipeVideoLoad`'s doc comment). The sibling `onSwipeVideoLoad` seam below is what
+      // ACTUALLY reloads on swipe now.
       onSwipeDidSwitchVideo: _notifySwitchedVideo,
+      onSwipeVideoLoad: _onSwipeVideoLoad,
       // 🔴 加入活動：`onJoinEvent`（收 eid）維持為 host **觀察** hook。真的打 core join 的預設
       // 走下面帶 keyword 的 `onJoinEventWithKeyword`（EMAIL-LESS 陷阱同構：Flutter template
       // 到不了 core，只能在容器經 _controller 直呼）。這裡是本層**唯一**真的打 core join 的出口；
@@ -1589,8 +2049,8 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // 刻意**不**注入 `claimContactSubmitter` / `claimSubmitter`；日後任何 template change
       // 若要注入，MUST 於同一個 change 移除本行，否則同一次「確認領獎」會送出兩次
       // `POST /sdk/video/claim`（第二次後端回「已領過」→ 500 api.fail → 假失敗）。
-      onSubmitClaim:
-          c.onSubmitClaim ?? buildAwardClaimSubmit(_controller.requestAwardClaim),
+      onSubmitClaim: c.onSubmitClaim ??
+          buildAwardClaimSubmit(_controller.requestAwardClaim),
       onProductTap: c.onProductTap ?? _defaultOnProductTap,
       // 頻道/footer 分享預設（dropin-player-default-share-sheet-flutter，B 等義）：host 設了 onShare →
       // 覆蓋；未設 → 以 channel.share_url（playerTemplate.header.shareUrl）經 share_plus 開系統分享。
@@ -1620,7 +2080,8 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // 商品明細「更多商品」推薦卡播放圖示 → 換片（rb-flutter-product-detail-recommendations §4）：
       // 同 onPickHot 的 in-place switch 動作，但 MUST NOT 連動任何 dismiss —
       // ProductSheetsOverlayView 完全不呼叫這個 seam 以外的東西，sheet stack 自己維持開啟。
-      onSwitchRecommendationVideo: c.onSwitchRecommendationVideo ?? _switchVideo,
+      onSwitchRecommendationVideo:
+          c.onSwitchRecommendationVideo ?? _switchVideo,
       onSkip: c.onSkip ?? _controller.skipStart,
       onWatchNext: c.onWatchNext,
       onPickHot: c.onPickHot ??
@@ -1640,6 +2101,12 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
             );
           },
       onCancel: c.onCancel ?? _controller.cancelAutoNext,
+      // 空狀態「查看購物車」CTA (rb-flutter-endscreen-live-empty-state): the SAME
+      // core seam the product list / detail sheet's own cart CTA uses
+      // (`Player.requestViewCart(productId:)` — notification-type `VIEW_CART`,
+      // event-interceptor spec). No `productId` — the end screen has no
+      // single-product context.
+      onViewCart: c.onViewCart ?? () => _controller.requestViewCart(),
       onRetry: c.onRetry ?? () => _controller.load(_currentVideoId),
       onDismiss: c.onDismiss,
       onLogin: c.onLogin,
@@ -1664,21 +2131,33 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     );
   }
 
-  /// DEFAULT `onShare` glue (flutter-share-crash-guard-reference-ui): reads the live
+  /// DEFAULT `onShare` glue (flutter-share-crash-guard-reference-ui, extended by
+  /// flutter-share-failure-visibility-reference-ui and
+  /// flutter-share-failure-onshare-failed-callback-reference-ui): reads the live
   /// `channel.share_url` and delegates the decision + crash guard to the top-level
-  /// [performDefaultShare] (kept a pure, directly-testable function — see this file's MARK
-  /// block above [performDefaultShare] for why the guard itself lives there, not here).
+  /// [performDefaultShare] (kept a pure, directly-testable function — see this file's MARK block
+  /// above [performDefaultShare] for why the guard itself lives there, not here). Threads the
+  /// container's own on-screen bounds (via [_shareAnchorRect]) as the iPad/Mac popover anchor,
+  /// and `widget.config.onShareFailed` straight through as the optional host failure notifier.
   Future<void> _defaultOnShare() {
     final url = LivebuyUI.playerTemplate?.header.shareUrl ?? '';
-    return performDefaultShare(url, _defaultShareOpener);
+    return performDefaultShare(
+      url,
+      _defaultShareOpener,
+      sharePositionOrigin: _shareAnchorRect(),
+      onShareFailed: widget.config.onShareFailed,
+    );
   }
 
-  /// DEFAULT `onShareProduct` glue (rb-flutter-product-list-share-tap-noop): reads the SAME
-  /// live `channel.share_url` [_defaultOnShare] reads, and delegates the link-building +
-  /// crash-guarded system-share decision to the top-level [performDefaultShareProduct]. The
-  /// empty-`channel.share_url` fallback is the existing channel-level `simulateShareTap()` SDK
-  /// event — see [performDefaultShareProduct]'s doc for why that fallback is correct parity
-  /// (iOS `presentProductShare`), not a residual no-op.
+  /// DEFAULT `onShareProduct` glue (rb-flutter-product-list-share-tap-noop, extended by
+  /// flutter-share-failure-visibility-reference-ui and
+  /// flutter-share-failure-onshare-failed-callback-reference-ui): reads the SAME live
+  /// `channel.share_url` [_defaultOnShare] reads, and delegates the link-building + crash-guarded
+  /// system-share decision to the top-level [performDefaultShareProduct]. The empty-
+  /// `channel.share_url` fallback is the existing channel-level `simulateShareTap()` SDK event —
+  /// see [performDefaultShareProduct]'s doc for why that fallback is correct parity (iOS
+  /// `presentProductShare`), not a residual no-op. Threads the SAME popover anchor
+  /// [_defaultOnShare] does, and the SAME `widget.config.onShareFailed`.
   Future<void> _defaultOnShareProduct(LBProduct product) {
     final base = LivebuyUI.playerTemplate?.header.shareUrl ?? '';
     return performDefaultShareProduct(
@@ -1686,7 +2165,25 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       product.beginTime,
       _defaultShareOpener,
       onEmptyShareUrl: () => _controller.operationPanel.simulateShareTap(),
+      sharePositionOrigin: _shareAnchorRect(),
+      onShareFailed: widget.config.onShareFailed,
     );
+  }
+
+  /// Computes the iPad/Mac popover anchor for the DEFAULT share sheet from THIS container's own
+  /// on-screen bounds (flutter-share-failure-visibility-reference-ui — parity iOS
+  /// `LivebuyPlayer.swift`'s `pop.sourceView` / `pop.sourceRect`, which anchors the native share
+  /// popover to the player surface that triggered it, instead of `share_plus`'s undocumented
+  /// platform fallback when `sharePositionOrigin` is omitted). Same `context.findRenderObject()`
+  /// idiom as `live_bottom_bar_view.dart`'s `_resolveHorizontalShift` — safe to call synchronously
+  /// from a tap handler since the container is already laid out by the time a tap is delivered.
+  /// Returns `null` (falls back to `share_plus`'s own pre-existing behavior, byte-identical to
+  /// before this change) when there is no render box yet — defensive, should not happen from a
+  /// real tap handler in practice.
+  Rect? _shareAnchorRect() {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
   }
 
   /// DEFAULT `onServiceLink` glue (flutter-share-crash-guard-reference-ui): reads the container's
@@ -1704,7 +2201,8 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   void _gatedComment() {
     // chatEnabled 已含 isGuest（= live && !(isGuest && gc==0)），故傳 isLoggedIn:false 仍正確（與暱稱閘
     // 一致的 guest 假設）。無 LIVE template（demo / golden / LivebuyUI 未裝）→ 預設 true（不 login-gate）。
-    final chatEnabled = LivebuyUI.playerTemplate?.operationRail.chatEnabled ?? true;
+    final chatEnabled =
+        LivebuyUI.playerTemplate?.operationRail.chatEnabled ?? true;
     if (liveCommentRequiresLogin(false, chatEnabled)) {
       _login.present();
     } else if (liveCommentRequiresNickname(false, _guestNickname)) {
@@ -1740,7 +2238,8 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// （與 [_gatedComment] 共用同一純函式 [liveCommentRequiresLogin]），不開暱稱 modal——非登入不可留言的
   /// 訪客不該先去設一個用不到的暱稱。否則維持 `_nickname.present(false)`（送出後不接 composer）。
   void _gatedNickname() {
-    final chatEnabled = LivebuyUI.playerTemplate?.operationRail.chatEnabled ?? true;
+    final chatEnabled =
+        LivebuyUI.playerTemplate?.operationRail.chatEnabled ?? true;
     if (liveCommentRequiresLogin(false, chatEnabled)) {
       _login.present();
     } else {
@@ -1825,6 +2324,42 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     );
     return null;
   }
+}
+
+// MARK: - _PlayerOpaqueBackdrop (rb-flutter-player-open-opaque-backdrop)
+
+/// The bottommost layer of `LivebuyPlayer`'s overlay `Stack` — a plain, always-present,
+/// STATELESS opaque backdrop. Deliberately gated on NOTHING (no `startPhase`, no
+/// native-texture-attach signal): it exists purely so the container's own
+/// `Material(type: MaterialType.transparency)` is never, even for a single frame, see-through
+/// to whatever screen sits behind it.
+///
+/// Without this, opening `LivebuyPlayer` from a host route (e.g. `LivebuyWidget`'s video list
+/// via `Navigator.push`) exposed a real, user-visible sequence on real hardware: chrome
+/// (header / chat / product rail) renders on the very first build since it does not gate on
+/// loading state, while `LivebuyPlayerCore`'s native texture has not attached yet AND
+/// `MomentsModel.startPhase` (read from the PROCESS-GLOBAL `DefaultPlayerTemplate` singleton —
+/// see `docs/reference-ui/parity-debt-ledger.md` #9 — which does not necessarily reset the
+/// instant a new video opens) has not yet reflected this session's opening event. In that
+/// window the container was fully transparent, exposing the pushing route underneath; once the
+/// loading event finally arrived, `MomentsOverlayView` painted its own opaque brand backdrop
+/// ON TOP, visually "hiding" the chrome that had already appeared (it was never removed, just
+/// covered) until the stream was ready.
+///
+/// This widget does not try to detect or fix that timing race — it only ensures there is
+/// always something opaque at the very bottom of the `Stack` for everything else (native
+/// texture, chrome, the moments loading overlay) to naturally paint over, regardless of which
+/// asynchronous signal arrives first. Uses the SAME `#0C0C10` brand backdrop hex the `.loading`
+/// phase overlay already paints (`start_screen.dart`'s `_brandBackdrop`) so a viewer who does
+/// see it briefly sees a color already established as this player's own loading color, not an
+/// unrelated new one. `const` so it never rebuilds.
+class _PlayerOpaqueBackdrop extends StatelessWidget {
+  const _PlayerOpaqueBackdrop();
+
+  static const Color _brandBackdrop = Color(0xFF0C0C10);
+
+  @override
+  Widget build(BuildContext context) => const ColoredBox(color: _brandBackdrop);
 }
 
 /// 🔴 暱稱送出成功後的**續作三路 + 世代守門**（rb-flutter-nickname-taken-inline-error）。
@@ -1934,8 +2469,37 @@ String guestNicknameSubmitErrorText(Object error) {
 /// `LivebuyPlayerCore(onSubtitleChange: ...)` call site would be unreachable by a unit test. This
 /// function is that logic, pulled out to where it CAN be tested directly: construct a
 /// `DefaultPlayerTemplate`, call this function, assert `template.subtitle.{available,url}`.
-void forwardSubtitleChangeToTemplate(LBSubtitleInfo info, DefaultPlayerTemplate? template) {
+void forwardSubtitleChangeToTemplate(
+    LBSubtitleInfo info, DefaultPlayerTemplate? template) {
   template?.handleSubtitleChannelInfo(available: info.available, url: info.url);
+}
+
+// MARK: - Replay chat progressive-reveal DATA plane wiring
+// (fix-flutter-replay-chat-progressive-reveal-reference-ui)
+
+/// Forward the core's PROGRESSIVE `onReplayChatRevealed` seam (fired by
+/// `LivebuyPlayerCore.onReplayChatRevealed`, repeatedly during finished-live replay as playback
+/// advances, each call carrying the currently-revealed prefix ascending by `LBComment.time`)
+/// into the bound [template]'s `handleReplayChatRevealed` — the single write path that
+/// reconciles the merged chat feed for replay. `template == null` (no `LivebuyUI` installed —
+/// demo / golden / a host driving `LivebuyPlayerCore` bare) is a no-op.
+///
+/// This is the ONLY correct production caller of `handleReplayChatRevealed` — the prior
+/// `TemplateAttachment` wiring via the unified `LBEvent.chatHistoryLoaded` case was removed by
+/// `fix-flutter-replay-chat-progressive-reveal-template` because that event is a native ONE-SHOT
+/// (fires once, full video's comments, unrelated to playback position), not the progressive
+/// reveal `handleReplayChatRevealed`'s reconcile logic assumes.
+///
+/// Extracted as a standalone top-level function — same rationale as
+/// [forwardSubtitleChangeToTemplate]: the container `LivebuyPlayer` cannot be constructed in a
+/// widget test (its `LivebuyPlayerController` rides a real per-view `MethodChannel` backed by a
+/// platform view), so an inline closure body at the `LivebuyPlayerCore(onReplayChatRevealed: ...)`
+/// call site would be unreachable by a unit test. This function is that logic, pulled out to
+/// where it CAN be tested directly: construct a `DefaultPlayerTemplate`, call this function,
+/// assert `template.feed.history`.
+void forwardReplayChatRevealedToTemplate(
+    List<LBComment> comments, DefaultPlayerTemplate? template) {
+  template?.handleReplayChatRevealed(comments);
 }
 
 // MARK: - Channel-change header chrome + rail service-link wiring
@@ -1943,11 +2507,13 @@ void forwardSubtitleChangeToTemplate(LBSubtitleInfo info, DefaultPlayerTemplate?
 
 /// Forward the core's per-channel [LBPlayerChannelInfo] (fired by
 /// `LivebuyPlayerCore.onChannelChange`) into the bound [template]'s header chrome
-/// (`handleHeaderChrome`) and the side-rail「聯繫商家」availability
-/// (`handleRailEnablement`'s `serviceLinkAvailable`). `template == null` (no
-/// `LivebuyUI` installed — demo / golden / a host driving `LivebuyPlayerCore` bare)
-/// is a no-op. Parity iOS `DefaultPlayerTemplate.ingestChannel` / RN
-/// `container/LivebuyPlayer.tsx`'s `onChannelChange` handler
+/// (`handleHeaderChrome`), the side-rail「聯繫商家」availability
+/// (`handleRailEnablement`'s `serviceLinkAvailable`), and (among other channel-load
+/// fields forwarded below) the general `.loading`-phase cover photo
+/// (`applyLoadingCover`, `player-loading-cover-background-reference-ui-flutter`).
+/// `template == null` (no `LivebuyUI` installed — demo / golden / a host driving
+/// `LivebuyPlayerCore` bare) is a no-op. Parity iOS `DefaultPlayerTemplate.ingestChannel`
+/// / RN `container/LivebuyPlayer.tsx`'s `onChannelChange` handler
 /// (`player-channel-chrome-wiring-reference-ui-rn`).
 ///
 /// 🔴 **Flutter-specific merge-safety (design.md Decision 1) — READ BEFORE EDITING.**
@@ -1988,17 +2554,26 @@ void forwardChannelChangeToTemplate(
     shareUrl: chrome.shareUrl,
     isLive: chrome.isLive,
     isFinishedLiveReplay: chrome.isFinishedLiveReplay,
+    // rb-flutter-flash-sale-live-signal-wiring: the LAST missing hop — `handleHeaderChrome`'s
+    // `isFlashSale` parameter (channel-flash-sale-flag-template-flutter) had no caller feeding
+    // it a real value until now; `deriveHeaderChromeFields` above already surfaces it verbatim
+    // from `info.isFlashSale`.
+    isFlashSale: chrome.isFlashSale,
   );
-  final rail = template.operationRail;
   bool enabledFor(LBSideRailKind kind) =>
-      rail.items.firstWhere((i) => i.kind == kind).enabled;
+      template.operationRail.items.firstWhere((i) => i.kind == kind).enabled;
   template.handleRailEnablement(
-    // Read-then-pass-through — MUST NOT be a fixed default (see the 🔴 doc above).
-    chatEnabled: rail.chatEnabled,
+    // flutter-rail-enablement-channel-derive-reference-ui: previously a read-then-
+    // pass-through of the template's own current value (correct at the time this
+    // container was first wired — `LBPlayerChannelInfo` had no `guestComment` field
+    // to derive from yet). `guestComment`/`liveStatus` are now both on `info` — derive
+    // fresh, same formula `TemplateAttachment`'s POLL_RECEIVED case already uses. See
+    // this change's design.md for why the OTHER two fields below are unaffected.
+    chatEnabled: deriveChatEnabled(info.liveStatus, info.guestComment),
     subtitleAvailable: enabledFor(LBSideRailKind.subtitle),
-    // The ONE field this event actually drives.
+    // The other field this event actually drives.
     serviceLinkAvailable: deriveServiceLinkAvailable(info.serviceLink),
-    guestEditAvailable: enabledFor(LBSideRailKind.guestNameEdit),
+    guestEditAvailable: deriveGuestEditAvailable(info.guestComment),
   );
   // product-list-wiring-reference-ui-flutter: forward the channel-load-time `goods`
   // snapshot (product-list-bridge-core-flutter) into the existing `flutter-ui` public
@@ -2071,6 +2646,71 @@ void forwardChannelChangeToTemplate(
     liveStatus: info.liveStatus,
     type: info.type,
   );
+  // player-loading-cover-background-reference-ui-flutter: forward the channel's cover
+  // photo into the template's GENERAL (non-upcoming-scoped) `loadingCover`
+  // (`player-loading-cover-background-template-flutter`, already-archived, previously
+  // headless-safe dead code with zero production callers) — parity RN's
+  // `onChannelChange` handler (`player-loading-cover-background-reference-ui-rn`)
+  // calling `template.applyLoadingCover(info.cover)` alongside the same-shaped calls
+  // above. Pure pass-through, no derivation — `applyLoadingCover` already
+  // diff-then-notifies internally (parity `handleProducts` / `handleInfo` above), so a
+  // repeated unchanged `info.cover` on a later channelChange tick is a safe no-op.
+  // Distinct from the upcoming-scoped `cover` forwarded to `handleUpcoming` above:
+  // `loadingCover` applies to the GENERAL `.loading` phase (live / VOD / upcoming
+  // alike), not only the upcoming-countdown surface — see `MomentsModel.loadingCover`
+  // (`moments_model.dart`), which mirrors this field independently of
+  // `PlayerShellModel`'s upcoming-scoped cover.
+  template.applyLoadingCover(info.cover);
+  // live-announce-immediate-display-reference-ui-flutter: forward the channel's
+  // announcement texts (`channel-notice-bridge-core-flutter`'s `info.sysNotice` /
+  // `info.notice` projection) into the existing `flutter-ui` public entry point
+  // `handleChannelNotices` — parity iOS's native template reading `channel.notice` /
+  // `.sysNotice` directly at channel-load time (`DefaultPlayerChrome.swift:658-662`),
+  // unaffected by playback state. Prior to this call, `LBPlayerChannelInfo.notice` /
+  // `.sysNotice` had ZERO production consumers, so the only way the notice banner /
+  // VideoInfoPanel notice tab picked up an announcement was the existing
+  // `POLL_RECEIVED` path (`template_attachment.dart`), which only starts once the
+  // player reaches `.playing` (`PollManager` only polls while playing) — the reported
+  // root cause of「Flutter 直播公告橫幅沒有立即顯示」(the announcement banner not
+  // appearing immediately). This call is UNCONDITIONAL (no `isNotEmpty` guard):
+  // `handleChannelNotices` → `noticeTab.injectNotices` is already a safe
+  // diff-then-notify overwrite, and guarding on non-empty would leak a stale
+  // announcement from a previous video across a channel switch. This path coexists
+  // with, and does NOT replace, the existing `POLL_RECEIVED` path above — that path
+  // remains the mechanism for a mid-live 後台 announcement edit to reach an already-
+  // playing viewer; both call the same idempotent method, so a repeated tick with an
+  // unchanged value is a safe no-op.
+  template.handleChannelNotices(
+    systemNotice: info.sysNotice,
+    notice: info.notice,
+  );
+}
+
+/// flutter-moment-products-wiring-reference-ui — forwards the LIVE-updating product state
+/// (`info.products`/`info.narratingProduct`, refreshed every native moment-state poll round —
+/// see `flutter-android-moment-products-bridge-core`) into the SAME `flutter-ui` public entry
+/// point [forwardChannelChangeToTemplate] above already calls with the channel-LOAD-TIME-ONLY
+/// `info.goods` snapshot: `DefaultPlayerTemplate.handleProducts`. No merge/priority logic is
+/// needed — both calls target the same sink (last call wins), and `momentStateChange` naturally
+/// arrives after and more frequently than `channelChange`, so the live snapshot supersedes the
+/// static one in practice. `handleProducts` already diff-then-notifies internally (same as
+/// `forwardChannelChangeToTemplate`'s own doc comment notes), so a repeated tick with an
+/// unchanged `products` list is a safe no-op.
+///
+/// Deliberately scoped to ONLY `products`/`narratingProduct` — [LBPlayerMomentInfo]'s other 6
+/// fields (`viewerCount`/`isSubscribed`/`autoNextCountdownActive`/`autoNextRemainingSeconds`/
+/// `nextItem`/`hotItems`) are explicitly NOT read or forwarded here (design.md "範疇刻意收斂");
+/// wiring them is a separate, untested, unrequested capability.
+///
+/// Extracted as a standalone top-level function — same rationale as
+/// [forwardChannelChangeToTemplate] / [forwardSubtitleChangeToTemplate]: the container
+/// `LivebuyPlayer` cannot be constructed in a widget test (its `LivebuyPlayerController` rides a
+/// real per-view `MethodChannel` backed by a platform view), so an inline closure body at the
+/// `LivebuyPlayerCore(onMomentStateChange: ...)` call site would be unreachable by a unit test.
+void forwardMomentProductsToTemplate(
+    LBPlayerMomentInfo info, DefaultPlayerTemplate? template) {
+  if (template == null) return;
+  template.handleProducts(info.products, active: info.narratingProduct);
 }
 
 /// Default product-row tap forward (flutter-product-tap-diversion-wiring-reference-ui). Calls

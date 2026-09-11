@@ -1,6 +1,6 @@
 name: livebuy_flutter_reference_ui
 description: Reference-UI (drop-in default pixel) layer for the Livebuy Flutter SDK.
-version: 2.2.0
+version: 2.3.0
 homepage: https://github.com/livebuy/livebuy-sdk/tree/main/flutter-reference-ui
 # Internal monorepo package consumed via a path dependency on the template layer
 # (`livebuy_flutter_ui`); not published to pub.dev.
@@ -26,7 +26,7 @@ dependencies:
     git:
       url: https://github.com/ariesweng/livebuy-flutter-sdk.git
       path: livebuy_flutter_ui
-      ref: v2.2.0
+      ref: v2.3.0
   # rb-flutter-widget-card-looping-preview: the widget card's `preview` looping animation
   # (parity iOS AVFoundation / Android media3 / RN react-native-video). A federated Flutter
   # plugin (auto-registers on iOS/Android in consumer apps); built ONLY on the host-runtime
@@ -42,7 +42,7 @@ dependencies:
   # (parity iOS UIActivityViewController / Android Intent.ACTION_SEND / RN Share.share). A
   # federated Flutter plugin (auto-registers on iOS/Android in consumer apps). Only invoked on
   # the footer onShare default when the host did not wire `config.onShare`.
-  share_plus: ^7.2.0
+  share_plus: ^12.0.2
   # rb-flutter-win-claim-footer-links: opens the win-claim modal's footer legal links
   # (`LaunchMode.inAppBrowserView` / `.externalApplication`, routed by core
   # `LBURLOpenPolicy`). Was already resolved transitively (via the `livebuy_flutter_ui` path

@@ -176,6 +176,14 @@ class ProductSheetsModel {
   /// Current playhead seconds (`playbackProgress.position`). Demo → 0.
   double get position => template?.playbackProgress.position ?? 0;
 
+  /// 搶購中（flash sale）flag — raw passthrough of `header.isFlashSale`
+  /// (`channel-flash-sale-flag-template-flutter`). Independent of [isLive] / [isReplay] — a
+  /// flash-sale channel can be live, VOD, or a finished replay; this flag does not gate or
+  /// interact with either. Feeds `ProductListSheet.isFlashSale` → `ProductRow.isFlashSale` →
+  /// `ProductRowNameTag.resolve(isFlashSale:)`'s `.live` rush-vs-livePrice branch
+  /// (rb-flutter-flash-sale-live-signal-wiring). Demo → `false` (golden byte-identical).
+  bool get isFlashSale => template?.header.isFlashSale ?? false;
+
   /// Derived playback mode for the product-row overlay (replay takes precedence over
   /// live). `null` for a demo / golden model (no bound template) → the view falls back
   /// to its real-frame `live` flag so goldens stay byte-identical. Parity iOS / Android /

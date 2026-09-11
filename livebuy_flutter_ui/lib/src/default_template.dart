@@ -17,6 +17,7 @@ import 'default_product_sheet.dart';
 import 'default_widget_content.dart';
 import 'default_win_claim.dart';
 import 'lb_ui_options.dart';
+import 'video_feed_snapshot_cache.dart';
 
 /// Marker class identifying the built-in Default template.
 class DefaultTemplate {}
@@ -238,6 +239,62 @@ class PinnedMessage {
 
   @override
   int get hashCode => Object.hash(kind, text, name, id);
+}
+
+// MARK: - Replay chat bridge (fix-flutter-replay-chat-progressive-reveal-template)
+//
+// Flutter parity port of iOS `DefaultPlayerTemplate.ReplayChatReconcile` / Android
+// `DefaultPlayerTemplate.ReplayChatReconcile` (sealed interface there; a small plain
+// class hierarchy here — this file has no existing `sealed class` precedent, see
+// design.md D4). Reconciles the core's `onReplayChatRevealed` "currently-revealed
+// prefix" into the merged `feed` so replay (finished-live) shows chat history the
+// same way iOS/Android already do.
+//
+// 🔴 Driven DIRECTLY by the `flutter-reference-ui` container's `onReplayChatRevealed`
+// forward (`LivebuyPlayerCore.onReplayChatRevealed` → `handleReplayChatRevealed`),
+// NOT by `TemplateAttachment` / the unified `LBEvent` listener. An EARLIER version of
+// this bridge (`flutter-replay-chat-history-reveal-template`) wrongly routed the
+// unified-listener event `LBEvent.chatHistoryLoaded` (`CHAT_HISTORY_LOADED`) into this
+// method — that event is a ONE-SHOT, full-list notification fired once when comment
+// pagination completes (unrelated to playback position), NOT a progressively-growing
+// prefix, so it made the whole video's history append in one shot instead of
+// following playback. `fix-flutter-replay-chat-progressive-reveal-template` removed
+// that wiring; `TemplateAttachment` no longer has a case for `LBEvent.chatHistoryLoaded`
+// at all.
+
+/// Pure reconcile decision for [DefaultPlayerTemplate.handleReplayChatRevealed] (parity
+/// iOS `ReplayChatReconcile` / Android `ReplayChatReconcile`). The core always sends
+/// "the same ascending-time prefix" (longer on forward progress, shorter on seek-back /
+/// cleared / switch) — this is the ONE decision point translating "incoming prefix
+/// length vs. already-appended cursor" into an action.
+abstract class ReplayChatReconcile {
+  const ReplayChatReconcile();
+}
+
+/// Append the new tail `comments[from, to)` only (prefix grew or is unchanged;
+/// `to == from` is an empty delta — a no-op, MUST NOT rebuild/flash the existing rows).
+class ReplayChatAppendDelta extends ReplayChatReconcile {
+  final int from;
+  final int to;
+  const ReplayChatAppendDelta({required this.from, required this.to});
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReplayChatAppendDelta && other.from == from && other.to == to;
+  @override
+  int get hashCode => Object.hash(from, to);
+}
+
+/// Clear then rebuild `comments[0, to)` in full (prefix shrank: seek backward / cleared
+/// (`to == 0`) / video switch).
+class ReplayChatRebuild extends ReplayChatReconcile {
+  final int to;
+  const ReplayChatRebuild({required this.to});
+
+  @override
+  bool operator ==(Object other) => other is ReplayChatRebuild && other.to == to;
+  @override
+  int get hashCode => to.hashCode;
 }
 
 /// Pure classifier (parity iOS/Android/RN `isAddToCartAuthRequired`): `true` only for the core
@@ -653,6 +710,13 @@ class DefaultPlayerTemplate {
   /// [VodSeekRequester] shape). Default is an inert no-op (headless-safe).
   final VodSeekRequester _seekByRequester;
 
+  /// chat-history-video-switch-cache-flutter — process-level bounded cache (parity
+  /// iOS/Android `VideoFeedSnapshotCache.shared`, D3) so an in-place video switch back to an
+  /// already-visited video restores its chat/activity history instead of showing empty.
+  /// Defaults to the shared singleton; tests inject an independent instance (or call
+  /// `VideoFeedSnapshotCache.shared.resetForTesting()`) to avoid cross-test bleed.
+  final VideoFeedSnapshotCache _feedSnapshotCache;
+
   DefaultPlayerTemplate({
     required this.sdkConfig,
     this.hostOptions,
@@ -688,9 +752,14 @@ class DefaultPlayerTemplate {
     TogglePlayPauseRequester? togglePlayPauseRequester,
     VodSeekRequester? seekRequester,
     VodSeekRequester? seekByRequester,
+    // chat-history-video-switch-cache-flutter — optional override seam (design.md D3).
+    // Defaults to the process-level `VideoFeedSnapshotCache.shared` singleton; tests inject an
+    // independent instance to avoid cross-test bleed.
+    VideoFeedSnapshotCache? feedSnapshotCache,
   })  : _openInAppBrowser = openInAppBrowser ?? _defaultInAppBrowserOpener,
         _openExternalUrl = openExternalUrl ?? _defaultExternalUrlOpener,
         feed = feed ?? DefaultActivityFeed(),
+        _feedSnapshotCache = feedSnapshotCache ?? VideoFeedSnapshotCache.shared,
         _eventJoinRequester = eventJoinRequester ?? ((_, __) {}),
         // live-activity-entry-flutter-template — [activeEvent] reuses the SAME
         // injected [EventJoinRequester] seam as [_eventJoinRequester] / [joinEvent]
@@ -755,10 +824,10 @@ class DefaultPlayerTemplate {
   }
 
   /// `VIDEO_SWITCH` — reset the per-video-session family-2 overlay so the next video
-  /// starts clean: clear the merged feed + the win-claim unclaimed entry / result
-  /// (parity with iOS `handleVideoSwitch`). Also resets the per-session
-  /// backlog-ingested flag so the next video's first round re-shows its history
-  /// backlog (chat-history-dedupe-template).
+  /// starts clean: clear (or, for `feed`, restore-if-cached — see below) the merged feed
+  /// + the win-claim unclaimed entry / result (parity with iOS `handleVideoSwitch`). Also
+  /// resets the per-session backlog-ingested flag so an unvisited video's first round
+  /// re-shows its history backlog (chat-history-dedupe-template).
   ///
   /// [from] / [to] (activity-entry-video-switch-cache-and-hide-flutter) are the
   /// wire's `from_video_id` / `to_video_id` (forwarded by `TemplateAttachment`'s
@@ -767,14 +836,83 @@ class DefaultPlayerTemplate {
   /// `activeEvent.switchVideo(from:, to:)` (replacing the plain `activeEvent.clear()`)
   /// so the activity entry resolves IMMEDIATELY for the new video — a session-cached
   /// snapshot restores instantly, an unvisited video collapses to empty — instead of
-  /// waiting for the next 5s poll. `feed` / `winClaim` are unaffected (out of scope —
-  /// only the activity entry gets a switch cache); each `clear()` / `switchVideo()`
-  /// still fires its own coalesced notification.
+  /// waiting for the next 5s poll.
+  ///
+  /// chat-history-video-switch-cache-flutter — `feed` now gets the SAME switch-cache
+  /// treatment (parity iOS/Android `VideoFeedSnapshotCache`, design.md D1–D3): [from]'s
+  /// current `{feed.history, _seenPushIds}` is saved as one atomic snapshot (skipped when
+  /// history is empty — nothing to restore later) BEFORE any reset; [to] is then resolved
+  /// against the same cache — a hit restores `feed` + `_seenPushIds` together and forces
+  /// `_hasIngestedBacklog = true` (D2 — a stray backlog round for an already-known video
+  /// must be dropped wholesale, not merged into the restored snapshot); a miss (never
+  /// visited this process, or `to == null`) keeps TODAY's exact `feed.clear()` +
+  /// `_hasIngestedBacklog = false` + `_seenPushIds.clear()` behavior so the normal
+  /// backlog-fetch path populates it from the network. `winClaim` is unaffected (out of
+  /// scope, unchanged); each clear/restore still fires its own coalesced notification.
   void handleVideoSwitch({String? from, String? to}) {
-    feed.clear();
+    if (from != null) {
+      _feedSnapshotCache.save(from, feed.history, _seenPushIds);
+    }
     winClaim.clear();
+    // flutter-replay-chat-history-reveal-template — 回放聊天游標同步歸 0（feed 即將 clear 或
+    // restore，否則下一場前綴會誤判前進/倒退）。parity iOS/Android 同一行為；core 也會在換片時
+    // 送 `[]`，兩路皆安全。
+    _replayChatAppendedCount = 0;
     activeEvent.switchVideo(from: from, to: to);
-    _hasIngestedBacklog = false;
+    final cached = to == null ? null : _feedSnapshotCache.snapshotFor(to);
+    if (cached != null) {
+      feed.restore(cached.history);
+      _seenPushIds
+        ..clear()
+        ..addAll(cached.seenPushIds);
+      _hasIngestedBacklog = true;
+    } else {
+      feed.clear();
+      _hasIngestedBacklog = false;
+      // flutter-chat-push-id-dedupe-template — a new video session's push ids must not collide
+      // with the previous session's already-seen set.
+      _seenPushIds.clear();
+    }
+    // flutter-notice-tab-video-switch-reset-template — parity Android/RN `clear()`, which have
+    // always cleared the notice tab on switch. `notice`/`sys_notice` only ever arrive via
+    // POLL_RECEIVED (no channel-load-time source on Flutter), and POLL_RECEIVED never fires for
+    // a finished-live replay (native PollManager only runs while liveStatus == 1) — without this,
+    // switching to a replay left the PREVIOUS video's notice banner stuck permanently, with no
+    // future event able to correct it.
+    noticeTab.clear();
+    // flutter-startscreen-reset-on-new-session-template — parity with the fresh-per-instance
+    // `startScreen.phase` (`loading` default) iOS/Android/RN get "for free" when a new
+    // template object is constructed per player open: this singleton's `_phase` otherwise
+    // keeps whatever value the PREVIOUS video's session left it at (typically `done`) until
+    // a genuine native state-change event round-trips back. Reset it here alongside the
+    // other five view-models so `handleVideoSwitch()` remains the single place a caller can
+    // rely on for "this is a fresh video session now" — diff-then-notify, no-op if already
+    // loading.
+    startScreen.resetForNewSession();
+    // flutter-loadingcover-reset-on-new-session-template — same singleton-staleness family as
+    // `startScreen` above: `loadingCoverNotifier` only updates once `onChannelChange` round-trips
+    // back with the NEW video's channel data, so without this reset the loading surface keeps
+    // painting the PREVIOUS video's cover photo as its backdrop until that arrives (real-device
+    // report: closing a pink-haired streamer's video then opening a different, dark-haired one
+    // showed the pink-haired cover under the loading mark for several frames). Resetting to ''
+    // falls back to the existing solid `#0C0C10` brand backdrop (`StartScreenView
+    // .loadingCoverURL`'s existing empty-cover branch) instead of a stale wrong photo.
+    applyLoadingCover('');
+    // flutter-product-sheet-stack-video-switch-reset-template — the five product-sheet-stack
+    // view-models (product-sheet-stack-template, §447) were NEVER reset on video switch: opening
+    // video A's product detail, picking a variant/qty, then switching to video B WITHOUT
+    // dismissing the sheet left A's product id / spec selection / qty live — a data-correctness
+    // risk (not just visual staleness), since [addToCart] would submit A's product/spec while the
+    // UI context is already B. Parity with RN `DefaultTemplate.clear()`, which resets all five
+    // (`productSheet.clear()` / `variantPicker.clear()` / `qtyStepper.clear()` /
+    // `miniCart.clear()` / `cartCTA.clear()`); Android's `clear()` resets four of the five
+    // (missing `variantPicker` — a known, out-of-scope Android gap, see proposal.md Platform
+    // Scope). All five clears are diff-then-notify / no-op-safe when already empty.
+    productSheet.clearDetail();
+    variantPicker.clear();
+    qtyStepper.clear();
+    miniCart.dismissMiniCart();
+    cartCTA.resetForSession();
   }
 
   // chat-history-dedupe-template — cursor-based backlog 分流 (取代會誤殺後台刻意重送之真實通知的內容指紋
@@ -801,6 +939,31 @@ class DefaultPlayerTemplate {
     return ingest;
   }
 
+  // flutter-chat-push-id-dedupe-template — push id 身分去重，與上面的 cursor-based backlog 分流
+  // 正交（後者是整批 round 層級的判定，本機制是單筆 id 層級的判定）。Port 自 iOS
+  // `DefaultPlayerTemplate.shouldIngestPush(id:seen:)` / Android
+  // `DefaultPlayerTemplate.shouldIngestPush(id, seen)`（chat-push-id-dedupe-template /
+  // -android，2026-07-03）——native 端的 `POLL_RECEIVED` push item 帶穩定後端 `id`
+  // （`pollPushItem`，omit-when-nil），因為後端在相鄰兩輪 `last`-cursor poll 之間會把同一筆最近的
+  // push 重送一次；native 自己的 `chatView` 用這個 id 去重，但那個去重碰不到 headless host（RN /
+  // Flutter），wire 特意帶上 `id` 供 host 自行去重。
+
+  /// Per-session set of already-seen push ids. **範圍僅限 push 桶**——`user[]`/`rush[]` 無 id 欄位，
+  /// `handleJoin`/`handlePurchase` 不受影響。Reset on [handleVideoSwitch].
+  final Set<String> _seenPushIds = {};
+
+  /// Pure: should this push item be ingested? `id == null`（缺省 / 舊後端）→ 一律 `true`，NOT 記錄
+  /// （fallback，不去重）。非 null `id` 已存在於 [seen] → 回傳 `false`（重複，丟棄）；首次出現 →
+  /// 記錄進 [seen] + 回傳 `true`。這是**身分**判定，NEVER 讀取或比較 `text`/`name` 等內容欄位——與
+  /// [shouldIngestPollDecision] 及 `DefaultActivityFeed` 的「MUST NOT 比對訊息內容」正交、不衝突：
+  /// 後者防的是「後台刻意重送的相同文字真實通知被內容去重誤殺」（resend 一律換新 id，不受本函式
+  /// 影響）；本函式只擋「完全相同 id」的重複。`Set.add` 的回傳值（新增成功 → `true`）天然給出所需
+  /// 的「是否已見過」語意，parity Swift `seen.insert(id).inserted` / Kotlin `seen.add(id)`。
+  static bool shouldIngestPush(String? id, Set<String> seen) {
+    if (id == null) return true;
+    return seen.add(id);
+  }
+
   /// §1 — core delivered a `showJoin` (poll `user[]`). Merges an 入場-tier item
   /// into the feed (excluded when the host owns activity). Parity with iOS/Android
   /// `handleJoin` / `handleShowJoin`.
@@ -812,6 +975,91 @@ class DefaultPlayerTemplate {
   /// §1 — a chat message (poll `push[]`). Merges a chat row into the SAME feed
   /// model (data-layer merge only — NOT written back into the ChatView source).
   void handleChat(String userName, String text) => feed.onChat(userName, text);
+
+  // fix-flutter-replay-chat-progressive-reveal-template — 回放聊天 bridge（parity iOS
+  // `handleReplayChatRevealed(_:)` / Android `handleReplayChatRevealed(comments)`）。Flutter 沒有
+  // 原生 typed callback 可持有（design D3），由 `flutter-reference-ui` 容器直接呼叫本方法（見
+  // `fix-flutter-replay-chat-progressive-reveal-reference-ui`），NOT 經 `TemplateAttachment` /
+  // 統一 `LBEvent` 監聽器（該路徑曾誤接 `LBEvent.chatHistoryLoaded`，已移除，見本檔案上方 MARK
+  // 區塊說明）。
+
+  /// 已 append 進 [feed] 的回放已揭露前綴長度（單調游標，parity iOS `replayChatAppendedCount` /
+  /// Android 同名欄位）。core 的 `onReplayChatRevealed` 一律送「同一條依 time 升序串的前綴」，此值即
+  /// 上次 reconcile 過的長度，用來判定「前進只 append 新尾段」或「倒退 / 清空 / 換片重建」。
+  /// [handleVideoSwitch] 換片時歸 0。
+  int _replayChatAppendedCount = 0;
+
+  /// Pure reconcile decision（唯一決策點，parity iOS/Android 同名函式）：`incomingCount >=
+  /// appendedCount`（前進 / 不變）→ 只 append 新尾段 `[appendedCount, incomingCount)`
+  /// （`incomingCount == appendedCount` 為空尾段 = no-op）；`incomingCount < appendedCount`
+  /// （seek 倒退 / 收到 `[]` 清空 / 換片）→ 先 clear 再重建全部 `[0, incomingCount)`。
+  static ReplayChatReconcile replayChatReconcile(int incomingCount, int appendedCount) =>
+      incomingCount >= appendedCount
+          ? ReplayChatAppendDelta(from: appendedCount, to: incomingCount)
+          : ReplayChatRebuild(to: incomingCount);
+
+  /// 把回放歷史 [LBComment] 映射成 chat feed row 的角色 metadata（parity iOS `replayChatRow(for:)`
+  /// / Android `replayChatRow(c)`）。Flutter 的 [LBComment]（`replay-chat-revealed-seam-core-
+  /// flutter` 刻意只留 `CHAT_HISTORY_LOADED` wire 實際攜帶的 6 個欄位）沒有 `kind` 欄——本函式改用
+  /// iOS `LBComment` decoder 本身在 wire 缺 `kind` 時已在跑的同一套 `name`/`reply` fallback 推導：
+  /// `name` 非空 → 觀眾留言（`isHost = false`）；`name` 空 + `reply` 非空 → 主播回覆
+  /// （`isHost = true`，`replyText = reply`）；`name` 空 + 無 `reply` → 主播留言（`isHost = true`，
+  /// 無 `replyText`）。Pure / testable.
+  static (bool isHost, String? replyText) replayChatRow(LBComment comment) {
+    if (comment.name.isNotEmpty) return (false, null);
+    if (comment.reply.isNotEmpty) return (true, comment.reply);
+    return (true, null);
+  }
+
+  /// Build the merged-feed chat row for one replay-history [LBComment] (helper for
+  /// [handleReplayChatRevealed]).
+  static LBFeedItem _replayChatFeedItem(LBComment comment) {
+    final (isHost, replyText) = replayChatRow(comment);
+    return LBFeedItem.chat(comment.name, comment.text,
+        isHost: isHost, replyText: replyText);
+  }
+
+  /// 回放聊天 bridge：把 core `onReplayChatRevealed` 送來的「回放當前已揭露前綴」reconcile 進
+  /// [feed]，使 reference-ui 的聊天 feed（只讀 [feed]，不讀 core 內部聊天緩衝）在回放也隨播放進度
+  /// 顯示歷史留言（與直播走相同的 [feed] → `notifyListeners` 管線）。前進只 append 新尾段（不
+  /// 閃爍）、倒退 / `[]` / 換片重建。一筆 reveal = 一次 coalesced 通知——[feed] 沒有可用的批次
+  /// append 原語（`default_activity_feed.dart` 不在本 change 檔案範圍內），改用既有公開
+  /// [DefaultActivityFeed.restore]（唯一能一次 replace-and-notify-once 的既有 API，見
+  /// design.md D3）：append-delta 分支傳「既有 [feed.history] + 新尾段」、rebuild 分支傳全新重建的
+  /// `[0, to)` 列表——`restore` 本身「整批替換 + 單次通知」的既有契約不被改動。直播絕不觸發此路徑
+  /// （core 非回放期不 fire `onReplayChatRevealed`）。呼叫方是 `flutter-reference-ui` 容器（見
+  /// `fix-flutter-replay-chat-progressive-reveal-reference-ui`），不是 `TemplateAttachment` ——
+  /// 統一 `LBEvent` 監聽器的 `CHAT_HISTORY_LOADED`（一次性、全量、與播放進度無關）已確認**不是**
+  /// 這個 reconcile 該用的資料來源，`TemplateAttachment` 對它已無任何 case。
+  void handleReplayChatRevealed(List<LBComment> comments) {
+    final decision = replayChatReconcile(comments.length, _replayChatAppendedCount);
+    // `ReplayChatAppendDelta` with `to == from` is a genuine empty-tail no-op (identical
+    // prefix re-feed) — MUST NOT rebuild/flash the existing rows and MUST NOT notify (parity
+    // RN `changed = decision.to > decision.from` / iOS's zero-iteration append loop never
+    // calling `appendChat`). `ReplayChatRebuild` always changes (even `to == 0` clears a
+    // non-empty feed) so it always calls through.
+    final changed = switch (decision) {
+      ReplayChatAppendDelta(:final from, :final to) => to > from,
+      ReplayChatRebuild() => true,
+      _ => false,
+    };
+    if (changed) {
+      final rows = switch (decision) {
+        ReplayChatAppendDelta(:final from, :final to) => [
+            ...feed.history,
+            for (final c in comments.sublist(from, to)) _replayChatFeedItem(c),
+          ],
+        ReplayChatRebuild(:final to) => [
+            for (final c in comments.sublist(0, to)) _replayChatFeedItem(c),
+          ],
+        _ => const <LBFeedItem>[],
+      };
+      feed.restore(rows);
+    }
+    // Cursor tracks "revealed-through" regardless of whether the feed changed — it reflects
+    // what the core has told us, not whether the UI was notified (distinct concerns).
+    _replayChatAppendedCount = comments.length;
+  }
 
   /// §1 — a poll `push[]` row → merged feed. A core event-BEGIN push
   /// (`eid > 0 && (ek 非空 || at == 'begin')`) is surfaced as an INDEPENDENT
@@ -833,7 +1081,12 @@ class DefaultPlayerTemplate {
     String? kind,
     // 主播 / AI 回覆的被回覆引用內容（backend `LBPushMsg.reply`），獨立字串。
     String? reply,
+    // flutter-chat-push-id-dedupe-template — POLL_RECEIVED push item 的穩定後端 id（omit-when-nil
+    // 的既有 wire 欄位，`TemplateAttachment._routePollBuckets` 轉呼叫時餵入）。用於身分去重，見
+    // [shouldIngestPush]。
+    String? id,
   }) {
+    if (!shouldIngestPush(id, _seenPushIds)) return;
     // event-join-cta-isset-ek（push.ek 版）：`kind == 'event'` 活動公告（**含 event-end**）最先判定 →
     // 獨立 event-join 項；舊核心無 kind 時退回 ek/at 偵測（向後相容）。CTA keyword 來源 = messages `push.ek`
     // （後台「ek isset 才顯示 CTA」契約，與 push 同筆同步到達，MUST NOT 改用 goods event[]）。begin/end 由
@@ -841,7 +1094,11 @@ class DefaultPlayerTemplate {
     final isEvent = (eid != null && eid > 0) &&
         (kind == 'event' || (ek != null && ek.isNotEmpty) || at == 'begin');
     if (isEvent) {
-      feed.onEventJoin(eid: eid!, keyword: ek ?? '', text: text);
+      // event-join-streamer-name-template-flutter — `userName` (= push.name,
+      // this message's own streamer name) was already in hand but never
+      // forwarded; the row now carries it so downstream is NOT forced to fall
+      // back to the channel-level shared `hostName` (shop name).
+      feed.onEventJoin(eid: eid!, keyword: ek ?? '', text: text, userName: userName);
       return;
     }
     if (kind != null && kind.isNotEmpty) {
@@ -1305,6 +1562,10 @@ class DefaultPlayerTemplate {
     // 回放（已結束直播）flag — host-fed (`type == 3 || (type == 2 && liveStatus == 3)`,
     // 用 top-level `isFinishedLiveReplay(type, liveStatus)` 計算). parity iOS/Android/RN.
     bool isFinishedLiveReplay = false,
+    // 搶購中 flag — host-fed raw passthrough of `channel.isFlashSale`
+    // (channel-flash-sale-flag-template-flutter). 與 isLive / isFinishedLiveReplay
+    // 獨立、互不影響。Default false.
+    bool isFlashSale = false,
   }) =>
       header.setChrome(
         title: title,
@@ -1313,6 +1574,7 @@ class DefaultPlayerTemplate {
         shareUrl: shareUrl,
         isLive: isLive,
         isFinishedLiveReplay: isFinishedLiveReplay,
+        isFlashSale: isFlashSale,
       );
 
   /// VOD playback progress (VOD-2) — host echoes a progress snapshot

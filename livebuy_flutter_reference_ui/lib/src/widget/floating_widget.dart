@@ -160,6 +160,21 @@ class FloatingWidgetView extends StatelessWidget {
   /// `FloatingWidgetView.live`.
   final bool live;
 
+  /// Whether the reused card's LIVE-only viewer-count pill may show at all
+  /// (rb-flutter-live-entry-hide-viewer-count). `true` (DEFAULT) → forwarded verbatim as
+  /// `CarouselCardView.showViewerCount`, so the pill's visibility stays governed solely
+  /// by `liveVideo.showPvNum` (unchanged from before this parameter existed). `false` →
+  /// the pill MUST NOT show regardless of `showPvNum`. `FloatingWidgetView` itself never
+  /// reads `liveVideo.showPvNum` or makes any viewer-count decision — it is a pure
+  /// pass-through, the same shape as `showTitle`'s (im)plicit `false` hardcode below,
+  /// except this one is NOT hardcoded because only ONE of this view's three call sites
+  /// wants it off. **Call sites**: the drop-in `LivebuyLiveEntry` container
+  /// (`lib/src/container/live_buy_live_entry.dart`) passes `showViewerCount: false`; the
+  /// `LivebuyWidget` FLOATING content mode (`widget_overlay_view.dart`) and the
+  /// collapsible player's minimize card (`reference_ui_design.dart`'s
+  /// `floatingPlayerCard`) both omit this parameter and keep the default `true`.
+  final bool showViewerCount;
+
   /// Whole-window tap → host-wired `onTap(liveVideo)` → host → core open player for the
   /// live `liveVideo.id` (canonical `videoTap`). null for demo / golden instances — the
   /// window is inert. This layer NEVER opens the player itself.
@@ -177,6 +192,7 @@ class FloatingWidgetView extends StatelessWidget {
     this.goods,
     this.width = 132,
     this.live = false,
+    this.showViewerCount = true,
     this.onTap,
     this.onClose,
   });
@@ -231,6 +247,10 @@ class FloatingWidgetView extends StatelessWidget {
           //
           // NO 標題，刻意（rb-flutter-floating-widget-hide-title）：`showTitle: false` —
           // 設計稿 `LBPFloatingWidget` 本身沒有標題元素，本次是往設計稿對齊，非新增偏離。
+          //
+          // showViewerCount forwarded verbatim (rb-flutter-live-entry-hide-viewer-count):
+          // this view makes NO decision of its own — see the constructor field doc for
+          // which call sites pass `false` vs. the default `true`.
           CarouselCardView(
             theme: theme,
             item: video,
@@ -238,6 +258,7 @@ class FloatingWidgetView extends StatelessWidget {
             width: width,
             live: live,
             showTitle: false,
+            showViewerCount: showViewerCount,
             onTap: onTap == null ? null : () => onTap!(video),
           ),
           // Top-right round close button (floating-only). A SEPARATE front-most

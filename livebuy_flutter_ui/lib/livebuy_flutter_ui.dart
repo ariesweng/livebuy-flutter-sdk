@@ -18,4 +18,5 @@ export 'src/default_product_sheet.dart';
 export 'src/default_widget_content.dart';
 export 'src/default_win_claim.dart';
 export 'src/template_attachment.dart';
+export 'src/video_feed_snapshot_cache.dart';
 export 'src/widget_template_attachment.dart';

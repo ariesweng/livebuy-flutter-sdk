@@ -2,6 +2,13 @@ import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
     show DefaultPlayerTemplate, LBPStartPhase, LBEndHotItem;
 
+// rb-flutter-endscreen-live-empty-state: the retired 熱門變體 (為你推薦 grid) is
+// gone from `end_screen.dart`'s render (moments.jsx R41). `MomentsOverlayView`'s
+// own public `onPickHot` / `MomentsModel.hot` surface is kept UNCHANGED below for
+// source-compat across the container chain (`LivebuyPlayerConfig.onPickHot` in
+// `live_buy_player.dart` still compiles unmodified) — see the `onPickHot` field's
+// own doc comment for why it is currently unread by this container's build.
+
 import '../reference_ui_theme.dart';
 import 'moments_model.dart';
 // Surface widgets — landed by the parallel Surfaces agents. The container fixes the
@@ -32,8 +39,10 @@ export 'error_screen.dart';
 // player-lifecycle moment over the video area — at most ONE moment on screen:
 //
 //   1. ErrorScreenView  — terminal error screen   (`LBPErrorScreen`)
-//   2. EndScreenView    — auto-next countdown ring + watch-next + 熱門推薦
-//                          (`LBPEndScreen` + `LBPHotCard`)
+//   2. EndScreenView    — LIVE-only: auto-next countdown ring + watch-next, OR
+//                          (`next` empty)「直播已結束」+ 查看購物車 空狀態
+//                          (`LBPEndScreen`, rb-flutter-endscreen-live-empty-state —
+//                          the prior 熱門推薦 grid / `LBPHotCard` are RETIRED)
 //   3. StartScreenView  — splash lifecycle (loading / buffering / splash)
 //                          (`LBPStartScreen`)
 //
@@ -45,15 +54,20 @@ export 'error_screen.dart';
 //   3. else startPhase != done                → StartScreenView
 //   4. else                                   → nothing (stable playback)
 //
-// NOTE — the END moment's TWO variants: the container shows EndScreenView when
-// `countdown != null` (the 倒數 variant). The 熱門 variant (`countdown == null` or
-// `next` empty) is governed BY the sub-view itself once shown; this skeleton gates
-// EndScreenView on `countdown != null` (the sub-view always accepts `hot` so it can
-// render either variant). The start moment never coexists with the end moment (end
-// implies the video ended → `startPhase == done`), and error always wins. The
-// `buffering` start phase is the one NON-full-bleed case (a lightweight
-// over-content indicator that leaves the video visible behind) — that behaviour
-// lives INSIDE `StartScreenView` per `phase`, not here.
+// NOTE — the END moment's TWO variants (both LIVE-only, rb-flutter-endscreen-live-
+// empty-state): the container shows EndScreenView whenever `countdown != null ||
+// endScreenVisible` (`endable` below) AND the local 取消 latch hasn't suppressed it
+// (`_endScreenDismissed`). WHICH of the two variants (倒數 vs 空狀態) is governed BY
+// the sub-view itself from the SAME `countdown` / `next` values — this container
+// does not pick a variant. VOD/回放 ending with no `next` never sets
+// `endScreenVisible` at all (that sub-state is live-only per `live-end-no-next-
+// endstate`), so it never reaches this branch — see `live_buy_player.dart`'s
+// `_handleVodEndedDebounce` for how that case closes the player instead. The start
+// moment never coexists with the end moment (end implies the video ended →
+// `startPhase == done`), and error always wins. The `buffering` start phase is the
+// one NON-full-bleed case (a lightweight over-content indicator that leaves the
+// video visible behind) — that behaviour lives INSIDE `StartScreenView` per
+// `phase`, not here.
 //
 // ─────────────────────────────────────────────────────────────────────────────
 // HOST-WIRED ACTION CALLBACKS (Model is PURE read-only — NO template forwarders)
@@ -66,8 +80,12 @@ export 'error_screen.dart';
 // owns, e.g.:
 //   • onSkip       → host → core `Player.skipStart()`
 //   • onWatchNext  → host → core load(next videoId) / watch-next exit
-//   • onPickHot    → host → core load(hot.id) (switch to the tapped hot video)
-//   • onCancel     → host → dismiss the end screen / stay
+//   • onPickHot    → RETIRED (rb-flutter-endscreen-live-empty-state) — kept as a
+//                    field for source-compat only, never invoked; see its own doc.
+//   • onCancel     → host → typically core `cancelAutoNext()`; this container ALSO
+//                    locally closes the whole end-screen overlay (see
+//                    `_handleCancel`) — there is no more 熱門 fallback to drop to
+//   • onViewCart   → 空狀態「查看購物車」CTA → host (open cart / product list)
 //   • onRetry      → host → core re-load (retry is core's job — SDK auto-retries
 //                    3×/3s; this layer ONLY forwards the CTA tap, never retries)
 //   • onDismiss    → host → dismiss the error / end screen / player
@@ -116,31 +134,36 @@ export 'error_screen.dart';
 //   StartScreenView({
 //       required ReferenceUITheme theme,
 //       required LBPStartPhase phase,
+//       String coverUrl = '',                      // ← model.loadingCover
+//       bool live = false,                          // ← the same `live` prop as EndScreenView
 //       void Function()? onSkip })                 // → host-wired (core skipStart)
 //
 //     Dispatches by `phase`: `loading` → full-screen brand spinner (static ring /
-//     `CircularProgressIndicator`, no random); `buffering` → lightweight
-//     OVER-CONTENT indicator (does NOT cover full-screen; video visible behind);
-//     `splash` → brand splash + skip pill (「略過片頭」→ onSkip); `done` → renders
-//     NOTHING (`SizedBox.shrink()`). `skipSec` (if drawn) is PURELY presentational
-//     — it MUST NOT auto-fire skip.
+//     `CircularProgressIndicator`, no random) — when `live == true` AND `coverUrl` is
+//     non-empty, overlays the real channel cover + a `rgba(0,0,0,0.35)` dark mask
+//     under the spinner (player-loading-cover-background-reference-ui-flutter);
+//     `buffering` → lightweight OVER-CONTENT indicator (does NOT cover full-screen;
+//     video visible behind); `splash` → brand splash + skip pill (「略過片頭」→
+//     onSkip); `done` → renders NOTHING (`SizedBox.shrink()`). `skipSec` (if drawn)
+//     is PURELY presentational — it MUST NOT auto-fire skip.
 //
 //   EndScreenView({
 //       required ReferenceUITheme theme,
 //       required LBEndCountdown? countdown,        // non-null → 倒數變體
 //       required List<LBEndNavItem> next,          // watch-next targets (next[0] = preview)
-//       required List<LBEndHotItem> hot,           // 熱門變體 set (FIXED SMALL — plain Row/Column)
 //       void Function()? onWatchNext,              // → host-wired
-//       void Function(LBEndHotItem item)? onPickHot, // → host-wired
-//       void Function()? onCancel })               // → host-wired
+//       void Function()? onCancel,                 // → host-wired
+//       void Function()? onViewCart,               // → host-wired (空狀態 CTA)
+//       String liveDuration = '',                  // → 空狀態「直播時長」caption
+//       bool live = false })
 //
 //     倒數變體 (`countdown != null` && next non-empty): `CustomPaint` ring
 //     (progress = `countdown.remain / countdown.total`, centre `remain`) +
 //     `next[0]` preview card (`cover` placeholder / `title`) + onWatchNext /
-//     onCancel. 熱門變體 (`countdown == null` || next empty): `hot` as `LBPHotCard`s
-//     in a PLAIN `Row` / `Column` FIXED SMALL set (first N) + onPickHot.
-//     `hot[].duration` is an `int` in SECONDS — the surface formats it to `mm:ss`
-//     (e.g. `28` → `"00:28"`).
+//     onCancel. 空狀態 (`countdown == null` || next empty, rb-flutter-endscreen-
+//     live-empty-state): a large「直播已結束」title + 「直播時長：…」caption +
+//     a full-width「查看購物車」CTA (onViewCart) — NO card wall, NO 熱門
+//     recommendations (that grid was retired wholesale by moments.jsx R41).
 //
 //   ErrorScreenView({
 //       required ReferenceUITheme theme,
@@ -171,11 +194,13 @@ class MomentsOverlayView extends StatefulWidget {
   /// Resolved reference-ui theme.
   final ReferenceUITheme theme;
 
-  /// Real-image gate threaded to `EndScreenView` for the recommended / watch-next card
-  /// covers (rb-flutter-endscreen-recommended-video-cover). `false` (default, demo /
-  /// golden / standalone) → the end-screen cards draw the black placeholder only (no
-  /// network). `true` (turnkey container over a real video surface) → real `cover`
-  /// images load. Parity iOS / Android / RN. Only the end moment consumes it today.
+  /// Real-image gate threaded to `EndScreenView` (recommended / watch-next card
+  /// covers, rb-flutter-endscreen-recommended-video-cover) AND `StartScreenView`
+  /// (`.loading`'s real channel cover background,
+  /// player-loading-cover-background-reference-ui-flutter). `false` (default, demo /
+  /// golden / standalone) → both surfaces draw their black / solid-brand placeholder
+  /// only (no network). `true` (turnkey container over a real video surface) → real
+  /// cover images load. Parity iOS / Android / RN.
   final bool live;
 
   // Host-wired interaction callbacks. The container owns NO core action — each is
@@ -190,11 +215,31 @@ class MomentsOverlayView extends StatefulWidget {
   /// End-screen「立即觀看」→ host → core load(next videoId).
   final void Function()? onWatchNext;
 
-  /// End-screen 熱門卡片 tap → host → core load(item.id) (switch to that video).
+  /// rb-flutter-endscreen-live-empty-state: NO LONGER READ by [_buildActiveMoment] —
+  /// `end_screen.dart`'s 熱門變體 (為你推薦 grid) that used to invoke this was
+  /// removed per the moments.jsx R41 redesign (there is no more hot-card tap to
+  /// forward). Kept as a field for source-compat with `LivebuyPlayerConfig.onPickHot`
+  /// (`live_buy_player.dart`) — a host that already wires it keeps compiling, the
+  /// callback simply never fires any more. A full removal is a documented follow-up.
   final void Function(LBEndHotItem item)? onPickHot;
 
-  /// End-screen「取消」/「換一批」exit → host.
+  /// End-screen 倒數變體「取消」exit → host. The container now ALSO closes the
+  /// whole end-screen overlay locally on this tap (rb-flutter-endscreen-live-empty-
+  /// state — there is no more 熱門 fallback to drop back to); this callback still
+  /// fires alongside that so the host's own core wiring (`cancelAutoNext()`) keeps
+  /// stopping the countdown.
   final void Function()? onCancel;
+
+  /// 空狀態「查看購物車」CTA → host. This container applies NO fallback of its own
+  /// when null — the OUTER turnkey container (`LivebuyPlayer` in
+  /// `live_buy_player.dart`) resolves `config.onViewCart ?? () =>
+  /// controller.requestViewCart()` before ever constructing this widget (the SAME
+  /// core seam the product list / detail sheet's own cart CTA already uses —
+  /// notification-type `VIEW_CART`, `event-interceptor` spec; the template owns no
+  /// cart page, the host is the sole handler). A caller that constructs
+  /// [MomentsOverlayView] directly (demo / golden / widget tests) simply gets an
+  /// inert CTA when this is null.
+  final void Function()? onViewCart;
 
   /// Error-screen「重試」→ host → core re-load. retry is core's job (auto 3×/3s);
   /// this layer ONLY forwards the CTA tap, NEVER retries / loads itself.
@@ -212,6 +257,7 @@ class MomentsOverlayView extends StatefulWidget {
     this.onWatchNext,
     this.onPickHot,
     this.onCancel,
+    this.onViewCart,
     this.onRetry,
     this.onDismiss,
   });
@@ -223,6 +269,21 @@ class MomentsOverlayView extends StatefulWidget {
 class _MomentsOverlayViewState extends State<MomentsOverlayView> {
   /// Read-only snapshot bridge (re-read inside the ListenableBuilder on notify).
   late MomentsModel _model = MomentsModel(template: widget.template);
+
+  /// rb-flutter-endscreen-live-empty-state: local "the end-screen overlay was
+  /// closed by a 取消 tap" latch. `endScreenVisible` stays server/core-driven
+  /// (`state == 'endScreenShown'`) and this container never resets it itself, so a
+  /// LOCAL suppress-flag is the only way to hide the moment for the REST of this
+  /// video's end-state while staying in that state — there is no more 熱門
+  /// fallback to drop back to (moments.jsx R41). Reset to `false` on the NEXT
+  /// fresh entry into the end state (the rising edge tracked by [_wasEndable]) so
+  /// a later, DIFFERENT live-end is unaffected. See [_handleCancel].
+  bool _endScreenDismissed = false;
+
+  /// Previous build's "should the end moment be shown at all" (`countdown != null
+  /// || endScreenVisible`) — tracked ONLY to detect the false→true rising edge
+  /// that resets [_endScreenDismissed] for a fresh end-state entry.
+  bool _wasEndable = false;
 
   @override
   void didUpdateWidget(covariant MomentsOverlayView oldWidget) {
@@ -276,25 +337,37 @@ class _MomentsOverlayViewState extends State<MomentsOverlayView> {
       );
     }
     final endScreenVisible = m.endScreenVisible;
-    if (countdown != null || endScreenVisible) {
+    // rb-flutter-endscreen-live-empty-state: reset the local 取消 suppress-latch on
+    // a FRESH entry into the end state (false→true rising edge) — a stale 取消 from
+    // a PRIOR live-end MUST NOT swallow a later, different one. Must run BEFORE the
+    // gate below reads `_endScreenDismissed`.
+    final endable = countdown != null || endScreenVisible;
+    if (endable && !_wasEndable) {
+      _endScreenDismissed = false;
+    }
+    _wasEndable = endable;
+    if (endable && !_endScreenDismissed) {
       // 2. End moment: countdown != null → 倒數變體 (auto-next → 播下一支 next.first);
-      //    countdown == null && endScreenVisible → 無倒數「直播已結束」變體（直播結束且無 next：
-      //    有 hot 顯示熱門、否則只有標題，end-screen-no-countdown）。`liveEnded` gate 標題。
-      //    An upcoming (awaitingLive) channel has countdown == null AND endScreenVisible == false
-      //    AND startPhase done → falls through to the PlayerShell upcoming chrome.
+      //    countdown == null && endScreenVisible → 空狀態「直播已結束」（直播結束且無
+      //    next — 熱門變體已於 moments.jsx R41 移除，rb-flutter-endscreen-live-empty-
+      //    state）。An upcoming (awaitingLive) channel has countdown == null AND
+      //    endScreenVisible == false AND startPhase done → falls through to the
+      //    PlayerShell upcoming chrome. VOD/回放 ended-with-no-next never reaches
+      //    here at all (endScreenVisible stays false, live-end-no-next-endstate is
+      //    LIVE-only) — the container's own `_handleVodEndedDebounce` (see
+      //    `live_buy_player.dart`) closes the player instead of landing on this
+      //    branch.
       return EndScreenView(
         theme: theme,
         countdown: countdown,
         next: m.next,
-        hot: m.hot,
-        liveEnded: endScreenVisible && countdown == null,
-        // Real cover images on the recommended / watch-next cards at runtime; the
-        // black placeholder only at demo / golden (live == false). Threaded from the
+        // Real cover images on the watch-next preview card at runtime; the black
+        // placeholder only at demo / golden (live == false). Threaded from the
         // turnkey container (rb-flutter-endscreen-recommended-video-cover).
         live: widget.live,
         onWatchNext: _handleWatchNext,
-        onPickHot: _handlePickHot,
         onCancel: _handleCancel,
+        onViewCart: _handleViewCart,
       );
     }
     if (m.startPhase != LBPStartPhase.done) {
@@ -303,6 +376,12 @@ class _MomentsOverlayViewState extends State<MomentsOverlayView> {
       return StartScreenView(
         theme: theme,
         phase: m.startPhase,
+        // Real cover photo behind `.loading`'s brand-mark animation at runtime; the
+        // solid brand backdrop only at demo / golden (live == false). Threaded from
+        // the turnkey container — the SAME `live` flag already passed to
+        // `EndScreenView` above (player-loading-cover-background-reference-ui-flutter).
+        coverUrl: m.loadingCover,
+        live: widget.live,
         onSkip: _handleSkip,
       );
     }
@@ -322,11 +401,26 @@ class _MomentsOverlayViewState extends State<MomentsOverlayView> {
   /// Forward「立即觀看」→ host (→ core load(next videoId)).
   void _handleWatchNext() => widget.onWatchNext?.call();
 
-  /// Forward a 熱門卡片 tap → host (→ core load(item.id)).
-  void _handlePickHot(LBEndHotItem item) => widget.onPickHot?.call(item);
+  /// 倒數變體「取消」→ (1) locally close the WHOLE end-screen overlay for the
+  /// REST of this video's end state (rb-flutter-endscreen-live-empty-state — see
+  /// [_endScreenDismissed]'s doc; the retired 熱門 fallback no longer exists), THEN
+  /// (2) forward to host (→ typically core `cancelAutoNext()`, which stops the
+  /// countdown). `setState` is REQUIRED here — this widget MUST NOT rely on the
+  /// host's `onCancel` side effect (e.g. `endScreen.cancel()`'s own
+  /// `notifyListeners()`) to schedule the rebuild that hides the moment: a host
+  /// that overrides `onCancel` with unrelated logic (or leaves it null) would
+  /// otherwise leave the (now internally dismissed) end screen visibly stuck on
+  /// screen. Order matters too: the local dismiss must win even if the host
+  /// callback is null / a no-op.
+  void _handleCancel() {
+    setState(() => _endScreenDismissed = true);
+    widget.onCancel?.call();
+  }
 
-  /// Forward「取消」/「換一批」→ host.
-  void _handleCancel() => widget.onCancel?.call();
+  /// Forward「查看購物車」→ host. NO local fallback — see [MomentsOverlayView
+  /// .onViewCart]'s doc for why the `Player.requestViewCart()` default lives one
+  /// layer up (`live_buy_player.dart`'s `LivebuyPlayer`), not here.
+  void _handleViewCart() => widget.onViewCart?.call();
 
   /// Forward「重試」→ host (→ core re-load). retry is core's job (auto 3×/3s); this
   /// layer ONLY forwards the CTA, NEVER retries / loads itself.

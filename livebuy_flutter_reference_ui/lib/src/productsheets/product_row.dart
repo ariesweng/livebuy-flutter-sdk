@@ -9,6 +9,7 @@ import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
 import 'equalizer_glyph.dart';
 import 'hot_glyph.dart';
+import 'product_row_name_tag.dart' as name_tag;
 import 'product_row_overlay.dart' show ProductRowMode, isReplayNeverIntroduced;
 import 'product_status_badge.dart';
 import 'sheet_scaffold.dart';
@@ -65,6 +66,17 @@ class ProductRow extends StatelessWidget {
   /// themselves (those still decide WHETHER an overlay shows; [mode] only decides WHICH visual).
   final ProductRowMode? mode;
 
+  /// 搶購中（flash sale）flag（`.row` only, rb-flutter-flash-sale-live-signal-wiring）——只在
+  /// [mode] `== ProductRowMode.live` 且商品未售罄時生效：把名稱前標籤從「直播價」
+  /// （[name_tag.ProductRowNameTag.livePrice]）換成「搶購中」（[name_tag.ProductRowNameTag.rush]，
+  /// design R39）。**不**影響縮圖底部「介紹中」橫幅文案——`rb-flutter-flash-sale-live-signal-wiring`
+  /// 原本讓該橫幅也依此旗標二選一顯示「開標中」，2026-09-09 使用者拍板撤回
+  /// （`rb-flutter-narrating-banner-revert-flash-sale-text`）：橫幅文字現在不論本旗標為何皆恆為
+  /// 「介紹中」，只有名稱前標籤仍讀取此值。來源 `ProductListSheet.isFlashSale` ←
+  /// `ProductSheetsModel.isFlashSale` ← `header.isFlashSale`. Default `false`（既有呼叫端 /
+  /// `.grid` 推薦格 / golden byte-identical）。
+  final bool isFlashSale;
+
   /// 縮圖左上角編號徽章的內容（design R35，rb-flutter-product-row-number-badge，`.row` only —
   /// mirrors the `showPlay` / `isIntroducing` `.row`-only convention). `null` → no badge drawn
   /// at all (VOD, or a call site that never wires this — e.g. `.grid`'s「更多商品」推薦格, which
@@ -118,6 +130,7 @@ class ProductRow extends StatelessWidget {
     this.showPlay = false,
     this.isIntroducing = false,
     this.mode,
+    this.isFlashSale = false,
     this.index,
     this.showShare = false,
     this.layout = ProductRowLayout.row,
@@ -200,7 +213,18 @@ class ProductRow extends StatelessWidget {
   Widget _buildRow(BuildContext context) {
     final soldOut =
         ProductStatusBadge.resolve(product) == ProductStatusBadge.soldOut;
-    final explicitBadge = ProductStatusBadge.fromLabel(product.label);
+    // 商品名稱前標籤（design R39，rb-flutter-product-row-name-tag-system）：`mode` 缺省時
+    // 比照既有呼叫端對 `live`/VOD 的既定回退公式（無 `mode` 的呼叫端只分得出 live 與否，無法
+    // 分辨 VOD/REPLAY，一律歸為 vod——這條路徑上 `nameTag` 只可能是 outSoon/hot/none，VOD/
+    // REPLAY 兩者判斷邏輯本就相同，不影響結果）。
+    final nameTagMode =
+        mode ?? (live ? ProductRowMode.live : ProductRowMode.vod);
+    final nameTag = name_tag.resolve(
+      mode: nameTagMode,
+      label: product.label,
+      soldOut: soldOut,
+      isFlashSale: isFlashSale,
+    );
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -314,10 +338,25 @@ class ProductRow extends StatelessWidget {
                                       mainAxisAlignment:
                                           MainAxisAlignment.center,
                                       children: [
-                                        const EqualizerGlyph(
-                                            size: 9, color: Color(0xFFFFFFFF)),
+                                        // Unconditional `animate: true` (rb-flutter-equalizer-
+                                        // live-gate-removal) — was `animate: live`, which froze
+                                        // the glyph static during a replay (live == false). This
+                                        // banner only renders while the row IS narrating,
+                                        // regardless of live/replay, so it should always breathe
+                                        // — parity with iOS / Android / RN, which never gated
+                                        // this on `live` to begin with.
+                                        EqualizerGlyph(
+                                            size: 9,
+                                            color: const Color(0xFFFFFFFF),
+                                            animate: true),
                                         const SizedBox(width: 3),
                                         Text(
+                                          // 恆為「介紹中」，不受 isFlashSale 影響——
+                                          // rb-flutter-flash-sale-live-signal-wiring 原本讓本橫幅
+                                          // 依 isFlashSale 二選一顯示「開標中」，2026-09-09 使用者
+                                          // 拍板撤回（rb-flutter-narrating-banner-revert-flash-sale-
+                                          // text）。isFlashSale 仍用於名稱前標籤（見上方
+                                          // ProductRowNameTag.resolve 呼叫），只是不再影響本橫幅。
                                           _introducingLabel,
                                           maxLines: 1,
                                           overflow: TextOverflow.clip,
@@ -377,16 +416,42 @@ class ProductRow extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        product.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: theme.text,
-                          fontSize: 14 * theme.fontScale,
-                          fontWeight: FontWeight.w600,
+                      // 商品名稱前標籤（design R39，rb-flutter-product-row-name-tag-system）：
+                      // `nameTag == none` 時維持 byte-identical 的裸 `Text`（不多包一層
+                      // `Row`）；否則於名稱前插入直播價 / 即將售完 / 熱賣中三種小圓角標籤之一
+                      // （`_NameTagPill`，三者共用同一套圓角/padding/字級）。
+                      if (nameTag == name_tag.ProductRowNameTag.none)
+                        Text(
+                          product.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: theme.text,
+                            fontSize: 14 * theme.fontScale,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      else
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            // Non-null: this branch only runs when `nameTag != none`.
+                            _nameTagPillFor(theme, nameTag)!,
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                product.name,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: theme.text,
+                                  fontSize: 14 * theme.fontScale,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
                       const SizedBox(height: 4),
                       if (!hideSub)
                         if (soldOut)
@@ -425,16 +490,6 @@ class ProductRow extends StatelessWidget {
                                   fontWeight: FontWeight.w900,
                                 ),
                               ),
-                              if (explicitBadge == ProductStatusBadge.outSoon)
-                                _StatusPill(
-                                    theme: theme,
-                                    text: _outSoonLabel,
-                                    color: _outSoonColor)
-                              else if (explicitBadge == ProductStatusBadge.hot)
-                                _StatusPill(
-                                    theme: theme,
-                                    text: _hotLabel,
-                                    color: theme.accent),
                             ],
                           ),
                     ],
@@ -674,6 +729,94 @@ class _StatusPill extends StatelessWidget {
   }
 }
 
+// MARK: - Name-tag pill (design R39, rb-flutter-product-row-name-tag-system)
+//
+// 商品名稱前標籤——直播價 / 即將售完 / 熱賣中共用同一個小圓角 widget（`BorderRadius.circular
+// (3)`，MUST NOT 為全圓——與上方 `_StatusPill`（全圓，此後在本檔案已無呼叫點，保留但不重用）
+// 刻意區分開）。對齊設計來源 `sdk-components.jsx` 共用的 `nameTagEl` 樣式。
+
+/// 商品名稱前小圓角標籤。[bg] 為 `null` 時填充透明（直播價的外框變體）；[border] 為 `null` 時
+/// 無邊框（即將售完 / 熱賣中的實心變體）。
+class _NameTagPill extends StatelessWidget {
+  final ReferenceUITheme theme;
+  final String text;
+  final Color? bg;
+  final Color fg;
+  final Color? border;
+
+  const _NameTagPill({
+    required this.theme,
+    required this.text,
+    required this.bg,
+    required this.fg,
+    required this.border,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(3),
+        border: border == null ? null : Border.all(color: border!, width: 1),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: fg,
+          fontSize: 11 * theme.fontScale,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+}
+
+/// [name_tag.ProductRowNameTag] → `_NameTagPill`（或 `none` 時 `null`）的分派函式。
+/// `ProductRow._buildRow` 只消費此函式的結果，不重複判斷邏輯（rb-flutter-product-row-name-
+/// tag-system）。
+Widget? _nameTagPillFor(ReferenceUITheme theme, name_tag.ProductRowNameTag tag) {
+  switch (tag) {
+    case name_tag.ProductRowNameTag.livePrice:
+      return _NameTagPill(
+        theme: theme,
+        text: _livePriceLabel,
+        bg: null,
+        fg: theme.accent,
+        border: theme.accent,
+      );
+    case name_tag.ProductRowNameTag.rush:
+      // design R39「搶購中」（`sdk-components.jsx`'s `liveMode === 'rush'` 分支）—— accent 實心底
+      // + 白字,對比 [livePrice] 的透明底外框變體 (rb-flutter-flash-sale-live-signal-wiring).
+      return _NameTagPill(
+        theme: theme,
+        text: _rushLabel,
+        bg: theme.accent,
+        fg: const Color(0xFFFFFFFF),
+        border: theme.accent,
+      );
+    case name_tag.ProductRowNameTag.outSoon:
+      return _NameTagPill(
+        theme: theme,
+        text: _outSoonLabel,
+        bg: _outSoonColor,
+        fg: theme.text,
+        border: null,
+      );
+    case name_tag.ProductRowNameTag.hot:
+      return _NameTagPill(
+        theme: theme,
+        text: _hotLabel,
+        bg: _hotNameTagColor,
+        fg: const Color(0xFFFFFFFF),
+        border: null,
+      );
+    case name_tag.ProductRowNameTag.none:
+      return null;
+  }
+}
+
 // MARK: - VOD overlays (design R36, rb-flutter-product-row-vod-intro-mask)
 //
 // `.row` layout, `mode == ProductRowMode.vod` only. Parity iOS `VodPlayOverlay` /
@@ -725,7 +868,7 @@ class _VodIntroducingMask extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(color: Color(0x80000000)), // rgba(0,0,0,0.5)
         child: Center(
-          child: EqualizerGlyph(size: 18, color: Color(0xFFFFFFFF)),
+          child: EqualizerGlyph(size: 18, color: Color(0xFFFFFFFF), animate: true),
         ),
       ),
     );
@@ -990,7 +1133,12 @@ final Color _stroke = colorFromHex('#ECEAF0') ?? const Color(0xFFECEAF0);
 final Color _bgSunken = colorFromHex('#F4F4F6') ?? const Color(0xFFF4F4F6);
 final Color _saleColor = colorFromHex('#E0334B') ?? const Color(0xFFE0334B);
 final Color _soldOutColor = colorFromHex('#9A96A3') ?? const Color(0xFF9A96A3);
-final Color _outSoonColor = colorFromHex('#F5A623') ?? const Color(0xFFF5A623);
+
+/// 名稱前「🔥 即將售完」標籤底色（rb-flutter-product-row-name-tag-system，design R39，取代
+/// R38）——由先前「畫在價格列之後」時期的 `#F5A623` 訂正為設計來源
+/// `sdk-components.jsx:1183` 的 `#FACC15`。查證：此常數在本次修改前唯一的呼叫點就是本次
+/// 移除/取代的舊「價格列之後」徽章分支，無其他呼叫端依賴舊值，故就地訂正不拆分新舊常數。
+final Color _outSoonColor = colorFromHex('#FACC15') ?? const Color(0xFFFACC15);
 
 /// The「介紹中」badge fill — fixed coral `rgba(240,50,70,.7)` = `#F03246` @ alpha 0.7
 /// (rb-flutter-vod-live-product-card-restyle, 2026-09-03 — was `theme.accent`). Kept as
@@ -999,11 +1147,33 @@ final Color _outSoonColor = colorFromHex('#F5A623') ?? const Color(0xFFF5A623);
 final Color _introducingBadgeFill =
     (colorFromHex('#F03246') ?? const Color(0xFFF03246)).withValues(alpha: 0.7);
 
+/// 名稱前「熱賣中」標籤底色（rb-flutter-product-row-name-tag-system，design R39）——固定
+/// `rgba(240,50,70,.7)`，訂正自先前「畫在價格列之後」時期隨商家 `theme.accent` 主題色變動的
+/// 舊行為；MUST NOT 做成可設定項。與 [_introducingBadgeFill] 數值相同但語意不同（介紹中橫幅 vs
+/// 熱賣中標籤），依本檔案既定慣例各自獨立常數、不共用。
+final Color _hotNameTagColor =
+    (colorFromHex('#F03246') ?? const Color(0xFFF03246)).withValues(alpha: 0.7);
+
 const String _soldOutLabel = '已售完';
 const String _introducingLabel = '介紹中';
-const String _outSoonLabel = '即將售完';
+
+/// 名稱前「即將售完」標籤文案（rb-flutter-product-row-name-tag-system，design R39）——訂正
+/// 補上 🔥 emoji 前綴，對齊設計來源 `sdk-components.jsx:1183` 的字面值 `'🔥 即將售完'`。查證：
+/// 此常數在本次修改前唯一的呼叫點就是本次移除/取代的舊「價格列之後」徽章分支，無其他呼叫端
+/// 受影響，故就地訂正不拆分新舊常數。
+const String _outSoonLabel = '🔥 即將售完';
 const String _hotLabel = '熱賣中';
 const String _playHintLabel = '看講解';
+
+/// 名稱前「直播價」外框標籤文案（rb-flutter-product-row-name-tag-system，design R39，parity
+/// iOS/Android/RN）。reference-ui 層文案一律寫死，MUST NOT 透過 i18n 系統存取（比照本檔案既有
+/// 其餘標籤文案的既定慣例）。
+const String _livePriceLabel = '直播價';
+
+/// 名稱前「搶購中」實心標籤文案（design R39, rb-flutter-flash-sale-live-signal-wiring, parity
+/// iOS/Android/RN sibling changes）。reference-ui 層文案一律寫死,MUST NOT 透過 i18n 系統存取
+/// （比照本檔案既有其餘標籤文案的既定慣例）。
+const String _rushLabel = '搶購中';
 
 /// 縮圖左上角編號徽章（design R35）介紹中內容的文字——「熱賣中」（[_hotLabel]，`is_hot` 商品狀態
 /// 標籤）是一個完全不同的概念，兩者刻意使用不同常數，不共用。

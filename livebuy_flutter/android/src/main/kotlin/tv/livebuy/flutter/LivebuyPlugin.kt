@@ -663,6 +663,7 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
 // object (singleton) because EventChannel.setStreamHandler is called once; all player views share this sink.
 object LivebuyEventHandler : EventChannel.StreamHandler {
     private var eventSink: EventChannel.EventSink? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
         eventSink = events
@@ -672,7 +673,25 @@ object LivebuyEventHandler : EventChannel.StreamHandler {
         eventSink = null
     }
 
+    // flutter-android-poll-received-main-thread-fix: `EventSink.success` is `@UiThread` —
+    // most per-view closures (onStateChange / onProductTap / ...) already fire on the main
+    // thread, but `PollManager.loop()` (native `android/livebuy`) runs on a background
+    // `Dispatchers.IO` coroutine BY DESIGN (keeps the 5 s network poll off the UI thread), and
+    // its `onPollReceived` closure called this method directly from that background thread —
+    // throwing `RuntimeException: Methods marked with @UiThread must be executed on the main
+    // thread`, silently swallowed by `PollManager.loop()`'s own catch block. That exception
+    // also aborted `routePollResponse()` at its first line, so the SAME bug additionally broke
+    // the unrelated `EventDispatcher.dispatch(LBEvent.POLL_RECEIVED, ...)` call later in that
+    // function — the unified SDK event path `LivebuyUI`/`TemplateAttachment` consumes. Fixed at
+    // this single shared choke point (every per-view closure funnels through `emit`) rather than
+    // patching only the one known-broken call site, so any future closure the native SDK moves
+    // off-main-thread is covered for free. Already-main-thread callers stay byte-identical
+    // (direct synchronous call, no added latency).
     fun emit(payload: Map<String, Any?>) {
-        eventSink?.success(payload)
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            eventSink?.success(payload)
+        } else {
+            mainHandler.post { eventSink?.success(payload) }
+        }
     }
 }

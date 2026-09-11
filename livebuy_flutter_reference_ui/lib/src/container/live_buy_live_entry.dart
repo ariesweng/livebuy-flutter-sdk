@@ -65,7 +65,8 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart' show MaterialPageRoute;
+import 'package:flutter/material.dart'
+    show Material, MaterialPageRoute, MaterialType;
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart'
     show LBVideoItem, LivebuySDK, SDKConfig;
@@ -668,6 +669,11 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
       liveVideo: live,
       width: widget.config.width,
       live: true,
+      // rb-flutter-live-entry-hide-viewer-count: this 招攬入口 hides the reused card's
+      // viewer-count pill — the other two FloatingWidgetView call sites
+      // (widget_overlay_view.dart FLOATING mode / reference_ui_design.dart
+      // floatingPlayerCard) omit this parameter and keep showing it.
+      showViewerCount: false,
       onTap: externalLiveAwareTap(
         lbWidgetEffectiveTap(
           widget.config.onTapVideo,
@@ -691,6 +697,25 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
             child: card,
           );
 
+    // rb-flutter-live-entry-material-ancestor-fix — `shown`'s subtree (`FloatingWidgetView` →
+    // `CarouselCardView`) draws several `Text` (the LIVE badge, price, viewer count) even with
+    // `showTitle: false`, but has NO `Material` ancestor of its own. Whenever `LivebuyLiveEntry`
+    // is mounted outside any host-provided `Material` ancestor (e.g. a `Stack` sibling of
+    // `Scaffold` — the reported bug: a stray yellow double underline under the LIVE label), those
+    // `Text` fall back to Flutter's debug style. The sibling container `CollapsibleLivebuyPlayer`
+    // hit the exact same mechanism and was fixed the same way
+    // (rb-flutter-player-material-ancestor-fix, commit 5b4e4155b) — this change applies that fix
+    // here. `MaterialType.transparency` paints no background/shadow of its own — it only
+    // supplies the ancestor context — so this MUST NOT change any existing pixel output.
+    // DELIBERATELY wrapped INSIDE each branch's `Positioned` (around `shown`, below), NOT around
+    // the branches' own `Positioned` return value: `Positioned` is a `ParentDataWidget` that MUST
+    // be the direct render-tree child of a `Stack` (this container's documented contract — "place
+    // it as a direct child of a Stack") — a `Material` wrapping OUTSIDE `Positioned` interposes
+    // its own RenderObject between `Positioned` and the host's `Stack`, breaking that contract
+    // (`Incorrect use of ParentDataWidget` at runtime). Wrapping `shown` instead keeps `Positioned`
+    // as the outermost node while still giving every `Text` beneath it a `Material` ancestor.
+    final materialShown = Material(type: MaterialType.transparency, child: shown);
+
     final inset = widget.config.inset;
 
     if (!widget.config.draggable) {
@@ -702,7 +727,7 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
         left: edge.left,
         right: edge.right,
         bottom: edge.bottom,
-        child: shown,
+        child: materialShown,
       );
     }
 
@@ -734,7 +759,7 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
         }),
         child: _MeasureSize(
           onChange: (s) => _cardSize = s,
-          child: shown,
+          child: materialShown,
         ),
       ),
     );

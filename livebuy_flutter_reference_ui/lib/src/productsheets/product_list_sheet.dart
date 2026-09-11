@@ -158,6 +158,13 @@ class ProductListSheet extends StatefulWidget {
   /// 與 `live`（圖片載入）正交。Parity iOS / Android / RN.
   final ProductRowMode? mode;
 
+  /// 搶購中（flash sale）flag（`ProductSheetsModel.isFlashSale` ← `header.isFlashSale`）——只在
+  /// `mode == ProductRowMode.live` 且商品未售罄時，把每列的名稱前標籤從「直播價」換成「搶購中」
+  /// （design R39，`ProductRowNameTag.rush`，rb-flutter-flash-sale-live-signal-wiring）。與
+  /// [mode] / [live] 正交，直接逐列透傳給 [ProductRow.isFlashSale]。Default `false`（既有呼叫端 /
+  /// golden byte-identical）。
+  final bool isFlashSale;
+
   /// 當下播放秒數（replay 用）——對照每個商品的 `[beginTime, endTime]` 判「介紹中」。Default 0。
   final int playbackPosition;
 
@@ -220,6 +227,7 @@ class ProductListSheet extends StatefulWidget {
     this.live = false,
     this.introducingProductIds = const {},
     this.mode,
+    this.isFlashSale = false,
     this.playbackPosition = 0,
     this.backendOrderProducts = const [],
     this.onOpenProduct,
@@ -358,6 +366,7 @@ class _ProductListSheetState extends State<ProductListSheet> {
                           showPlay: overlay.showPlay,
                           isIntroducing: overlay.showIntroducing,
                           mode: effectiveMode,
+                          isFlashSale: widget.isFlashSale,
                           index: numberIndex,
                           showShare: overlay.showShare,
                           onOpenProduct: widget.onOpenProduct,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
     show LBSideRailItem, LBSideRailKind;
@@ -7,6 +9,7 @@ import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
 import 'bag_glyph.dart';
 import 'cc_glyph.dart';
+import 'cc_unavailable_tooltip.dart';
 import 'contact_glyph.dart';
 import 'more_glyph.dart';
 
@@ -109,6 +112,15 @@ class OperationRailView extends StatelessWidget {
   /// the documented initializer shape; informational for the rail today.
   final bool muted;
 
+  /// Whether the VOD caption overlay is currently ON (rb-flutter-cc-icon-active-fill-state,
+  /// parity design `LBPSideRail` `railBtn(icon, active, onClick)`'s `ccOn`). Callers SHALL feed
+  /// `PlayerShellModel.subtitleEnabled` — the SAME getter that already drives the caption
+  /// overlay itself. Combined with `LBSideRailKind.subtitle`'s own `enabled` gate, this decides
+  /// the CC pill's `active` (white fill + accent glyph) vs inactive (translucent dark fill +
+  /// white glyph) style — see [_PillButton.active]. `share` / `serviceLink` (and every other
+  /// kind) are UNAFFECTED — their `active` is always `false` regardless of this value.
+  final bool subtitleEnabled;
+
   /// Tap intent for a side-rail kind. The rail does NOT own the action — the
   /// shell / host forwards to the matching core `simulate*` (D-4). Defaults to a
   /// no-op so demo / golden instances construct action-free.
@@ -155,15 +167,19 @@ class OperationRailView extends StatelessWidget {
     required this.bagCount,
     required this.heartBurstTick,
     required this.muted,
+    required this.subtitleEnabled,
     this.onTapItem,
     this.isFinishedLiveReplay = false,
     this.onTapMore,
   });
 
-  /// Fixed side-rail presentation order (design `LBPSideRail`: CC / share / contact). Each kind is
-  /// drawn ONLY when enabled in `items` (parity iOS `presentationOrder` + `isEnabled`). GOODS（袋）
-  /// / LIKE / MORE / CHAT / GUEST_NAME_EDIT are NOT rail kinds: the bag is a SEPARATE floating
-  /// affordance ([FloatingBagButton]); the others are not in the design rail.
+  /// Fixed side-rail presentation order (design `LBPSideRail`: CC / share / contact). `share` /
+  /// `serviceLink` are drawn ONLY when enabled in `items` (parity iOS `presentationOrder` +
+  /// `isEnabled`); `subtitle` (CC) ALWAYS draws regardless of `enabled` — R42
+  /// (`rb-flutter-cc-icon-availability-redesign`) replaced its prior "unavailable → omit" rule
+  /// with a dedicated unavailable glyph state + tooltip (see `_CcPillButton`). GOODS（袋）/ LIKE /
+  /// MORE / CHAT / GUEST_NAME_EDIT are NOT rail kinds: the bag is a SEPARATE floating affordance
+  /// ([FloatingBagButton]); the others are not in the design rail.
   static const List<LBSideRailKind> _presentationOrder = [
     LBSideRailKind.subtitle,
     LBSideRailKind.share,
@@ -172,13 +188,21 @@ class OperationRailView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Fixed presentation order, each pill drawn ONLY when its kind is enabled in `items`. The bag
-    // is NOT here — it is the separate FloatingBagButton composed lower by the shell.
+    // `subtitle` (CC) is the ONE kind that renders regardless of `items`' `enabled` (R42,
+    // rb-flutter-cc-icon-availability-redesign — supersedes the prior "unavailable → omit" rule
+    // for this kind ONLY; see `_CcPillButton`). `share` / `serviceLink` (and every other kind)
+    // keep the original "enabled == false → omit, no dimmed slot" rule.
+    final subtitleAvailable =
+        items.any((it) => it.kind == LBSideRailKind.subtitle && it.enabled);
     final visible = _presentationOrder
-        .where((k) => items.any((it) => it.kind == k && it.enabled))
+        .where((k) =>
+            k == LBSideRailKind.subtitle ||
+            items.any((it) => it.kind == k && it.enabled))
         .toList(growable: false);
 
-    final pills = isFinishedLiveReplay ? _replayPills(visible) : _standardPills(visible);
+    final pills = isFinishedLiveReplay
+        ? _replayPills(subtitleAvailable)
+        : _standardPills(visible, subtitleAvailable);
 
     return Column(
       key: LbTestKeys.operationRail,
@@ -193,30 +217,44 @@ class OperationRailView extends StatelessWidget {
     );
   }
 
-  /// The existing (VOD) rail: one `_PillButton` per visible kind, in order. Identical to the
-  /// tree this `build()` produced before [isFinishedLiveReplay] existed — every existing call
-  /// site (which omits the flag, default `false`) renders byte-identically.
-  List<Widget> _standardPills(List<LBSideRailKind> visible) => [
+  /// The existing (VOD) rail: one pill per visible kind, in order. `subtitle` always draws (a
+  /// dedicated `_CcPillButton`, R42); `share` / `serviceLink` stay `_PillButton`, `enabled`-gated
+  /// as before.
+  List<Widget> _standardPills(List<LBSideRailKind> visible, bool subtitleAvailable) => [
         for (final k in visible)
-          _PillButton(
-            key: railKeyFor(k),
-            theme: theme,
-            kind: k,
-            onTap: () => onTapItem?.call(k),
-          ),
+          if (k == LBSideRailKind.subtitle)
+            _CcPillButton(
+              key: railKeyFor(k),
+              theme: theme,
+              subtitleAvailable: subtitleAvailable,
+              subtitleEnabled: subtitleEnabled,
+              onTap: () => onTapItem?.call(k),
+            )
+          else
+            _PillButton(
+              key: railKeyFor(k),
+              theme: theme,
+              kind: k,
+              // Neither remaining kind (share / serviceLink) is ever active
+              // (rb-flutter-cc-icon-active-fill-state) — CC's active state now lives entirely in
+              // `_CcPillButton`.
+              active: false,
+              onTap: () => onTapItem?.call(k),
+            ),
       ];
 
-  /// The closed-chat finished-replay rail: CC stays in place (still `enabled`-gated), `share` /
-  /// `serviceLink` collapse into one unconditional 更多 pill (mirrors the design's `LBLiveBottomBar`
-  /// replay branch always showing its more button, regardless of what else is visible).
-  List<Widget> _replayPills(List<LBSideRailKind> visible) => [
-        if (visible.contains(LBSideRailKind.subtitle))
-          _PillButton(
-            key: railKeyFor(LBSideRailKind.subtitle),
-            theme: theme,
-            kind: LBSideRailKind.subtitle,
-            onTap: () => onTapItem?.call(LBSideRailKind.subtitle),
-          ),
+  /// The closed-chat finished-replay rail: CC stays in place (now ALWAYS, R42 — was
+  /// `enabled`-gated), `share` / `serviceLink` collapse into one unconditional 更多 pill (mirrors
+  /// the design's `LBLiveBottomBar` replay branch always showing its more button, regardless of
+  /// what else is visible).
+  List<Widget> _replayPills(bool subtitleAvailable) => [
+        _CcPillButton(
+          key: railKeyFor(LBSideRailKind.subtitle),
+          theme: theme,
+          subtitleAvailable: subtitleAvailable,
+          subtitleEnabled: subtitleEnabled,
+          onTap: () => onTapItem?.call(LBSideRailKind.subtitle),
+        ),
         _MorePillButton(key: LbTestKeys.railMore, theme: theme, onTap: onTapMore),
       ];
 }
@@ -282,18 +320,24 @@ class FloatingBagButton extends StatelessWidget {
 
 // MARK: - Pill button (`LBPSideRail` railBtn)
 
-/// A standard round pill: 40×40, fully-rounded, translucent dark fill, white
-/// glyph. The active (white fill + accent glyph) style is not fed for any kind
-/// today, so pills render in the inactive style (parity with iOS / Android).
+/// A standard round pill: 40×40, fully-rounded, for `share` / `serviceLink` (and any other
+/// non-`subtitle` kind reachable via [railIconFor]'s fallback). [active] is always `false` for
+/// these kinds (design `railBtn(<Icons.share.../>, false, onShare)` /
+/// `railBtn(<Icons.contact.../>, false, onContact)`) — kept as a field (rather than hardcoded in
+/// `build()`) so the white-fill + accent-glyph "active" style stays available if a future kind
+/// needs it. R42 (`rb-flutter-cc-icon-availability-redesign`) moved the `subtitle`/CC pill OUT of
+/// this widget entirely — see `_CcPillButton`.
 class _PillButton extends StatelessWidget {
   final ReferenceUITheme theme;
   final LBSideRailKind kind;
+  final bool active;
   final VoidCallback onTap;
 
   const _PillButton({
     super.key,
     required this.theme,
     required this.kind,
+    required this.active,
     required this.onTap,
   });
 
@@ -306,36 +350,130 @@ class _PillButton extends StatelessWidget {
         width: _pillSize,
         height: _pillSize,
         alignment: Alignment.center,
-        decoration: const BoxDecoration(
-          color: _railPillBackground,
+        decoration: BoxDecoration(
+          color: active ? Colors.white : _railPillBackground,
           shape: BoxShape.circle,
         ),
         // 分享 改設計稿自繪三節點 ShareGlyph（rb-flutter-share-icon-design-align，問題 8）；
-        // CC/字幕 改設計稿自繪雙 C 曲線 CcGlyph（rb-flutter-cc-icon-design-align，取代 Material
-        // Icons.closed_caption 方塊造型）；聯繫商家 改設計稿自繪雙對話框+問號 ContactGlyph
+        // 聯繫商家 改設計稿自繪雙對話框+問號 ContactGlyph
         // （rb-flutter-icon-parity-operation-rail-batch，取代 Material Icons.chat_bubble）；
-        // 其餘 kind 維持 Material glyph。
-        child: kind == LBSideRailKind.subtitle
-            ? CcGlyph(
+        // 其餘 kind 維持 Material glyph。CC/字幕改由獨立的 `_CcPillButton` 呈現（R42）。
+        child: kind == LBSideRailKind.share
+            ? ShareGlyph(
                 color: Colors.white,
                 size: _pillGlyphSize * theme.fontScale,
               )
-            : kind == LBSideRailKind.share
-                ? ShareGlyph(
+            : kind == LBSideRailKind.serviceLink
+                ? ContactGlyph(
                     color: Colors.white,
                     size: _pillGlyphSize * theme.fontScale,
                   )
-                : kind == LBSideRailKind.serviceLink
-                    ? ContactGlyph(
-                        color: Colors.white,
-                        size: _pillGlyphSize * theme.fontScale,
-                      )
-                    : Icon(
-                        railIconFor(kind),
-                        size: _pillGlyphSize * theme.fontScale,
-                        color: Colors.white,
-                      ),
+                : Icon(
+                    railIconFor(kind),
+                    size: _pillGlyphSize * theme.fontScale,
+                    color: Colors.white,
+                  ),
       ),
+    );
+  }
+}
+
+// MARK: - CC (subtitle) pill (R42, `rb-flutter-cc-icon-availability-redesign`)
+
+/// The `subtitle`/CC side-rail pill — ALWAYS renders (unlike [_PillButton]'s `share` /
+/// `serviceLink`, which omit their pill entirely when disabled). Three [CcGlyphState]s (design
+/// `LBPSideRail` `hasCaption ? (ccOn ? Icons.ccOn : Icons.ccOff) : Icons.ccUnavailable`):
+///
+///   • [subtitleAvailable] `true` + [subtitleEnabled] `true`  → `CcGlyphState.on`  (active style:
+///     white pill + `theme.accent` glyph, `rb-flutter-cc-icon-active-fill-state` lineage).
+///   • [subtitleAvailable] `true` + [subtitleEnabled] `false` → `CcGlyphState.off` (existing
+///     inactive style: translucent-dark pill + white glyph).
+///   • [subtitleAvailable] `false` (any [subtitleEnabled])    → `CcGlyphState.unavailable` (fixed
+///     grey glyph, translucent-dark pill — NEVER the white "active" style, design `railBtn(icon,
+///     false, onCCUnavailable, false)`). Tapping this state does NOT forward [onTap] — it shows a
+///     short-lived [CcUnavailableTooltip] instead (1.8s auto-hide, mirrors
+///     `product_sheets_view.dart`'s `_cartToastVisible`/`_cartToastTimer` convention). The tooltip
+///     is PURELY local `State` on this widget — no host callback, no core `simulate*`.
+class _CcPillButton extends StatefulWidget {
+  final ReferenceUITheme theme;
+  final bool subtitleAvailable;
+  final bool subtitleEnabled;
+  final VoidCallback onTap;
+
+  const _CcPillButton({
+    super.key,
+    required this.theme,
+    required this.subtitleAvailable,
+    required this.subtitleEnabled,
+    required this.onTap,
+  });
+
+  @override
+  State<_CcPillButton> createState() => _CcPillButtonState();
+}
+
+class _CcPillButtonState extends State<_CcPillButton> {
+  bool _showTip = false;
+  Timer? _tipTimer;
+
+  @override
+  void dispose() {
+    _tipTimer?.cancel();
+    super.dispose();
+  }
+
+  void _handleTap() {
+    if (widget.subtitleAvailable) {
+      widget.onTap();
+      return;
+    }
+    _tipTimer?.cancel();
+    setState(() => _showTip = true);
+    _tipTimer = Timer(const Duration(milliseconds: 1800), () {
+      if (mounted) setState(() => _showTip = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final active = widget.subtitleAvailable && widget.subtitleEnabled;
+    final state = !widget.subtitleAvailable
+        ? CcGlyphState.unavailable
+        : (widget.subtitleEnabled ? CcGlyphState.on : CcGlyphState.off);
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        GestureDetector(
+          onTap: _handleTap,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            width: _pillSize,
+            height: _pillSize,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: active ? Colors.white : _railPillBackground,
+              shape: BoxShape.circle,
+            ),
+            child: CcGlyph(
+              state: state,
+              color: active ? widget.theme.accent : Colors.white,
+              size: _pillGlyphSize * widget.theme.fontScale,
+            ),
+          ),
+        ),
+        // Design `placement="left"` (`LBPTooltip show={ccTip} placement="left" ...`) — the bubble
+        // sits to the LEFT of the pill (the rail hugs the screen's right edge).
+        Positioned(
+          right: _pillSize + 8,
+          top: 0,
+          bottom: 0,
+          child: Align(
+            alignment: Alignment.center,
+            child: CcUnavailableTooltip(show: _showTip, placement: CcTooltipPlacement.left),
+          ),
+        ),
+      ],
     );
   }
 }

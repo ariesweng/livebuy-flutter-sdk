@@ -24,7 +24,8 @@ abstract final class LbTestKeys {
   static const Key playerShell = ValueKey('lb_player_shell');
   static const Key playerVideoSurface = ValueKey('lb_player_video_surface');
   static const Key playerHeader = ValueKey('lb_player_header');
-  static const Key playerHeaderHostPill = ValueKey('lb_player_header_host_pill');
+  static const Key playerHeaderHostPill =
+      ValueKey('lb_player_header_host_pill');
   static const Key subscribeBadge = ValueKey('lb_subscribe_badge');
   static const Key playerMinimize = ValueKey('lb_player_minimize');
   static const Key playerBag = ValueKey('lb_player_bag');
@@ -105,7 +106,8 @@ abstract final class LbTestKeys {
 
   /// Transport-bar draggable seek track (expanded state only) — also the idle state's
   /// invisible drag hit-area, since both are the SAME structurally-stable gesture carrier.
-  static const Key playbackProgressTrack = ValueKey('lb_playback_progress_track');
+  static const Key playbackProgressTrack =
+      ValueKey('lb_playback_progress_track');
 
   /// Drag-time `HH:MM:SS / HH:MM:SS` timestamp readout (shown only while scrubbing).
   static const Key playbackProgressTimestamp =
@@ -158,7 +160,8 @@ abstract final class LbTestKeys {
   static const Key activityEntry = ValueKey('lb_activity_entry');
   static const Key winClaimSheet = ValueKey('lb_win_claim_sheet');
   static const Key winClaimPrimary = ValueKey('lb_win_claim_primary');
-  static const Key winClaimResultBanner = ValueKey('lb_win_claim_result_banner');
+  static const Key winClaimResultBanner =
+      ValueKey('lb_win_claim_result_banner');
   static const Key winClaimScrim = ValueKey('lb_win_claim_scrim');
   // rb-flutter-win-claim-email-flow — 四階段領獎 modal 的新元件（EMAIL-LESS 退役）。既有 key
   // 語意不變（`winClaimSheet` 仍是底卡、`winClaimResultBanner` 仍是結果內容列）。字串值
@@ -170,28 +173,39 @@ abstract final class LbTestKeys {
   // 已移除（生產程式碼再無任何 widget 會掛這兩個 key）。
   /// `claim` 階段的 email 輸入欄（runtime `TextField` / golden 靜態佔位共用同一 key）。
   static const Key winClaimEmailField = ValueKey('lb_win_claim_email_field');
+
   /// `confirmSubmit` / `confirmClose` 的 alert 卡。
   static const Key winClaimAlert = ValueKey('lb_win_claim_alert');
+
   /// alert 自身的 scrim（點擊只收起 alert，MUST NOT 關閉整個 modal）。
   static const Key winClaimAlertScrim = ValueKey('lb_win_claim_alert_scrim');
+
   /// alert 的「取消」。
   static const Key winClaimAlertCancel = ValueKey('lb_win_claim_alert_cancel');
+
   /// alert 的「確定」。
-  static const Key winClaimAlertConfirm = ValueKey('lb_win_claim_alert_confirm');
+  static const Key winClaimAlertConfirm =
+      ValueKey('lb_win_claim_alert_confirm');
+
   /// 送出中疊層（scrim + spinner +「送出中…」）。
   static const Key winClaimSubmitting = ValueKey('lb_win_claim_submitting');
+
   /// `done`（discount）的折扣碼「複製」鈕。
   static const Key winClaimCopyCode = ValueKey('lb_win_claim_copy_code');
+
   /// `fail` 卡的通用錯誤提示列（**不含**任何錯誤代碼，見 R13 刻意分歧 2/2）。
   static const Key winClaimFailNotice = ValueKey('lb_win_claim_fail_notice');
+
   /// 卡底 footer「使用條款 | 隱私政策」外層共用 key。
   static const Key winClaimFooter = ValueKey('lb_win_claim_footer');
   // rb-flutter-win-claim-footer-links — footer 兩段文字各自可點擊，字串值與 iOS
   // `LBAccessibilityID` / Android `LBTestTags` / RN `LBTestIDs` 逐字對齊。
   /// footer「使用條款」文字段（可點擊）。
   static const Key winClaimFooterTerms = ValueKey('lb_win_claim_footer_terms');
+
   /// footer「隱私政策」文字段（可點擊）。
-  static const Key winClaimFooterPrivacy = ValueKey('lb_win_claim_footer_privacy');
+  static const Key winClaimFooterPrivacy =
+      ValueKey('lb_win_claim_footer_privacy');
 
   /// 分頁圓點列外層容器（rb-flutter-win-claim-pagination，R27）——`pageCount > 1` 時才畫，
   /// 僅出現在 `claim` 卡。個別圓點的可點擊 key 見 [winClaimPageDot]。
@@ -201,15 +215,20 @@ abstract final class LbTestKeys {
   // `WinClaimSheetView` 的置中 modal 卡 key 慣例（scrim / 卡本體 / CTA / footer 兩段）。
   /// `ActivitySheetView` 底卡本體。
   static const Key activitySheet = ValueKey('lb_activity_sheet');
+
   /// 外層 scrim（點擊關閉彈窗，純 dismiss）。
   static const Key activitySheetScrim = ValueKey('lb_activity_sheet_scrim');
+
   /// 主 CTA（三態文案：「立即參加」/「已參加」disabled /「知道了」）。
   static const Key activitySheetCta = ValueKey('lb_activity_sheet_cta');
+
   /// 卡底 footer「使用條款 | 隱私政策」外層共用 key。
   static const Key activitySheetFooter = ValueKey('lb_activity_sheet_footer');
+
   /// footer「使用條款」文字段（可點擊）。
   static const Key activitySheetFooterTerms =
       ValueKey('lb_activity_sheet_footer_terms');
+
   /// footer「隱私政策」文字段（可點擊）。
   static const Key activitySheetFooterPrivacy =
       ValueKey('lb_activity_sheet_footer_privacy');
@@ -270,11 +289,21 @@ abstract final class LbTestKeys {
   static const Key momentEnd = ValueKey('lb_moment_end');
   static const Key momentEndWatch = ValueKey('lb_moment_end_watch');
   static const Key momentEndCancel = ValueKey('lb_moment_end_cancel');
-  static const Key momentEndReshuffle = ValueKey('lb_moment_end_reshuffle');
-  static const Key momentEndHotRow = ValueKey('lb_moment_end_hot_row');
+  // rb-flutter-endscreen-live-empty-state: 「查看購物車」CTA on the new liveEmpty
+  // variant. `momentEndReshuffle` / `momentEndHotRow` / `momentHotCard(index)`
+  // (the removed 熱門變體「換一批」pill + hot-card row) are RETIRED — no widget
+  // attaches them any more; see `end_screen.dart`.
+  static const Key momentEndViewCart = ValueKey('lb_moment_end_view_cart');
   static const Key momentStart = ValueKey('lb_moment_start');
   static const Key momentStartSkip = ValueKey('lb_moment_start_skip');
   static const Key momentLoading = ValueKey('lb_moment_loading');
+
+  /// The `.loading` phase's dark mask over the real channel cover photo (`live ==
+  /// true` + non-empty `coverUrl` only — `player-loading-cover-background-
+  /// reference-ui-flutter`, parity iOS/Android/RN `rgba(0,0,0,0.35)`). Absent
+  /// entirely on the solid-brand-backdrop path (demo / golden / `live == false`).
+  static const Key momentLoadingCoverMask =
+      ValueKey('lb_moment_loading_cover_mask');
 
   // ── Family 5 — widget ─────────────────────────────────────────────────────
   static const Key widgetCarousel = ValueKey('lb_widget_carousel');
@@ -311,6 +340,8 @@ abstract final class LbTestKeys {
   static const Key minimizedClose = ValueKey('lb_minimized_close');
   static const Key minimizedExpand = ValueKey('lb_minimized_expand');
   static const Key loopingPreview = ValueKey('lb_looping_preview');
+  static const Key carouselCardCoverPlaceholder =
+      ValueKey('lb_carousel_card_cover_placeholder');
 
   // ── Family 6 — gap-surfaces ───────────────────────────────────────────────
   static const Key authGateModal = ValueKey('lb_auth_gate_modal');
@@ -325,6 +356,7 @@ abstract final class LbTestKeys {
 
   // ── Family 7 — container + sheetkit (shared chrome) ───────────────────────
   static const Key bottomSheetScrim = ValueKey('lb_bottom_sheet_scrim');
+
   /// `LBSheetScaffold`'s grab-handle drag-resize/drag-to-dismiss target
   /// (rb-flutter-sheetkit-resize-dismiss-unify — supersedes the opt-in
   /// `draggable`/rb-flutter-product-sheet-resize-fav-inline era). Present on EVERY
@@ -355,11 +387,13 @@ abstract final class LbTestKeys {
   static Key productRow(int index) => ValueKey('lb_product_row_$index');
 
   /// Per-item product-row thumbnail (seek-to-intro) key.
-  static Key productRowThumb(int index) => ValueKey('lb_product_row_thumb_$index');
+  static Key productRowThumb(int index) =>
+      ValueKey('lb_product_row_thumb_$index');
 
   /// Per-item ProductDetailSheet main-photo gallery thumbnail-selector key
   /// (rb-flutter-product-detail-image-gallery).
-  static Key productGalleryThumb(int index) => ValueKey('lb_product_gallery_thumb_$index');
+  static Key productGalleryThumb(int index) =>
+      ValueKey('lb_product_gallery_thumb_$index');
 
   /// Root of ProductDetailSheet's `.detail` main-photo gallery (INERT — a `KeyedSubtree`,
   /// paints nothing) — lets tests target the swipeable main-image area directly (e.g. for a
@@ -371,43 +405,49 @@ abstract final class LbTestKeys {
   /// paints nothing) — disambiguates it from the thumbnail row's own `Image` widgets, which
   /// would otherwise be indistinguishable by `find.byType(Image)` alone
   /// (rb-flutter-product-detail-image-gallery).
-  static const Key productGalleryMainImage = ValueKey('lb_product_gallery_main_image');
+  static const Key productGalleryMainImage =
+      ValueKey('lb_product_gallery_main_image');
 
   /// Per-item product-row name/detail-open key.
-  static Key productRowDetail(int index) => ValueKey('lb_product_row_detail_$index');
+  static Key productRowDetail(int index) =>
+      ValueKey('lb_product_row_detail_$index');
 
   /// Per-item product-row share key.
-  static Key productRowShare(int index) => ValueKey('lb_product_row_share_$index');
+  static Key productRowShare(int index) =>
+      ValueKey('lb_product_row_share_$index');
 
   /// Per-item product-row add-to-cart / restock key.
-  static Key productRowCart(int index) => ValueKey('lb_product_row_cart_$index');
+  static Key productRowCart(int index) =>
+      ValueKey('lb_product_row_cart_$index');
 
   /// Per-item「更多商品」推薦卡 key (`.grid` layout, rb-flutter-product-detail-recommendations).
-  static Key recommendationCard(int index) => ValueKey('lb_recommendation_card_$index');
+  static Key recommendationCard(int index) =>
+      ValueKey('lb_recommendation_card_$index');
 
   /// Per-item recommendation card play (換片) button key.
-  static Key recommendationPlay(int index) => ValueKey('lb_recommendation_play_$index');
+  static Key recommendationPlay(int index) =>
+      ValueKey('lb_recommendation_play_$index');
 
   /// Per-item recommendation card cart (加購) button key.
-  static Key recommendationCart(int index) => ValueKey('lb_recommendation_cart_$index');
+  static Key recommendationCart(int index) =>
+      ValueKey('lb_recommendation_cart_$index');
 
   /// Per-(group, option) variant chip key,
   /// e.g. `variantChip(1, 2) == const ValueKey('lb_variant_chip_1_2')`.
   static Key variantChip(int group, int option) =>
       ValueKey('lb_variant_chip_${group}_$option');
 
-  /// Per-item end-screen hot card key.
-  static Key momentHotCard(int index) => ValueKey('lb_moment_hot_card_$index');
-
   /// Per-item live pinned-product carousel page dot key.
   static Key livePinnedDot(int index) => ValueKey('lb_live_pinned_dot_$index');
 
   /// Per-item now-introducing carousel page dot key.
-  static Key nowIntroducingDot(int index) => ValueKey('lb_now_introducing_dot_$index');
+  static Key nowIntroducingDot(int index) =>
+      ValueKey('lb_now_introducing_dot_$index');
 
   /// Per-item win-claim pagination dot key (rb-flutter-win-claim-pagination, R27),
   /// e.g. `winClaimPageDot(0) == const ValueKey('lb_win_claim_page_dot_0')`.
-  static Key winClaimPageDot(int index) => ValueKey('lb_win_claim_page_dot_$index');
+  static Key winClaimPageDot(int index) =>
+      ValueKey('lb_win_claim_page_dot_$index');
 
   /// Per-item activity-sheet pagination dot key (rb-flutter-activity-sheet-pagination),
   /// e.g. `activitySheetPageDot(0) == const ValueKey('lb_activity_sheet_page_dot_0')`.

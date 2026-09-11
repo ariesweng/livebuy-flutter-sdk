@@ -355,7 +355,7 @@ class _GuestNameEditModalViewState extends State<GuestNameEditModalView> {
         shape: BoxShape.circle,
         border: Border.all(color: _stroke, width: 1),
       ),
-      child: Icon(Icons.person, size: 24, color: theme.accent),
+      child: Icon(Icons.person, size: 26, color: theme.accent),
     );
   }
 

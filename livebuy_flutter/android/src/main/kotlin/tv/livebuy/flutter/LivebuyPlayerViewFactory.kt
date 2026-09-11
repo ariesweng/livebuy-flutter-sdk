@@ -161,6 +161,14 @@ class LivebuyFlutterPlayerView(
                     // recommended products — reuses the SAME `productToMap` helper
                     // `goods` above uses, no extra API call needed.
                     otherGoods = ch.otherGoods.map { productToMap(it) },
+                    // channel-flash-sale-flag-core-flutter: raw top-level
+                    // `channel.isFlashSale` passthrough (NOT `ch.shop.isFlashSale`).
+                    isFlashSale = ch.isFlashSale,
+                    // channel-notice-bridge-core-flutter: raw top-level
+                    // `channel.notice` / `channel.sysNotice` passthrough (NOT
+                    // `ch.shop.notice` / `ch.shop.sysNotice`).
+                    notice = ch.notice,
+                    sysNotice = ch.sysNotice,
                 )
                 if (ChannelChromeBridge.shouldEmit(snapshot, lastChannelChromeSnapshot)) {
                     lastChannelChromeSnapshot = snapshot
@@ -270,6 +278,11 @@ class LivebuyFlutterPlayerView(
         // in our 6 fields) does not spam the EventChannel; a per-second countdown tick DOES
         // re-emit because `autoNextRemainingSeconds` is itself part of the snapshot.
         playerView.onMomentStateChange = { state ->
+            // flutter-android-moment-products-bridge-core: `products`/`narratingProduct`
+            // reuse the SAME `productToMap` helper the `channelChange` `goods` field above
+            // uses (structural parity). This is what powers the LIVE 介紹中商品卡 /
+            // dynamically-updating product list on the Flutter side — see this file's
+            // `MomentFieldsBridge.kt` sibling for the full rationale.
             val snapshot = MomentFieldsBridge.Snapshot(
                 viewerCount = state.viewerCount,
                 isSubscribed = state.isSubscribed,
@@ -277,6 +290,8 @@ class LivebuyFlutterPlayerView(
                 autoNextRemainingSeconds = state.autoNextRemainingSeconds,
                 nextItem = state.nextItem,
                 hotItems = state.hotItems,
+                products = state.products.map { productToMap(it) },
+                narratingProduct = state.narratingProduct?.let { productToMap(it) },
             )
             if (MomentFieldsBridge.shouldEmit(snapshot, lastMomentFieldsSnapshot)) {
                 lastMomentFieldsSnapshot = snapshot
@@ -315,6 +330,11 @@ class LivebuyFlutterPlayerView(
                 "play"     -> { playerView.play(); result.success(null) }
                 "pause"    -> { playerView.pause(); result.success(null) }
                 "setMuted" -> { playerView.setMuted(callArgs?.get("muted") as Boolean); result.success(null) }
+                // mute-preference-persist-across-session-flutter-core — read-only query
+                // exit forwarding the already-public core getter `playerView.isMuted`
+                // (mirrors iOS `LivebuyPlayerViewController.isMuted`). Pure passthrough,
+                // no new state on this side.
+                "isMuted"  -> { result.success(playerView.isMuted) }
                 "seek"     -> { playerView.seek((callArgs?.get("seconds") as Number).toDouble()); result.success(null) }
                 // flutter-vod-playback-progress-core — VOD-1 control exits. Android's
                 // native SDK does NOT yet expose togglePlayPause()/seekBy() itself (only

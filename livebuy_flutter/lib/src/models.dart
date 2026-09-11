@@ -1109,6 +1109,19 @@ class LBFeaturedGood {
 ///                     Raw passthrough only — does NOT itself compute
 ///                     `chatEnabled`; that derivation stays a
 ///                     reference-ui/template-layer concern.
+///   • [isFlashSale] — raw `channel.isFlashSale` passthrough (a TOP-LEVEL
+///                     `LBChannel` field, NOT nested under `shop`). `true` iff
+///                     the upstream `sale_type == 2`; always present on the
+///                     wire, independent of [type] / [liveStatus]. Default
+///                     `false` when absent (channel-flash-sale-flag-core-flutter).
+///   • [notice]      — raw `channel.notice` free-text announcement passthrough
+///                     (a TOP-LEVEL `LBChannel` field, NOT nested under `shop`).
+///                     "" when absent/no active announcement. Populated at
+///                     channel-load time, independent of playback state
+///                     (channel-notice-bridge-core-flutter).
+///   • [sysNotice]   — raw `channel.sysNotice` system-notice passthrough, same
+///                     top-level shape and default-empty convention as
+///                     [notice] (channel-notice-bridge-core-flutter).
 ///
 /// `upcoming.active` itself does NOT need this projection — it is derivable from the
 /// already-bridged player state (`"awaitingLive"`); this projection supplies the
@@ -1205,6 +1218,34 @@ class LBPlayerChannelInfo {
   /// concern; this projection only carries the raw value.
   final int diversion;
 
+  /// channel-flash-sale-flag-core-flutter: raw `channel.isFlashSale` passthrough — a
+  /// TOP-LEVEL `LBChannel` field (unlike [shopIntro] / [serviceLink] / [shopName] /
+  /// [shopLogo], which all nest under `channel.shop`). `true` iff the upstream
+  /// `sale_type == 2`; always present on the wire, independent of [type] /
+  /// [liveStatus]. Default `false` when absent. Raw passthrough only — this
+  /// projection does not itself decide any flash-sale UI treatment; that stays a
+  /// reference-ui/template-layer concern.
+  final bool isFlashSale;
+
+  /// channel-notice-bridge-core-flutter: raw `channel.notice` free-text
+  /// announcement passthrough — a TOP-LEVEL `LBChannel` field (same shape as
+  /// [isFlashSale], unlike [shopIntro] / [serviceLink] / [shopName] / [shopLogo],
+  /// which all nest under `channel.shop`). "" when absent — may legitimately be ""
+  /// when no announcement is currently active. Populated the moment the channel
+  /// loads (independent of playback state), UNLIKE the pre-existing
+  /// `POLL_RECEIVED`-relayed `notice` (which only reaches a Flutter host once the
+  /// player reaches `.playing` and the first 5s poll round completes) — this
+  /// projection gives a host an earlier signal. Raw passthrough only; deciding
+  /// any announcement-banner UI treatment stays a reference-ui/template-layer
+  /// concern.
+  final String notice;
+
+  /// channel-notice-bridge-core-flutter: raw `channel.sysNotice` system-notice
+  /// passthrough — a TOP-LEVEL `LBChannel` field, same shape and default-empty
+  /// convention as [notice] (a distinct, independently-mutable field on the
+  /// backend). "" when absent.
+  final String sysNotice;
+
   const LBPlayerChannelInfo({
     this.publishAt = '',
     this.cover = '',
@@ -1221,6 +1262,9 @@ class LBPlayerChannelInfo {
     this.shopIntro = '',
     this.guestComment = 1,
     this.diversion = 0,
+    this.isFlashSale = false,
+    this.notice = '',
+    this.sysNotice = '',
   });
 
   /// Decode from the native `{"event":"channelChange", …}` EventChannel payload.
@@ -1258,6 +1302,16 @@ class LBPlayerChannelInfo {
         // fail-open" default (`1`).
         guestComment: _asGuestComment(map['guestComment']),
         diversion: _asDiversion(map['diversion']),
+        // channel-flash-sale-flag-core-flutter: reuses the existing `_asBoolOr`
+        // helper (NOT a simple `as bool? ?? false` cast, which THROWS for a
+        // non-null value of the wrong type) — tolerates bool (native emit) or
+        // num 0/1 (defensive, per the SDK-wide "bool fields tolerate Int 0/1"
+        // convention); missing/null/any other type → false.
+        isFlashSale: _asBoolOr(map['isFlashSale'], false),
+        // channel-notice-bridge-core-flutter: mirrors the existing `shopIntro`
+        // tolerant cast exactly (missing/null/non-string → '').
+        notice: (map['notice'] as String?) ?? '',
+        sysNotice: (map['sysNotice'] as String?) ?? '',
       );
 }
 
@@ -1439,6 +1493,20 @@ class LBPlayerMomentInfo {
   final LBNavItem? nextItem;
   final List<LBHotItem> hotItems;
 
+  // flutter-android-moment-products-bridge-core / flutter-ios-moment-products-bridge-core —
+  // the currently-loaded channel's FULL product list, refreshed on every native
+  // moment-state poll round (unlike `LBPlayerChannelInfo.goods`, a
+  // channel-LOAD-TIME-ONLY snapshot). Bridged on Android (see
+  // `MomentFieldsBridge.Snapshot.products` doc comment) and iOS (see
+  // `LivebuyPlugin.swift`'s `MomentFieldsSnapshot.products` doc comment);
+  // default `[]` on RN / older native binaries that don't send this key.
+  final List<LBProduct> products;
+
+  /// The single representative `narrate_status == 2` product, or `null` when
+  /// no product is currently being narrated. Bridged on Android and iOS (see
+  /// [products]'s doc comment); `null` on RN / older native binaries.
+  final LBProduct? narratingProduct;
+
   const LBPlayerMomentInfo({
     this.viewerCount = 0,
     this.isSubscribed = false,
@@ -1446,13 +1514,18 @@ class LBPlayerMomentInfo {
     this.autoNextRemainingSeconds = 0,
     this.nextItem,
     this.hotItems = const [],
+    this.products = const [],
+    this.narratingProduct,
   });
 
   /// Decode from the native `{"event":"momentStateChange", …}` EventChannel
   /// payload. Tolerant (parity with `LBPlayerChannelInfo.fromMap`): missing /
   /// null / wrong-typed num fields → their Int default; missing / null /
   /// wrong-typed bool fields → `false`; `nextItem` via
-  /// [LBNavItem.fromMapOrNull]; `hotItems` via [_asHotItemList].
+  /// [LBNavItem.fromMapOrNull]; `hotItems` via [_asHotItemList]; `products`
+  /// via [_asProductList] (missing/null/non-List → `[]`, mirrors
+  /// `LBPlayerChannelInfo.goods`); `narratingProduct` via [LBProduct.fromMap]
+  /// when present as a `Map`, else `null`.
   factory LBPlayerMomentInfo.fromMap(Map<Object?, Object?> map) =>
       LBPlayerMomentInfo(
         viewerCount: (map['viewerCount'] as num?)?.toInt() ?? 0,
@@ -1463,6 +1536,11 @@ class LBPlayerMomentInfo {
             (map['autoNextRemainingSeconds'] as num?)?.toInt() ?? 0,
         nextItem: LBNavItem.fromMapOrNull(map['nextItem']),
         hotItems: _asHotItemList(map['hotItems']),
+        products: _asProductList(map['products']),
+        narratingProduct: map['narratingProduct'] is Map
+            ? LBProduct.fromMap(
+                Map<Object?, Object?>.from(map['narratingProduct'] as Map))
+            : null,
       );
 }
 

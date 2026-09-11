@@ -306,10 +306,19 @@ class TemplateAttachment {
         // → null, matching the existing `vid is String ? vid : null` convention below).
         final fromVideoId = event.params['from_video_id'];
         final toVideoId = event.params['to_video_id'];
+        final switchToVideoId = toVideoId is String ? toVideoId : null;
         template.handleVideoSwitch(
           from: fromVideoId is String ? fromVideoId : null,
-          to: toVideoId is String ? toVideoId : null,
+          to: switchToVideoId,
         );
+        // flutter-video-open-reset-backstop-template — advance `currentVideoId` here
+        // too (not just in the `videoOpen` case below), so the VIDEO_OPEN that
+        // follows this real in-place switch sees "old == new" and its own backstop
+        // reset (below) is a no-op. Without this, the SAME switch would be detected
+        // TWICE (once here, once by the VIDEO_OPEN backstop) and the second
+        // `handleVideoSwitch` call would corrupt `DefaultActiveEvent`'s per-videoId
+        // snapshot cache — see design.md D2 of that change.
+        template.setCurrentVideoId(switchToVideoId);
         return LBEventReply.acknowledge;
 
       case LBEvent.videoOpen:
@@ -323,7 +332,29 @@ class TemplateAttachment {
         // template's currentVideoId so addToCart threads it into
         // CART_ADD_REQUEST.video_id (Flutter has no ingestChannel). pure assignment.
         final vid = event.params['video_id'];
-        template.setCurrentVideoId(vid is String ? vid : null);
+        final newVideoId = vid is String ? vid : null;
+        // flutter-video-open-reset-backstop-template — VIDEO_OPEN backstop reset.
+        // Native VIDEO_SWITCH only fires when the SAME native player-view
+        // instance's own `currentVideoId` differs (LivebuyPlayerView.load's
+        // `prev != null` check). Flutter tears down + recreates that native
+        // instance whenever the widget hosting `LivebuyPlayerCore` is disposed
+        // (e.g. closing then reopening a different video via
+        // `CollapsibleLivebuyPlayer`) — the fresh instance's own `prev == null`,
+        // so VIDEO_SWITCH never fires and `handleVideoSwitch` (which clears
+        // feed/winClaim/activeEvent) is skipped, leaving the previous session's
+        // chat/win-entry stuck in this process-lifetime template singleton.
+        // VIDEO_OPEN fires unconditionally on every successful channel-apply
+        // (first load or switch, any native instance), so comparing it against
+        // this template's OWN tracked `currentVideoId` (read BEFORE it is
+        // overwritten below) is a reliable, instance-independent backstop. The
+        // `videoSwitch` case above already advances `currentVideoId` on the
+        // in-place-switch path, so this is a true no-op there — it only fires on
+        // the close→reopen gap VIDEO_SWITCH cannot see.
+        final oldVideoId = template.currentVideoId;
+        if (oldVideoId != null && newVideoId != null && oldVideoId != newVideoId) {
+          template.handleVideoSwitch(from: oldVideoId, to: newVideoId);
+        }
+        template.setCurrentVideoId(newVideoId);
         // swipe-nav-video-open-wiring — VIDEO_OPEN additively carries
         // `prev_video_id`/`next_video_id` (video-open-adjacent-nav-bridge; key
         // OMITTED, not null, when there is no adjacent video in that direction).
@@ -404,6 +435,10 @@ class TemplateAttachment {
           // 引用內容（主播 / AI 回覆引用框）。核心 pollReceivedEventParams 已序列化（缺則退回 color）。
           kind: _str(item['kind']),
           reply: _str(item['reply']),
+          // flutter-chat-push-id-dedupe-template — already on the wire (`core-flutter-poll-params`
+          // serializes it, omit-when-nil), just never read before. Powers handlePush's own id-based
+          // dedup guard.
+          id: _str(item['id']),
         );
       }
     }
