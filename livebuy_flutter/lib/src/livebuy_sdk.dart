@@ -24,6 +24,17 @@ class LivebuySDK {
   /// (`flutter-player-direct-close-button-default-true`).
   static bool _enableDirectCloseButton = true;
 
+  /// Dart-only backing store for [requireLoginForAddToCart]
+  /// (`flutter-add-to-cart-login-gate-core`). Deliberately NEVER sent over the
+  /// `tv.livebuy/sdk` method channel — mirrors [_enableDirectCloseButton]'s
+  /// rationale: this flag only drives whether Flutter's own Dart add-to-cart
+  /// logic (`flutter-ui`'s `DefaultPlayerTemplate.addToCart()`, downstream
+  /// template change) blocks locally before calling [LivebuySDK.addToCart] —
+  /// the native iOS/Android SDK never sees or needs to know about it. Default
+  /// `false` (unlike `_enableDirectCloseButton`'s `true`) — unchanged existing
+  /// behavior: the SDK does not proactively block a guest's add-to-cart.
+  static bool _requireLoginForAddToCart = false;
+
   /// Dart-only backing store for [currentShopId]
   /// (`flutter-live-now-pill-auto-shopid-turnkey-core`). Unlike
   /// [_enableDirectCloseButton], the underlying `shopId` value IS still sent
@@ -48,6 +59,11 @@ class LivebuySDK {
     // is a host UI preference, not part of "is the SDK configured" state, and
     // is NEVER forwarded to native (see [enableDirectCloseButton] doc).
     _enableDirectCloseButton = options.enableDirectCloseButton;
+    // flutter-add-to-cart-login-gate-core: pure Dart-side default, captured
+    // synchronously alongside `_enableDirectCloseButton` above — this flag
+    // only governs local Dart add-to-cart logic and is NEVER forwarded to
+    // native (see [requireLoginForAddToCart] doc).
+    _requireLoginForAddToCart = options.requireLoginForAddToCart;
     // flutter-live-now-pill-auto-shopid-turnkey-core: cache the shopId this
     // call was made with, synchronously and unconditionally, before the
     // round-trip below — so a host reading [currentShopId] back sees the
@@ -91,6 +107,24 @@ class LivebuySDK {
   @visibleForTesting
   static void resetEnableDirectCloseButtonForTesting() {
     _enableDirectCloseButton = true;
+  }
+
+  // MARK: - Add-to-cart login gate (flutter-add-to-cart-login-gate-core, Dart-only)
+
+  /// Current value of [LBConfigOptions.requireLoginForAddToCart]
+  /// (`flutter-add-to-cart-login-gate-core`). A pure Dart-side read — does NOT
+  /// round-trip through the `tv.livebuy/sdk` method channel, because the value
+  /// has no native iOS/Android SDK consumer: it only governs whether
+  /// `flutter-ui`'s `DefaultPlayerTemplate.addToCart()` (downstream template
+  /// change) blocks locally when the viewer is not logged in. Defaults to
+  /// `false` before [configure] has ever been called.
+  static bool get requireLoginForAddToCart => _requireLoginForAddToCart;
+
+  /// Test-only. Resets [requireLoginForAddToCart] back to its `false` default.
+  /// Production code never calls this.
+  @visibleForTesting
+  static void resetRequireLoginForAddToCartForTesting() {
+    _requireLoginForAddToCart = false;
   }
 
   // MARK: - shopId readback (flutter-live-now-pill-auto-shopid-turnkey-core, Dart-only)

@@ -309,6 +309,14 @@ bool isAddToCartAuthRequired(Object error) =>
 /// every other error. Extracted so the route-B catch's branching is unit-testable in isolation.
 bool isAddToCartDeduplicated(Object error) => error is LBErrorCartAddDeduplicated;
 
+/// Pure decision (flutter-add-to-cart-login-gate-template, parity iOS/Android/RN
+/// `addToCartRequiresLoginLocally`): does the host's global opt-in policy
+/// (`LivebuySDK.requireLoginForAddToCart`) require blocking [DefaultPlayerTemplate.addToCart]
+/// locally — before any network call — right now, given the current login state? Extracted so
+/// the decision is unit-testable without a real `LivebuySDK` / method channel.
+bool addToCartRequiresLoginLocally(bool requireLogin, bool isLoggedIn) =>
+    requireLogin && !isLoggedIn;
+
 /// Default Player template event handler (Task 6.5, 6.7).
 ///
 /// `DISMISS_REQUEST` → `Navigator.pop(context)`
@@ -1852,6 +1860,22 @@ class DefaultPlayerTemplate {
     final detail = productSheet.detail;
     if (detail == null) return; // no open detail — nothing to add.
     if (hostOwnsCart) return; // route A took over — no route-B delegation.
+
+    // flutter-add-to-cart-login-gate-template：全域「加購前必須登入」政策開啟且未登入 →
+    // 本地攔截，完全不委派 requester。刻意排在 hostOwnsCart 之後（host 接管時 SDK 完全不該
+    // 做任何事）、選規格 / 售罄守門之前（parity iOS/Android/RN：使用者連自己有沒有資格結帳
+    // 都不確定時，跟他談規格/庫存沒有意義）。只有政策開啟時才 await isLoggedIn()（避免預設
+    // 關閉時多一次不必要的 method channel 往返）。重用既有 addToCartNeedsLogin 呈現路徑，
+    // 不動 addToCartFailed / addToCartInFlight（比照既有 isAddToCartAuthRequired 分支同樣
+    // 不碰這兩個旗標）；此類別非 ChangeNotifier（純欄位、無 notify），比照同檔案其他分支寫法。
+    final requireLogin = LivebuySDK.requireLoginForAddToCart;
+    if (requireLogin) {
+      final loggedIn = await LivebuySDK.isLoggedIn();
+      if (addToCartRequiresLoginLocally(requireLogin, loggedIn)) {
+        _addToCartNeedsLogin = true;
+        return;
+      }
+    }
 
     // Gate: has spec groups but selection incomplete → 請選規格.
     if (variantPicker.hasGroups && variantPicker.selectedSpec == null) {

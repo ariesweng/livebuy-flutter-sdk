@@ -6,6 +6,37 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.4.0 - 2026-09-13
+
+> **三套件版號 lockstep bump（`livebuy_flutter` core 有實際內容變動，`livebuy_flutter_ui` 有
+> 實際內容變動，`livebuy_flutter_reference_ui` 本輪零程式碼變動、隨 lockstep 慣例一併對齊）。**
+> 自 `2.3.1` 以來累積 3 個 core 內容 commit + 1 個 template 內容 commit + 1 輪 Android bridge
+> core pin 追新，主軸是加購前登入攔截、`CART_ADD_REQUEST` 補回傳加購數量，以及一輪例行 pin
+> bump（`4.18.0`→`4.19.0`）。**零 BREAKING。**
+
+### Added
+
+- **加購前本地攔截未登入使用者**（`flutter-add-to-cart-login-gate-core` / `-template`）：新增
+  全域設定 `requireLoginForAddToCart`（default `false`，additive），`DefaultTemplate.addToCart()`
+  新增本地檢查，重用既有登入閘呈現路徑，parity 四端。
+- **`CART_ADD_REQUEST` 事件補回傳加購數量**（`cart-add-request-num-flutter-core`，`num`），
+  additive 欄位，parity iOS/Android/RN。
+
+### Fixed
+
+- **Android bridge core pin 例行追新 `4.18.0` → `4.19.0`**（`flutter/android/build.gradle`，
+  `flutter-android-bridge-core-pin-4-19-0`，已核對 `livebuy-android-sdk/CHANGELOG.md` 的
+  `[4.19.0]` 條目確認本輪 `:livebuy` core 模組零 BREAKING、且新增的兩項
+  （`requireLoginForAddToCart` 純 Dart 側實作不經過 native bridge、`CART_ADD_REQUEST.num` 走
+  整包泛型透傳不需 bridge Kotlin 跟著改）皆與本 bridge 原始碼無關，回到例行維護，不需符號級
+  驗證）。
+
+### Deprecated
+
+- **`addToCart` 的 `ids`（批次結帳模式）標記淘汰**（`deprecate-cart-purchase-ids-mode`）：查證
+  零呼叫端使用，加 doc comment 說明，預告下一個四端同步的 major 版本移除。零執行期行為改變，
+  parity 四端。
+
 ## 2.3.1 - 2026-09-11
 
 > `livebuy_flutter_reference_ui` 專屬的兩個小型 bug fix（`livebuy_flutter` /

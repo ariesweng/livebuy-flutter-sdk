@@ -105,6 +105,26 @@ class LBConfigOptions {
   /// `tv.livebuy/sdk` method channel.
   final bool enableDirectCloseButton;
 
+  /// Global preference: require the viewer to be logged in before adding an
+  /// item to cart (`flutter-add-to-cart-login-gate-core`). Default `false`
+  /// (unlike [enableDirectCloseButton]'s `true` default — this is an
+  /// unrelated flag) — unchanged existing behavior: the SDK does not
+  /// proactively block a guest's add-to-cart, and `/sdk/video/addcart` is
+  /// sent as before (conditional token policy); only a backend response with
+  /// an empty `buy_no` passively triggers the existing
+  /// `cart-needs-login-gate` (reference-ui layer). When `true`, a host wants
+  /// add-to-cart to require login up front.
+  ///
+  /// This flag is consumed ENTIRELY by the pure-Dart `flutter-ui` package's
+  /// `DefaultPlayerTemplate.addToCart()` (a downstream template-layer
+  /// change) — it has NO native iOS/Android SDK consumer, so it is
+  /// deliberately kept Dart-only, mirroring [enableDirectCloseButton]'s
+  /// rationale: it is captured by [LivebuySDK.configure] into
+  /// [LivebuySDK.requireLoginForAddToCart] and is NEVER sent over the
+  /// `tv.livebuy/sdk` method channel. The native iOS/Android SDKs each have
+  /// their own independent, parallel `requireLoginForAddToCart` core flag.
+  final bool requireLoginForAddToCart;
+
   const LBConfigOptions({
     required this.apiKey,
     required this.secret,
@@ -119,6 +139,7 @@ class LBConfigOptions {
     this.enableStatReporting = true,
     this.environment = LBEnvironment.production,
     this.enableDirectCloseButton = true,
+    this.requireLoginForAddToCart = false,
   });
 }
 
@@ -1791,6 +1812,20 @@ class LBAddToCartOptions {
   final int? goodsId;
   final int? num;
   final int? specificationId;
+  /// **Deprecated** (`deprecate-cart-purchase-ids-mode`) — the cart-purchase
+  /// (`user_carts.id` array) mode. No reference-ui / template / example
+  /// caller has ever passed a non-empty `ids` since this class was
+  /// introduced, and the backend's own "what PHP actually returns today"
+  /// wire contract (`docs/backend/go-rewrite-wire-contract.md` §2.7) only
+  /// documents the direct-purchase fields — `ids` support against the
+  /// current backend has never been verified. Behaviour is unchanged for
+  /// now (a non-empty `ids` is still forwarded as-is); this field will be
+  /// removed in the next major.
+  @Deprecated(
+    'Unverified against the current backend and never called by any '
+    'reference-ui/template/example; will be removed in the next major. '
+    'See deprecate-cart-purchase-ids-mode.',
+  )
   final List<int>? ids;
   final int? live;
   final int? isLive;
@@ -1981,6 +2016,10 @@ class LBCartResult {
 /// remembering the previous event; a normal (user-tapped) add-to-cart omits the
 /// `award_winner_id` key entirely. See [LivebuyPlayerController.requestAwardClaim]
 /// for the two-event sequence and its failure degradation.
+///
+/// [num] (`cart-add-request-num-flutter-core`) is the quantity added in this
+/// request — the same value passed into `addToCart`'s `num` parameter, not
+/// something echoed back by the addcart response.
 class LBCartAddRequest {
   /// Current video short code (`video_id`, required — `fromMap` returns `null`
   /// if this key is missing).
@@ -2032,6 +2071,23 @@ class LBCartAddRequest {
   /// the SDK or the host does here.
   final String? awardWinnerId;
 
+  /// Quantity added in this request (`num`). **Nullable** — the same
+  /// omission convention as [awardWinnerId], **not** the `''`-fallback
+  /// convention of [goodsNo] / [specificationNo] / [specificationId]: the
+  /// value comes from the `num` parameter passed into `addToCart` at call
+  /// time (the `addcart` response itself does not return this), so on the
+  /// cart-batch-checkout (`ids`) path — where there is no single per-item
+  /// quantity — the backend omits the `num` key entirely and this reads
+  /// `null`. **`null` is NOT `0`** — `0` is a legal quantity, so collapsing
+  /// a missing key into `0` would make a host misread "no single quantity"
+  /// as "added zero items". A direct-buy add-to-cart carries `num`; an
+  /// award-triggered add-to-cart (see [awardWinnerId]) always carries
+  /// `num == 1` alongside it.
+  ///
+  /// The SDK MUST NOT change any pricing behaviour because of this field —
+  /// it is purely informational quantity, not a billing signal.
+  final int? num;
+
   const LBCartAddRequest({
     required this.videoId,
     this.productId = '',
@@ -2042,6 +2098,7 @@ class LBCartAddRequest {
     this.buyNo = '',
     this.track,
     this.awardWinnerId,
+    this.num,
   });
 
   /// Parses `CART_ADD_REQUEST`'s `params` into typed fields in one call. Pure
@@ -2058,6 +2115,9 @@ class LBCartAddRequest {
     if (videoId is! String) return null;
     final rawTrack = map['track'];
     final rawAwardWinnerId = map['award_winner_id'];
+    // Named `rawNum`, not `num`, to avoid reading like Dart's built-in `num`
+    // type right next to the field of the same name.
+    final rawNum = map['num'];
     return LBCartAddRequest(
       videoId: videoId,
       productId: _asString(map['product_id']),
@@ -2068,6 +2128,7 @@ class LBCartAddRequest {
       buyNo: _asString(map['buy_no']),
       track: rawTrack is Map<Object?, Object?> ? LBCartTrack.fromMap(rawTrack) : null,
       awardWinnerId: rawAwardWinnerId is String ? rawAwardWinnerId : null,
+      num: rawNum is int ? rawNum : null,
     );
   }
 }
