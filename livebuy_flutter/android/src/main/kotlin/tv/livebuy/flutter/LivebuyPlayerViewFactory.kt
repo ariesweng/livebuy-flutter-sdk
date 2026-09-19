@@ -36,6 +36,7 @@ import tv.livebuy.sdk.models.LBProduct
 import tv.livebuy.sdk.models.LBSpec
 import tv.livebuy.sdk.models.LBSpecOption
 import tv.livebuy.sdk.models.LBWinner
+import tv.livebuy.sdk.player.LBLiveVideoSurfaceMode
 import tv.livebuy.sdk.player.LivebuyPlayerView
 import tv.livebuy.sdk.player.PiPHelper
 import tv.livebuy.sdk.player.VideoInfoPanel
@@ -45,6 +46,7 @@ import tv.livebuy.sdk.player.pollReceivedEventParams
 // activityProvider (flutter-android-auto-pip-entry): supplies the host Activity so each view can
 // arm OS auto-PiP + call PiPHelper.enterPiP. Resolved at view-create time so a config-change-
 // recreated Activity is always current; null → the view safely skips PiP wiring (no crash).
+
 class LivebuyPlayerViewFactory(
     private val messenger: BinaryMessenger,
     private val appContext: Context,
@@ -95,6 +97,21 @@ class LivebuyFlutterPlayerView(
     private var lastMomentFieldsSnapshot: MomentFieldsBridge.Snapshot? = null
 
     init {
+        // flutter-android-texture-layer-composition-core: make the live (IVS) engine render into a
+        // `TextureView` instead of its default `SurfaceView`. MUST be set right after constructing
+        // `playerView` and BEFORE any `load()` — core contract (`LBLiveVideoSurfaceMode` doc: the
+        // value is read when the IVS engine is lazily created on the first live load), hence the
+        // very first statement of this init block, ahead of the method-channel `load` handler (the
+        // sole `load()` trigger on Android — see the
+        // fix-flutter-android-duplicate-load-on-platform-view-create comment further down this
+        // init block). With VOD / replay / intro already on `TextureView`
+        // (`lb_exo_player_view.xml`), the native view tree this platform view wraps never contains
+        // a `SurfaceView`, so the Dart side's Texture Layer mount (`initSurfaceAndroidView`,
+        // `livebuy_player.dart`) never falls back to Hybrid Composition and no `SurfaceView` can
+        // punch through the Flutter overlays. Bridge-internal decision — deliberately NOT a
+        // `creationParams` / method-channel field (spec `flutter-android-player-view-composition`).
+        playerView.liveVideoSurfaceMode = LBLiveVideoSurfaceMode.TEXTURE_VIEW
+
         playerView.onStateChange = { state ->
             val raw = when (state) {
                 LBPlayerState.LOADING -> "loading"
@@ -336,13 +353,35 @@ class LivebuyFlutterPlayerView(
                 // no new state on this side.
                 "isMuted"  -> { result.success(playerView.isMuted) }
                 "seek"     -> { playerView.seek((callArgs?.get("seconds") as Number).toDouble()); result.success(null) }
-                // flutter-vod-playback-progress-core — VOD-1 control exits. Android's
-                // native SDK does NOT yet expose togglePlayPause()/seekBy() itself (only
-                // the isReplay-slice parity landed), so these are composed bridge-side
-                // from the already-real play()/pause()/seek()/playbackProgress surface —
-                // NOT a call to any nonexistent native method.
+                // flutter-vod-scrub-seek-tolerance-core — drag-to-scrub precision hints, no
+                // position change of their own; see LivebuyPlayerView.beginScrub()/endScrub().
+                //
+                // NOTE (history): a 2026-09-17 experiment detached the video surface across the
+                // whole drag (mirroring the since-removed PiP detach hack) to cut Hybrid
+                // Composition's per-frame recomposite cost during a slow scrub — it blanked the
+                // video for the ENTIRE drag and was reverted. flutter-android-texture-layer-
+                // composition-core removed that underlying cost itself: the player no longer
+                // mounts via Hybrid Composition (Texture Layer composition, see
+                // `livebuy_player.dart` and `installAutoPip` (5) below), so scrub-drag jank is
+                // mitigated only by the existing Android-only 30fps visual throttle in
+                // `playback_progress_bar_view.dart`
+                // (`flutter-android-scrub-drag-visual-throttle-reference-ui`) on top of the
+                // cheaper composition — no video-surface detach anywhere in this bridge.
+                "beginScrub" -> { playerView.beginScrub(); result.success(null) }
+                "endScrub"   -> { playerView.endScrub(); result.success(null) }
+                // flutter-vod-playback-progress-core — VOD-1 control exits.
+                // fix-flutter-android-toggle-play-pause-bridge: togglePlayPause now forwards
+                // directly to the real native LivebuyPlayerView.togglePlayPause() (added by
+                // android-vod-playback-progress-core-parity). The prior play()/pause()
+                // composition never flipped canonical playerState — Android engines don't
+                // re-fire onStateChange on a bare pause/resume — so the progress pump and
+                // playbackProgress.isPlaying stayed stuck at the pre-pause value, and the
+                // reference-ui play/pause icon never toggled (a second tap would even re-call
+                // pause() instead of play()). seekBy() is left unchanged (composed bridge-side
+                // from play()/pause()/seek()/playbackProgress) — narrower risk profile, out of
+                // scope for this fix (see design.md).
                 "togglePlayPause" -> {
-                    if (playerView.playbackProgress.isPlaying) playerView.pause() else playerView.play()
+                    playerView.togglePlayPause()
                     result.success(null)
                 }
                 "seekBy" -> {
@@ -571,7 +610,18 @@ class LivebuyFlutterPlayerView(
             }
         }
 
-        (params["videoId"] as? String)?.let { playerView.load(it) }
+        // fix-flutter-android-duplicate-load-on-platform-view-create: this constructor
+        // deliberately does NOT call `playerView.load(...)` from `creationParams["videoId"]`.
+        // The sole `load()` trigger on Android is the `"load"` method-channel case above,
+        // invoked by Dart's `_LivebuyPlayerCoreState._onPlatformViewCreated(int id)` right after
+        // platform view creation is confirmed — the same path `didUpdateWidget` already reuses for
+        // an in-place `videoId` change. Calling `load()` here too used to fire TWO real
+        // `POST /sdk/video` requests per platform-view creation (one always discarded by the
+        // native `loadGeneration` guard) and mislabeled the winning call's `isSwitchLoad` as
+        // `true` on a genuine first open (see design.md of the fix change for the full call-chain
+        // evidence). Mirrors `react-native/android`'s `LivebuyPlayerViewManager.createViewInstance`,
+        // which likewise never calls `load()` itself. `creationParams["videoId"]` is intentionally
+        // unused here now — it still flows into Dart's own `load` method-channel call.
 
         // flutter-android-auto-pip-entry — build the OS auto-PiP entry INTO the bridge so Flutter
         // partners don't have to write native Kotlin. The wrapped native LivebuyPlayerView is
@@ -594,6 +644,8 @@ class LivebuyFlutterPlayerView(
      *  2. API 26–30 → best-effort `onActivityStopped` → `requestAutoPiP()` (documented limitation).
      *  3. consume `PIP_STATE_CHANGE(requested=true)` → main-thread `PiPHelper.enterPiP(activity)`.
      *  4. register an opt-in `onUserLeaveHint` forward (host 升級 API 26–30 為可靠).
+     *  5. register an opt-in `LivebuyPiPModeChangeHint` forward → synchronous
+     *     `notifyPictureInPictureModeChanged` (watch-time gating / IVS controls lock); nothing else.
      * All decisions route through the pure [AutoPipPolicy]; the returned [AutoPipWiring] retains
      * every registration for [dispose] cleanup.
      */
@@ -664,7 +716,34 @@ class LivebuyFlutterPlayerView(
         val userLeaveForward: () -> Unit = { view.requestAutoPiP() }
         LivebuyPiPUserLeaveHint.register(userLeaveForward)
 
-        return AutoPipWiring(view, activity, token, listener, lifecycleCallbacks, userLeaveForward)
+        // (5) forward the native PiP mode change straight into the EXISTING core seam
+        // `notifyPictureInPictureModeChanged` (android-view-mode-pip-forward-core) — the same
+        // seam the Dart-facing `LivebuyPlayerController.notifyPictureInPictureModeChanged`
+        // (flutter-android-pip-mode-forward-core) already reaches via the method channel below,
+        // just synchronous and host-wiring-optional. Activates watch-time-pause-during-PiP /
+        // IVS-controls-lock for any host that adopts this wiring.
+        //
+        // flutter-android-texture-layer-composition-core: this forward is ONLY that seam call.
+        // The former detach/reattach of the video surface around the PiP transition
+        // (flutter-android-pip-video-surface-detach-core, 2026-09-17) is gone: it existed to
+        // dodge the MediaCodec churn Hybrid Composition caused by tearing down / re-creating the
+        // embedded view's `TextureView` for every intermediate PiP window size. The player now
+        // mounts via Texture Layer composition (`initSurfaceAndroidView`, `livebuy_player.dart`)
+        // with a `SurfaceView`-free native view tree (`liveVideoSurfaceMode = TEXTURE_VIEW`, set
+        // in `init`), so a PiP transition is a plain window resize: the `TextureView` only
+        // receives size changes and the `Player`'s render-surface binding stays intact for the
+        // whole transition — exactly like the RN / native View-mode hosts that share this seam.
+        // Detaching here would only blank the PiP thumbnail. Spec:
+        // `flutter-android-player-view-composition` + `sdk-stat-reporting`
+        // (「Flutter Android 原生快速路徑」).
+        val modeChangeForward: (Boolean) -> Unit = { isInPip ->
+            view.notifyPictureInPictureModeChanged(isInPip)
+        }
+        LivebuyPiPModeChangeHint.register(modeChangeForward)
+
+        return AutoPipWiring(
+            view, activity, token, listener, lifecycleCallbacks, userLeaveForward, modeChangeForward,
+        )
     }
 
     override fun getView() = playerView
@@ -693,11 +772,13 @@ private class AutoPipWiring(
     @Suppress("unused") private val listener: LivebuyEventListener,
     private val lifecycleCallbacks: Application.ActivityLifecycleCallbacks,
     private val userLeaveForward: () -> Unit,
+    private val modeChangeForward: (Boolean) -> Unit,
 ) {
     fun dispose() {
         view.removeEventListener(token)
         activity.application.unregisterActivityLifecycleCallbacks(lifecycleCallbacks)
         LivebuyPiPUserLeaveHint.unregister(userLeaveForward)
+        LivebuyPiPModeChangeHint.unregister(modeChangeForward)
     }
 }
 

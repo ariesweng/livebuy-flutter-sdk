@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../reference_ui_theme.dart';
@@ -65,6 +67,26 @@ import '../testing/lb_test_keys.dart';
 // not the local `setState`. [shouldEmitDragSeek] gates [onSeek] to at most once per
 // [_dragSeekThrottleMs] during a drag; touch-down and release/cancel always emit immediately so
 // the gesture still feels responsive and the final position is never dropped.
+//
+// ANDROID-ONLY VISUAL THROTTLE (flutter-android-scrub-drag-visual-throttle-reference-ui): the
+// [_dragRatio] local `setState` described above as "unthrottled, it is cheap" turned out to NOT
+// be cheap on Android specifically. `livebuy_player.dart` embeds the native Android video surface
+// via Flutter's "Hybrid Composition" platform-view mode (`initExpensiveAndroidView`, chosen by
+// `flutter-android-player-hybrid-composition` to fix an unrelated live-stream z-order bug). Under
+// Hybrid Composition, ANY Flutter-drawn repaint overlapping the embedded video forces the OS to
+// recomposite the real Android view hierarchy against Flutter's Skia layer — a cost that scales
+// with repaint FREQUENCY, not the size of the changed region (narrowing the widget rebuild scope
+// would not help). A real-device A/B test on a low/mid-tier Android device (Samsung SM-G887F)
+// confirmed this as the dominant source of drag stutter — NOT the exact-seek decode-cost asymmetry
+// investigated separately (see `docs/reference-ui/parity-debt-ledger.md` #33/#34) — since the SAME
+// shared native `LivebuyPlayerView`/`ExoPlaybackEngine` does not stutter under Android-native
+// reference-ui's direct Compose rendering (no platform-view compositing boundary there at all).
+// iOS's Flutter embedding does not use Hybrid Composition/TLHC at all and was confirmed
+// stutter-free on a real iPhone, so [_dragVisualThrottleMs] gates ONLY on `defaultTargetPlatform ==
+// TargetPlatform.android` — iOS keeps the original unthrottled, zero-latency visual tracking
+// unchanged. [_latestRawRatio] tracks the true, always-current finger position independent of this
+// throttle so [_handleUp]'s final release/cancel ratio is NEVER stale even when the visual itself
+// was throttled.
 
 /// Total width of the transport bar's leading play/pause button + its gap to the track
 /// (`28 (button) + 8 (gap)`), used to translate a drag's local x-offset into a track-relative
@@ -104,6 +126,17 @@ const double _playPauseButtonSize = 28;
 /// what used to be one real native-seek round trip PER REPORTED PIXEL down to a small, bounded
 /// rate (rb-flutter-progress-bar-drag-seek-throttle).
 const int _dragSeekThrottleMs = 120;
+
+/// Minimum real-time gap (milliseconds) between two consecutive drag-triggered LOCAL VISUAL
+/// updates ([_dragRatio] / the rendered thumb+fill), **Android only** — see the file-header
+/// "ANDROID-ONLY VISUAL THROTTLE" note (flutter-android-scrub-drag-visual-throttle-reference-ui).
+/// Touch-down and release/cancel are exempt (same force-always-updates contract as
+/// [_dragSeekThrottleMs]). `33` (~30fps) is chosen independently of [_dragSeekThrottleMs]: it must
+/// meaningfully cut the frequency of Android's expensive Hybrid Composition platform-view
+/// recomposite, while staying well below [_dragSeekThrottleMs]'s coarser 120ms so the visual still
+/// tracks the finger smoothly — 30fps is the classic "still reads as continuous motion" threshold,
+/// unlike 120ms/~8fps which would look visibly stepped for direct finger-tracking.
+const int _dragVisualThrottleMs = 33;
 
 /// PURE: throttle decision for [PlaybackProgressBarView]'s drag → [PlaybackProgressBarView.onSeek]
 /// emission (rb-flutter-progress-bar-drag-seek-throttle; unit-testable without a widget/Timer —
@@ -224,18 +257,49 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
   /// function's doc comment for the throttle policy (rb-flutter-progress-bar-drag-seek-throttle).
   int? _lastSeekEmitMs;
 
+  /// Wall-clock timestamp (ms) of the last drag gesture's ACTUALLY-applied VISUAL update
+  /// (Android only — see the file-header "ANDROID-ONLY VISUAL THROTTLE" note,
+  /// flutter-android-scrub-drag-visual-throttle-reference-ui), or `null` before the first one this
+  /// drag. Feeds [shouldEmitDragSeek] the same way [_lastSeekEmitMs] does, just gating the local
+  /// `setState` instead of [PlaybackProgressBarView.onSeek].
+  int? _lastVisualUpdateMs;
+
+  /// The most recently computed drag ratio from the raw finger position, updated on EVERY move
+  /// regardless of the Android visual throttle below — unlike [_dragRatio] (the STATE field
+  /// driving the rendered visual, intentionally throttled on Android), this MUST always reflect
+  /// the true last-known finger position, since [_handleUp] reads it for the final,
+  /// position-determining release/cancel seek (flutter-android-scrub-drag-visual-throttle-
+  /// reference-ui). `null` when idle.
+  double? _latestRawRatio;
+
   void _handleDrag(double localDx, double inset, double trackWidth,
       {required bool isStart}) {
     final ratio = trackWidth <= 0
         ? 0.0
         : ((localDx - inset) / trackWidth).clamp(0.0, 1.0);
-    // Visual thumb / fill position updates on EVERY reported pixel, unthrottled — this is the
-    // cheap local `setState` the throttle deliberately does NOT touch.
-    setState(() => _dragRatio = ratio);
+    _latestRawRatio = ratio;
+    _updateDragVisual(ratio, force: isStart);
     if (isStart) widget.onScrubStart?.call();
     // Touch-down (isStart) always forces an immediate emission (parity with the pre-existing
     // "touch-down included" contract); intermediate moves go through the throttle.
     _emitSeek(ratio, force: isStart);
+  }
+
+  /// Gates the local `setState` (visual thumb / fill position) — Android only, see the
+  /// file-header "ANDROID-ONLY VISUAL THROTTLE" note
+  /// (flutter-android-scrub-drag-visual-throttle-reference-ui). iOS / other platforms keep the
+  /// original unthrottled behavior unchanged. [force] (touch-down / release / cancel) always
+  /// applies immediately, same contract as [_emitSeek].
+  void _updateDragVisual(double ratio, {required bool force}) {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      if (!shouldEmitDragSeek(_lastVisualUpdateMs, nowMs,
+          force: force, minIntervalMs: _dragVisualThrottleMs)) {
+        return;
+      }
+      _lastVisualUpdateMs = nowMs;
+    }
+    setState(() => _dragRatio = ratio);
   }
 
   /// Gates the actual [PlaybackProgressBarView.onSeek] call through [shouldEmitDragSeek]. [force]
@@ -250,11 +314,22 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
   void _handleUp() {
     // Capture the true final drag ratio BEFORE clearing it, and force-emit it even if the drag's
     // last intermediate move was throttled away — the released position MUST NOT be dropped
-    // (rb-flutter-progress-bar-drag-seek-throttle).
-    final finalRatio = _dragRatio;
+    // (rb-flutter-progress-bar-drag-seek-throttle). Reads [_latestRawRatio], NOT [_dragRatio] —
+    // the latter may be stale on Android under the visual throttle above
+    // (flutter-android-scrub-drag-visual-throttle-reference-ui).
+    final finalRatio = _latestRawRatio;
+    _latestRawRatio = null;
     setState(() => _dragRatio = null);
-    if (finalRatio != null) _emitSeek(finalRatio, force: true);
+    // fix-flutter-scrub-end-before-final-seek-reference-ui: onScrubEnd MUST fire BEFORE the final
+    // forced seek below, not after. A downstream subscriber of onScrubEnd (bubbled as
+    // onScrubbingChange(false)) may need to complete a state transition — e.g. the container
+    // wiring this to the Android engine's beginScrub()/endScrub() seek-precision toggle
+    // (flutter-vod-scrub-seek-tolerance-reference-ui) — before THIS release's real, final-settle
+    // seek reaches native over the MethodChannel. Same-channel MethodChannel calls are delivered
+    // to native in the order Dart invokes them, so firing onScrubEnd first is sufficient; no
+    // explicit await is needed.
     widget.onScrubEnd?.call();
+    if (finalRatio != null) _emitSeek(finalRatio, force: true);
   }
 
   @override

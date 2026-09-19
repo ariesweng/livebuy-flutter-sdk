@@ -103,11 +103,11 @@ final Color _bgSunken = colorFromHex('#F4F4F6') ?? const Color(0xFFF4F4F6);
 
 // MARK: - Fixed localized copy (static presentation strings — parity to iOS/Android)
 
-const String _panelTitle = '點播間說明';
-const String _panelTitleLive = '直播間說明';
+const String _panelTitle = '影片資訊';
+const String _panelTitleLive = '直播資訊';
 const String _infoTabTitle = '影片詳情';
 const String _infoTabTitleLive = '直播詳情';
-const String _noticeTabTitle = '公告';
+const String _noticeTabTitle = '公告訊息';
 const String _systemNoticeLabel = '系統公告';
 const String _mallNoticeLabel = '商城公告';
 const String _subscribeLabel = '訂閱通知';
@@ -115,6 +115,18 @@ const String _subscribedLabel = '已訂閱';
 const String _shopSublinePrefix = '這裡是 ';
 const String _noticeEmptyPlaceholder = '目前沒有公告';
 const String _contactLabel = '與商家一對一對話';
+
+// MARK: - publishAt-row three-state copy (design R44, rb-flutter-video-info-panel-replay-copy)
+//
+// The non-`isLiveBroadcast` branch of the publishAt-row (`_infoContent()`) no longer shows
+// `fields.publishAt` at all — it renders exactly one of these two fixed status strings,
+// selected by `isFinishedLiveReplay`.
+
+/// publishAt-row 非直播分支、`isFinishedLiveReplay == false`（既有預設）純文字（design R44）。
+const String _vodStatusLabel = '點播影片';
+
+/// publishAt-row 非直播分支、`isFinishedLiveReplay == true` 純文字（design R44，ADDED）。
+const String _replayStatusLabel = '直播回放';
 
 /// 「直播中」badge label (design `screens.jsx:1368` `直播中`).
 const String _liveBadgeLabel = '直播中';
@@ -227,10 +239,14 @@ class VideoInfoPanelView extends StatelessWidget {
   final bool live;
 
   /// Whether the video this panel describes is an ACTUAL live broadcast in progress
-  /// (rb-flutter-live-replay-more-menu-and-video-info-live-copy, design R32) — `true` →
-  /// panel title「點播間說明」→「直播間說明」, info tab label「影片詳情」→「直播詳情」, and the
-  /// detail tab's date line swaps from plain dim text to a red (`#F03246`)「直播中」badge + `|`
-  /// + the SAME [LBInfoTabFields.publishAt] value (no new field — see `design.md`).
+  /// (rb-flutter-live-replay-more-menu-and-video-info-live-copy, design R32; copy further
+  /// revised by design R44 / rb-flutter-video-info-panel-replay-copy) — `true` → sheet title
+  /// 「直播資訊」(MODIFIED by R44 — was 「直播間說明」), info tab label「直播詳情」(unchanged),
+  /// and the detail tab's publishAt-row draws ONLY a red (`#F03246`)「直播中」badge (MODIFIED by
+  /// R44 — the row no longer shows a `|` separator or any date text at all). `false` (default)
+  /// → sheet title「影片資訊」(MODIFIED by R44 — was 「點播間說明」), info tab label「影片詳情」
+  /// (unchanged), and the row falls through to [isFinishedLiveReplay]'s two-state text (see
+  /// that field's own dartdoc).
   ///
   /// ⚠️ Named `isLiveBroadcast`, deliberately NOT `live` / `isLive` — [live] above is this
   /// panel's own runtime IMAGE GATE (an unrelated concern; see its own dartdoc), and
@@ -239,6 +255,40 @@ class VideoInfoPanelView extends StatelessWidget {
   /// (`PlayerShellModel.isLive` = `channel.liveStatus == 1`). Default `false` — every existing
   /// call site (VOD) renders byte-identically.
   final bool isLiveBroadcast;
+
+  /// Whether the video this panel describes is an ALREADY-FINISHED live broadcast now playing
+  /// back as a replay (design R44, rb-flutter-video-info-panel-replay-copy) — drives the detail
+  /// tab's publishAt-row text when [isLiveBroadcast] is `false`: `true` → 純灰字「直播回放」;
+  /// `false` (existing default) → 純灰字「點播影片」. Neither branch shows a date any more (see
+  /// [isLiveBroadcast]'s own dartdoc for the full three-state row).
+  ///
+  /// The host feeds the SAME broadcast-replay value that already drives several other
+  /// `PlayerShellView` call sites via `PlayerShellModel.isFinishedLiveReplay`
+  /// (`type == 3 || (type == 2 && liveStatus == 3)`) — a documented mutual-exclusion invariant
+  /// with `PlayerShellModel.isLive` (`liveStatus` cannot be both `1` and `3`), so
+  /// [isLiveBroadcast] and this field are never both `true` in production; when a caller
+  /// directly constructs both `true` (type-legal but not production-reachable) the badge from
+  /// [isLiveBroadcast] wins (see `_infoContent()`'s branch order).
+  ///
+  /// ⚠️ Named `isFinishedLiveReplay`, deliberately NOT `isReplay` — this package already has AT
+  /// LEAST 4 different, narrower meanings for that name:
+  ///   (a) `flutter/lib/src/models.dart`'s `LBPlaybackProgress.isReplay` (core DVR
+  ///       live-edge-behind wire field — a stream still actively live, scrubbed behind the
+  ///       live edge; a completely different concept from "this broadcast has ended"),
+  ///   (b) `live_bottom_bar_view.dart`'s own `isReplay` field (`liveStatus == 1` still, chat
+  ///       open — that file's own doc comment explicitly warns not to confuse it with
+  ///       `isFinishedLiveReplay`),
+  ///   (c) `player_shell_view.dart`'s pure function `showsPlaybackProgressBar(..., required
+  ///       bool isReplay)`, which treats `isReplay` as a purely local parameter name (callers
+  ///       feed it EITHER `m.isFinishedLiveReplay` alone OR the deliberately-widened
+  ///       `m.isReplay || m.isFinishedLiveReplay`, depending on call site),
+  ///   (d) `player_shell_model.dart`'s `PlayerShellModel.isReplay` getter itself (the narrow
+  ///       DVR concept from (a), NOT the "already-finished live broadcast" concept this field
+  ///       carries).
+  /// Reusing `isReplay` here would add a FIFTH, still-different meaning to an already crowded
+  /// name. Default `false` — every existing call site (VOD, and every existing
+  /// `isLiveBroadcast: true` call site) renders byte-identically.
+  final bool isFinishedLiveReplay;
 
   /// Host-wired tab-switch intent (the shell forwards `model.selectInfoTab`).
   /// `null` for demo / golden instances — the panel renders correctly action-free.
@@ -290,6 +340,7 @@ class VideoInfoPanelView extends StatelessWidget {
     required this.notice,
     this.live = false,
     this.isLiveBroadcast = false,
+    this.isFinishedLiveReplay = false,
     this.onSelectTab,
     this.onOpenStorefront,
     this.onContactMerchant,
@@ -563,7 +614,6 @@ class VideoInfoPanelView extends StatelessWidget {
   // MARK: Info tab content (VideoInfoSheet body)
 
   Widget _infoContent() {
-    final publishAt = fields.publishAt;
     final title = fields.title;
     final shopIntro = fields.shopIntro;
 
@@ -573,16 +623,18 @@ class VideoInfoPanelView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // publishAt — 直播中 badge + date (isLiveBroadcast) OR plain dim caption (VOD, existing).
-          // Both branches reuse the SAME `publishAt` value — no new date field (design R32,
-          // 見 `isLiveBroadcast` 自身 dartdoc + `design.md` "Decisions": the host is responsible
-          // for feeding an appropriate `publishAt` string for the live case; this widget never
-          // parses/strips it).
+          // publishAt-row — three mutually-exclusive pure states, NO date ever shown (design
+          // R44, rb-flutter-video-info-panel-replay-copy): `fields.publishAt` itself is
+          // unchanged but this row no longer reads it at all, and no longer gates on
+          // `.isNotEmpty` — exactly one branch always renders. `isLiveBroadcast` takes
+          // PRECEDENCE over [isFinishedLiveReplay] (a type-legal but production-unreachable
+          // combination — see [isFinishedLiveReplay]'s own dartdoc for the mutual-exclusion
+          // invariant this mirrors).
           if (isLiveBroadcast)
-            _liveBadgeRow(publishAt)
-          else if (publishAt.isNotEmpty)
+            _liveBadgeRow()
+          else
             Text(
-              publishAt,
+              isFinishedLiveReplay ? _replayStatusLabel : _vodStatusLabel,
               style: TextStyle(color: _textDim, fontSize: 12 * theme.fontScale),
             ),
           // title — primary heading.
@@ -622,35 +674,26 @@ class VideoInfoPanelView extends StatelessWidget {
     );
   }
 
-  /// The `isLiveBroadcast` date row — a red (`#F03246`)「直播中」badge + `|` + [publishAt]
-  /// (design `screens.jsx:1362-1373`). `publishAt` is rendered AS-IS (no parsing / stripping —
-  /// see the `isLiveBroadcast` field dartdoc); an empty value still draws the badge alone (no
-  /// crash, no placeholder text invented).
-  Widget _liveBadgeRow(String publishAt) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-          decoration: BoxDecoration(
-            color: _liveBadgeFill,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            _liveBadgeLabel,
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 10 * theme.fontScale,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.5,
-            ),
-          ),
+  /// The `isLiveBroadcast` publishAt-row — ONLY a red (`#F03246`)「直播中」badge (design R44,
+  /// rb-flutter-video-info-panel-replay-copy — the previous「\|」separator + `publishAt` date
+  /// text is REMOVED; this row no longer shows any date, see [isFinishedLiveReplay]'s dartdoc
+  /// for the full three-state row this badge is one branch of).
+  Widget _liveBadgeRow() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: _liveBadgeFill,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        _liveBadgeLabel,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 10 * theme.fontScale,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.5,
         ),
-        const SizedBox(width: 8),
-        Text('|', style: TextStyle(color: _textDim, fontSize: 12 * theme.fontScale)),
-        const SizedBox(width: 8),
-        Text(publishAt, style: TextStyle(color: _textDim, fontSize: 12 * theme.fontScale)),
-      ],
+      ),
     );
   }
 

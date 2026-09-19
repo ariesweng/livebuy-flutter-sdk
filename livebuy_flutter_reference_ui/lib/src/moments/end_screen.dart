@@ -123,24 +123,26 @@ import '../testing/lb_test_keys.dart';
 // painted once in `build`, shared by both branches (see `build` below).
 //
 // Applying this DOES repaint the countdown variant's background too, which
-// makes the EXISTING `end-screen-countdown-variant.png` golden stale (verified
-// 86% pixel diff). That is accepted, not worked around: the "don't touch
-// existing baselines" rule protects the PNG FILE from being overwritten /
-// deleted — it does NOT license silently diverging the rendered pixels from
-// the design to keep an old file green. The stale golden is left exactly as it
-// is on disk (not regenerated, not deleted); a human decides whether/when to
-// regenerate it. Parity iOS `rb-ios-endscreen-live-empty-state` (commit
-// `fb585fef7`, archived), which hit the identical conflict and made the same
-// call — the countdown-variant snapshot test's own doc comment there records
-// the mismatch as an expected, documented consequence of this redesign (see
-// this file's `_scrim` doc + `test/moments/end_screen_test.dart`'s golden
-// group for the Flutter-side equivalent note).
+// made the EXISTING `end-screen-countdown-variant.png` golden stale (verified
+// 86% pixel diff) when this scrim value first shipped (rb-flutter-endscreen-
+// live-empty-state, commit `181dff491`). That was accepted, not worked around:
+// the "don't touch existing baselines" rule protects the PNG FILE from being
+// overwritten / deleted — it does NOT license silently diverging the rendered
+// pixels from the design to keep an old file green. That change deliberately
+// left the stale golden exactly as it was on disk (not regenerated, not
+// deleted), for "a human [to decide] whether/when to regenerate it" later.
+// `fix-flutter-endscreen-countdown-golden` IS that later regeneration: the
+// golden now reflects this scrim value (see `test/moments/end_screen_test
+// .dart`'s golden group for the Flutter-side note). Parity iOS
+// `rb-ios-endscreen-live-empty-state` (commit `fb585fef7`, archived) hit the
+// identical conflict and made the same call for its own snapshot; that
+// platform's own regeneration timeline is independent of this one.
 
 /// Full-bleed scrim (`rgba(50,50,50,0.64)`, moments.jsx `173`). Encoded as an
 /// ARGB literal (`0.64 * 255 ≈ 163 = 0xA3`) to match the family-1/2/3
 /// surface-token style. Shared by BOTH variants (see the block comment above
-/// for why, and why the resulting stale `end-screen-countdown-variant.png` is
-/// an accepted, intentional consequence — not a bug to work around).
+/// for why, and for the `end-screen-countdown-variant.png` golden's staleness
+/// / regeneration history).
 /// CHANGED by rb-flutter-endscreen-live-empty-state from the prior
 /// `rgba(8,8,12,0.8)` dark-glass scrim (`Color(0xCC08080C)`).
 const Color _scrim = Color(0xA3323232);

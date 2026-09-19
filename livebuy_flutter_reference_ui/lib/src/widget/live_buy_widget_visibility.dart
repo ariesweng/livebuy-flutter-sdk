@@ -2,15 +2,39 @@
 //
 // An opt-in host -> SDK bridge that closes the last honest residual gap of
 // `flutter-refui-widget-preview-lifecycle-pause`: the "tab-cover" case. When the host keeps the
-// widget-hosting screen mounted in the nav tree and merely COVERS it with another route (most
-// typically a full-screen live player overlay), the card stays laid-out (`VisibilityDetector`'s
-// `visibleFraction` stays non-zero) and the app stays `resumed` (no `didChangeAppLifecycleState`),
-// so BOTH self-sufficient gates in `LoopingVideoView` fail and the N background previews keep
-// hardware-decoding on top of the playing full-screen player — re-running the ~150% CPU / heat the
-// preview-lifecycle change fixed, this time in the FOREGROUND. The SDK cannot self-detect z-order
-// cover from the widget layer (coordinates are still on-screen, the app is still `resumed`); only
-// the host's navigation layer knows it covered the widget surface. This is a platform / architecture
-// limit — the SDK provides an opt-in entry point, the host feeds the cover state.
+// widget-hosting screen mounted in the nav tree and merely COVERS it with a NON-route overlay (most
+// typically the full-screen live player the collapsible presenter stacks over the home screen),
+// the card stays laid-out (`VisibilityDetector`'s `visibleFraction` stays non-zero) and the app
+// stays `resumed` (no `didChangeAppLifecycleState`), so the self-sufficient gates in
+// `LoopingVideoView` fail and the N background previews keep hardware-decoding on top of the
+// playing full-screen player — re-running the ~150% CPU / heat the preview-lifecycle change fixed,
+// this time in the FOREGROUND. The SDK cannot self-detect a NON-route z-order cover from the widget
+// layer (coordinates are still on-screen, the app is still `resumed`, there is no route boundary
+// to observe); only the host's presentation layer knows it covered the widget surface. This is a
+// platform / architecture limit — the SDK provides an opt-in entry point, the host feeds the cover
+// state. (Being covered by an OPAQUE ROUTE is a different case and IS self-detected — see ROUTE
+// COVER below.)
+//
+// ROUTE COVER (rb-flutter-widget-preview-route-cover-release) — do NOT feed this bridge for a
+// `Navigator.push`:
+//
+//   • An OPAQUE route (`MaterialPageRoute` is opaque by default) pushed over the widget-hosting
+//     screen is detected by `LoopingVideoView` ITSELF: Flutter's `Overlay` wraps every entry under
+//     the first opaque one in `TickerMode(enabled: false)` once the push transition completes (and
+//     re-enables it the moment a pop starts), and the preview reads that via
+//     `TickerMode.of(context)` as its own `routeVisible` gate axis — on Android it even
+//     RELEASES its decoder while route-hidden and re-creates it on return. No host call needed.
+//   • Calling `setWidgetsCovered(true)` around such a push is WRONG, not merely redundant: this
+//     bridge is a single PROCESS-GLOBAL level and `register` replays it to every newly mounted
+//     preview, so when the pushed page hosts a `LivebuyWidget` of its own (e.g. a carousel page
+//     pushing a grid page) the NEW page's cards mount already-covered and never play — exactly what
+//     the Flutter example's 「查看更多 ›」 did on device (SM-G887F: 4 visible grid cards frozen at
+//     0.00% pixel change while audio focus was already fixed). The example now pushes bare.
+//   • This bridge is therefore ONLY for NON-route covers: the collapsible presenter's `Stack`
+//     full-screen player (driven for you, see MAIN PATH), or a hand-rolled overlay that is not a
+//     route (MANUAL PATH). Non-opaque routes (dialogs, modal bottom sheets,
+//     `PageRouteBuilder(opaque: false)`) do not flip `TickerMode` and are not a cover either — the
+//     previews stay visible under them.
 //
 // Dart parity of Android `tv.livebuy.referenceui.widget.LivebuyWidgetVisibility` (an `object`). This
 // is an all-static singleton (Dart's idiomatic equivalent). It is DISTINCT from the existing
@@ -28,7 +52,8 @@
 //     `refui-widget-visibility-kdoc-presenter-owned`.
 //
 //   • MANUAL PATH (few hosts) — ONLY a host that presents the BARE (non-collapsible) `LivebuyPlayer`,
-//     or fully hand-rolls its own navigation / custom cover (never through the collapsible presenter),
+//     or fully hand-rolls its own NON-route custom cover (never through the collapsible presenter;
+//     a hand-rolled `Navigator.push` of an opaque route needs nothing — see ROUTE COVER above),
 //     calls this itself:
 //
 //       // when the full-screen player is opened over the widget-hosting screen:
@@ -43,10 +68,12 @@
 //     full-screen vs collapsed. (The collapsible presenter already avoids this over-pause by phase.)
 //
 // Backward compatible: when nothing opts in (no presenter, host never calls `setWidgetsCovered`),
-// `notCovered` stays permanently true, so the play-gate degrades to the existing
-// `foreground && onScreen` and behaviour is byte-for-byte identical to before this bridge (the
-// residual gap still exists when unwired — the SDK does NOT claim to cover it unaided; covered
-// detection is the presenter's, or a manual host's, responsibility).
+// `notCovered` stays permanently true, so the play-gate degrades to the self-sufficient axes
+// (`foreground && onScreen`, plus the route axis since rb-flutter-widget-preview-route-cover-release)
+// and behaviour is byte-for-byte identical to before this bridge (the residual NON-route gap still
+// exists when unwired — the SDK's own axes cannot detect a non-route z-order cover, so the SDK does
+// NOT claim to cover it unaided; that covered detection is the presenter's, or a manual host's,
+// responsibility, and is why this host signal exists).
 //
 // STATEFUL LEVEL, not a stateless edge (the key difference from a one-shot bridge like PiP): "being
 // covered" is a persistent visibility LEVEL. A preview that only mounts DURING a covered period
@@ -59,13 +86,16 @@
 // snapshot to tolerate a listener mutating the set during dispatch.
 
 /// Opt-in bridge for declaring whether the screen hosting Livebuy widget previews is currently
-/// COVERED by another route (e.g. a full-screen player overlay). Feeds the third axis (`notCovered`)
-/// of every mounted [LoopingVideoView]'s play-gate. See file header for rationale.
+/// COVERED by a NON-route overlay (e.g. a full-screen player stacked over it). Feeds the third axis
+/// (`notCovered`) of every mounted [LoopingVideoView]'s play-gate. NOT for `Navigator.push`: an
+/// opaque route cover is detected by the preview itself from `TickerMode` (its fourth axis), and
+/// declaring it here would also cover the pushed page's own previews — see the ROUTE COVER note in
+/// the file header for rationale.
 ///
 /// Most hosts do NOT touch this directly: the drop-in collapsible presenter `CollapsibleLivebuyPlayer`
 /// owns [setWidgetsCovered] and drives it by phase (`covered <=> full`). Only a host on the BARE
-/// (non-collapsible) `LivebuyPlayer` or fully hand-rolled navigation calls it — see the file header
-/// for both paths and the `presentedVideo != null` caveat.
+/// (non-collapsible) `LivebuyPlayer` or a fully hand-rolled non-route cover calls it — see the file
+/// header for both paths and the `presentedVideo != null` caveat.
 class LivebuyWidgetVisibility {
   LivebuyWidgetVisibility._();
 

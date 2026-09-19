@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem;
+import 'package:visibility_detector/visibility_detector.dart';
 
 import '../reference_ui_theme.dart';
 import 'video_shop_grid.dart';
@@ -23,6 +24,15 @@ import 'widget_model.dart' show WidgetGoods;
 // (all pixels come from `VideoShopGridView`); interactions pass through as host-wired
 // callbacks; the auto-load decision is covered by the pure [shouldAutoLoadMore] unit test +
 // the surface's own goldens — the wrapper is NEVER golden-snapshotted.
+//
+// ── SCROLL-END VISIBILITY REFRESH (rb-flutter-widget-preview-scroll-end-visibility-refresh) ──
+//   The SAME `NotificationListener<ScrollNotification>` that drives auto-load ALSO flushes every
+//   pending `VisibilityDetector` report (`VisibilityDetectorController.instance.notifyNow()`) the
+//   instant a scroll settles (`ScrollEndNotification`), instead of leaving a card that scrolled
+//   back into view waiting up to the package's `updateInterval` (500 ms by default) before its
+//   `LoopingVideoView` (Android `release` policy, `rb-flutter-widget-preview-offscreen-decoder-
+//   release`) re-creates its controller. `notifyNow()` is process-global and harmless when nothing
+//   is pending, so piggy-backing on the existing listener needs no second one.
 
 /// Auto-load prefetch margin (logical px) from the bottom — fire before the very bottom.
 const double _prefetchMargin = 300;
@@ -106,6 +116,13 @@ class _ScrollableVideoShopViewState extends State<ScrollableVideoShopView> {
   int _lastTriggeredPage = -1;
 
   bool _onScroll(ScrollNotification notification) {
+    if (notification is ScrollEndNotification) {
+      // rb-flutter-widget-preview-scroll-end-visibility-refresh: flush the pending
+      // VisibilityDetector report(s) the instant the grid's scroll settles, instead of
+      // waiting up to the detector's `updateInterval` (500 ms by default) — see the class
+      // comment above and `LoopingVideoView`'s off-screen decoder release policy.
+      VisibilityDetectorController.instance.notifyNow();
+    }
     final metrics = notification.metrics;
     if (shouldAutoLoadMore(
       currentPage: widget.currentPage,

@@ -172,8 +172,20 @@ enum ProductSheetPresentation { detail, addToCart, restock }
 // iOS `ProductDetailSheetView` static colors + Android `ProductDetailSheet` byte-
 // for-byte so the three platforms read as one family.
 
-/// `theme.surface.textDim` (secondary / caption text).
+/// `theme.surface.textDim` (secondary / caption text). Still used by 5 call sites in this
+/// file unrelated to the original-price strikethrough (brief description, qty-row stock
+/// caption, share button label, unfaved favorite-button label, product-intro description) —
+/// see `_originalPriceColor` below for the strikethrough's own (now-fixed) color.
 final Color _textDim = colorFromHex('#6B6775') ?? const Color(0xFF6B6775);
+
+/// Struck-through original-price color `#A0A0A0` (design `screens.jsx:1190`, design R45,
+/// `rb-flutter-product-detail-sheet-price-color`). Mirrors `product_row.dart` /
+/// `mini_cart_peek.dart`'s own `_originalPriceColor` — deliberately re-declared here rather
+/// than imported (this module's existing convention of NOT sharing private color constants
+/// across files). MUST NOT vary with the merchant theme. Used ONLY by `_priceRow()`'s
+/// struck-through original-price text — the file's other `_textDim` call sites are
+/// unrelated dim-text uses and are NOT migrated to this constant.
+final Color _originalPriceColor = colorFromHex('#A0A0A0') ?? const Color(0xFFA0A0A0);
 
 /// `theme.surface.textFaint` (disabled stepper digit / off control).
 final Color _textFaint = colorFromHex('#B6B2BE') ?? const Color(0xFFB6B2BE);
@@ -1197,28 +1209,52 @@ class ProductDetailSheet extends StatelessWidget {
       );
     }
     final resolved = _resolvedPrice;
+    final priceText = Text(
+      resolved.priceShow,
+      style: TextStyle(
+        color: theme.accent,
+        fontSize: 20 * theme.fontScale,
+        fontWeight: FontWeight.w900,
+      ),
+    );
+    final originalPriceText = resolved.hasOriginalPrice
+        ? Text(
+            resolved.originalPriceShow,
+            style: TextStyle(
+              color: _originalPriceColor,
+              fontSize: 13 * theme.fontScale,
+              decoration: TextDecoration.lineThrough,
+              decorationColor: _originalPriceColor,
+            ),
+          )
+        : null;
+
+    // `.addToCart`（design R47, rb-flutter-add-to-cart-price-stack）: vertical stack,
+    // original price (if any) ABOVE the price — mirrors the design's AddToCartSheet
+    // `flexDirection: 'column'` with the `was` node rendered first. `.detail` (and
+    // `.restock`) keep the pre-existing horizontal row, price first — the design's
+    // ProductDetailSheet component was NOT updated to match, so this divergence is
+    // deliberate, not an oversight.
+    if (_isAddToCart) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (originalPriceText != null) ...[
+            originalPriceText,
+            const SizedBox(height: 2),
+          ],
+          priceText,
+        ],
+      );
+    }
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        Text(
-          resolved.priceShow,
-          style: TextStyle(
-            color: theme.accent,
-            fontSize: 20 * theme.fontScale,
-            fontWeight: FontWeight.w900,
-          ),
-        ),
-        if (resolved.hasOriginalPrice) ...[
+        priceText,
+        if (originalPriceText != null) ...[
           const SizedBox(width: 8),
-          Text(
-            resolved.originalPriceShow,
-            style: TextStyle(
-              color: _textDim,
-              fontSize: 13 * theme.fontScale,
-              decoration: TextDecoration.lineThrough,
-              decorationColor: _textDim,
-            ),
-          ),
+          originalPriceText,
         ],
       ],
     );

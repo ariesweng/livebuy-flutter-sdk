@@ -18,6 +18,7 @@ import 'caption_overlay_view.dart';
 import 'contact_glyph.dart';
 import 'contact_merchant_modal.dart';
 import 'detail_glyph.dart';
+import 'gesture_seek_toast_view.dart';
 import 'heart_burst.dart';
 import 'live_bottom_bar_view.dart';
 import 'live_now_pill_view.dart';
@@ -276,6 +277,12 @@ bool isDoubleTapSeekHit({
 /// `screens.jsx`'s `deltaSec = ps.zone === 'ff' ? 10 : -10`). [TapZone.fastForward] → `+`,
 /// [TapZone.rewind] → `-`.
 const double kSeekStepSeconds = 10;
+
+/// How long [GestureSeekToastView] stays visible after a double-tap-seek hit before
+/// auto-dismissing (rb-flutter-double-tap-seek-feedback). Design text only specifies an
+/// approximate "~0.7-1s" window (matching the existing mute-toast display-duration convention);
+/// `900` sits inside that range. See [_PlayerShellViewState._showSeekToast].
+const Duration kSeekToastVisibleDuration = Duration(milliseconds: 900);
 
 /// Long-press 2x-speed hold's tick interval (rb-flutter-gesture-clean-mode-v2, design / iOS
 /// `speedModeTickInterval = 0.5s`). Each tick adds [kSpeedModeExtraSeekPerTick] on top of the
@@ -1005,6 +1012,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
       _pendingCleanModeToggleTimer?.cancel();
       _pendingCleanModeToggleTimer = null;
       _commitSeek(zone == TapZone.fastForward ? kSeekStepSeconds : -kSeekStepSeconds);
+      _showSeekToast(isForward: zone == TapZone.fastForward);
       return;
     }
     _lastSeekTapAt = now;
@@ -1028,6 +1036,25 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     final duration = _model.playbackDuration;
     final target = (_model.playbackPosition + deltaSeconds).clamp(0.0, duration);
     widget.onSeek?.call(target, duration: duration);
+  }
+
+  /// Show (or re-trigger) the double-tap-seek gesture toast (rb-flutter-double-tap-seek-feedback,
+  /// design `LBPGestureToast` seekFwd/seekBack branch). Called from [_handleSeekableTap] on every
+  /// double-tap-seek hit, right after [_commitSeek] — [isForward] mirrors that hit's [TapZone]
+  /// (`TapZone.fastForward` → `true`). Sets [_seekToastIsForward] (drives [GestureSeekToastView]'s
+  /// conditional composition in `_buildContent`'s `Stack`) and (re)schedules
+  /// [_seekToastTimer] to clear it after [kSeekToastVisibleDuration]. A fresh hit while the toast
+  /// is already showing cancels-and-restarts this timer rather than stacking multiple pending
+  /// timers — same "re-schedule extends the window" shape as [_triggerLiveLikeBurst]'s
+  /// `_likeLikedTimer`.
+  void _showSeekToast({required bool isForward}) {
+    setState(() => _seekToastIsForward = isForward);
+    _seekToastTimer?.cancel();
+    _seekToastTimer = Timer(kSeekToastVisibleDuration, () {
+      _seekToastTimer = null;
+      if (!mounted) return;
+      setState(() => _seekToastIsForward = null);
+    });
   }
 
   /// Video-area long-press dispatch (rb-flutter-gesture-clean-mode-v2). The framework
@@ -1156,6 +1183,20 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// firing `onSeek`; carries NO visual representation (design R29 shows no indicator during the
   /// hold), so this is plain instance state, not `setState`-driven.
   bool _speedMode = false;
+
+  /// The active double-tap-seek gesture toast direction (rb-flutter-double-tap-seek-feedback):
+  /// `true` — [GestureSeekToastView] showing fast-forward (right edge); `false` — showing rewind
+  /// (left edge); `null` — none showing. Drives `_buildContent`'s conditional composition of
+  /// [GestureSeekToastView]. Set by [_showSeekToast] on a double-tap-seek hit, cleared by
+  /// [_seekToastTimer] after [kSeekToastVisibleDuration]. Unlike [_speedMode] (long-press
+  /// 2x-speed, which has NO visual representation), this gesture's outcome IS visually
+  /// represented — the two are unrelated transient states.
+  bool? _seekToastIsForward;
+
+  /// Auto-dismiss `Timer` for [_seekToastIsForward] (rb-flutter-double-tap-seek-feedback). Owned
+  /// and (re)scheduled by [_showSeekToast]; cancelled in [dispose] so a fired callback never
+  /// touches unmounted state.
+  Timer? _seekToastTimer;
 
   /// The playback position (seconds) captured the MOMENT the current 2x-speed hold started (see
   /// [_startSpeedMode]). Every tick's absolute seek target is computed relative to this fixed
@@ -1418,6 +1459,9 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     // timers so a fired callback never touches this unmounted state.
     _infoPanelDismissTimer?.cancel();
     _moreMenuDismissTimer?.cancel();
+    // rb-flutter-double-tap-seek-feedback — cancel the pending seek-toast auto-dismiss timer so
+    // a fired callback never touches this unmounted state.
+    _seekToastTimer?.cancel();
     super.dispose();
   }
 
@@ -2082,6 +2126,18 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // are no longer composed by `PlayerShellView`. VOD / finished-live-replay play/pause now
         // lives on `PlaybackProgressBarView`'s own expanded-state button below.
 
+        // Double-tap-seek gesture toast (rb-flutter-double-tap-seek-feedback) — half-screen edge
+        // gradient + "10" + seek-horn triple, shown for `kSeekToastVisibleDuration` after a
+        // double-tap-seek hit (see `_handleSeekableTap` / `_showSeekToast`). Occupies the same
+        // Stack slot the RETIRED mute-toast/paused-overlay used to (comment block above) — above
+        // the base video/tap-detector/chrome layers, below the restriction mask / bottom sheets.
+        // `GestureSeekToastView` is `IgnorePointer` internally (design `pointerEvents: 'none'`),
+        // so it never blocks the tap detector beneath it.
+        if (_seekToastIsForward != null)
+          Positioned.fill(
+            child: GestureSeekToastView(theme: theme, isForward: _seekToastIsForward!),
+          ),
+
         // 會員等級限定升級遮罩（restriction-mask ②）。`is_restriction` 為**軟性顯示閘門**：core 不擋
         // 播放（後端仍回完整內容），reference-ui 在播放畫面上疊全幅暗罩 + 升級提示並阻擋下層互動。疊
         // 在播放 chrome 之上、info panel / 聯絡商家 modal 之下（對齊 iOS/RN）。預設隱藏
@@ -2115,10 +2171,16 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                   // 分岔（header 已顯真 logo、面板還停在字母漸層）。
                   live: widget.live,
                   // isLive 文案分流（rb-flutter-live-replay-more-menu-and-video-info-live-copy，
-                  // design R32）：直播中標題/tab/日期列改版。刻意複用 `PlayerHeaderBarView` 同一個
+                  // design R32；文案本身由 design R44 / rb-flutter-video-info-panel-replay-copy 修訂）：
+                  // 直播中標題/tab/publishAt-row 改版。刻意複用 `PlayerHeaderBarView` 同一個
                   // `m.isLive`（`channel.liveStatus == 1`）——與這個面板既有的 `live`（image gate）
                   // 語意不同，不衝突（見 `VideoInfoPanelView.isLiveBroadcast` 自身 dartdoc）。
                   isLiveBroadcast: m.isLive,
+                  // isFinishedLiveReplay 文案分流（design R44，rb-flutter-video-info-panel-replay-copy）：
+                  // 已結束直播回放時 publishAt-row 顯示「直播回放」而非「點播影片」。餵入既有
+                  // `PlayerShellModel.isFinishedLiveReplay`（與 `m.isLive` 既有互斥不變量，見該 getter
+                  // 自身 doc comment）——本 change 不新增 / 修改任何 view-model 欄位。
+                  isFinishedLiveReplay: m.isFinishedLiveReplay,
                   // Template-owned navigation intent (NOT a core simulate*): only
                   // flips presentation state. `notice` is honoured by the template
                   // only when `noticeCanOpen`.
@@ -2239,6 +2301,10 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                   priceShow: p.priceShow,
                   soldOut: p.soldOut,
                   pic: p.photos.isNotEmpty ? p.photos.first : p.pic,
+                  // 原價劃線透傳（vod-now-introducing-original-price-reference-ui-flutter）：
+                  // `LBProduct.originalPriceShow` 直接轉發，是否畫出劃線由 `MiniCartPeek`
+                  // 自己的渲染判斷式（非空且不等於 priceShow）決定，這裡不做任何過濾。
+                  originalPriceShow: p.originalPriceShow,
                 ),
             ],
             live: widget.live,

@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem;
+import 'package:visibility_detector/visibility_detector.dart';
 
 import '../reference_ui_theme.dart';
 import '../reference_ui_widget_embed_theme.dart';
@@ -62,6 +63,18 @@ import 'widget_model.dart' show WidgetGoods, WidgetSeeds;
 //   `theme.background` (rb-flutter-carousel-bgcolor), parity with `VideoShopGridView`'s
 //   pre-existing background paint. Missing / `null` / unparseable stay on the resolved
 //   theme's background — no new default is introduced.
+//
+// ── SCROLL-END VISIBILITY REFRESH (rb-flutter-widget-preview-scroll-end-visibility-refresh) ──
+//   The turnkey `scrollable` mode's `SingleChildScrollView` is wrapped in a
+//   `NotificationListener<ScrollNotification>` ([_flushVisibilityOnScrollEnd]) so a card
+//   scrolling back into view does not wait out the `visibility_detector` package's
+//   `VisibilityDetectorController.instance.updateInterval` (500 ms by default) before its
+//   `LoopingVideoView` (Android `release` policy, `rb-flutter-widget-preview-offscreen-decoder-
+//   release`) re-creates its controller. See that change's mount-time flush
+//   (`LoopingVideoView._flushFirstVisibilityReport`) for the analogous first-frame case; this is
+//   the SAME fix applied to the "scrolled away and back" case, which the mount-time flush does not
+//   cover. `notifyNow()` is process-global (flushes every pending `VisibilityDetector` report, not
+//   just this row's), so the effect is a harmless synchronous no-op when nothing is pending.
 
 /// The family-5 `LBPCarousel` surface: a header row (title + optional subtitle +
 /// 「查看更多 ›」accent link) above a PLAIN `Row` of a FIXED SMALL set of shared
@@ -312,15 +325,21 @@ class CarouselView extends StatelessWidget {
       children: children,
     );
     // Turnkey: ALL cards in a horizontal SingleChildScrollView (parity iOS ScrollableCarouselView).
+    // Wrapped in a NotificationListener so a card scrolling back into view (rb-flutter-widget-
+    // preview-scroll-end-visibility-refresh) does not wait out the `visibility_detector`'s
+    // `updateInterval` — see [_flushVisibilityOnScrollEnd].
     if (scrollable) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 6),
         child: SizedBox(
           height: _cardHeight(context, cards),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: row,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _flushVisibilityOnScrollEnd,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: row,
+            ),
           ),
         ),
       );
@@ -494,4 +513,21 @@ class CarouselView extends StatelessWidget {
   /// Max cards drawn in the FIXED static row (the rest live behind the host's real
   /// horizontal scroll). Parity with iOS / Android's capped static row.
   static const int maxCards = 6;
+}
+
+// MARK: - _flushVisibilityOnScrollEnd (rb-flutter-widget-preview-scroll-end-visibility-refresh)
+
+/// `NotificationListener<ScrollNotification>.onNotification` for the turnkey `scrollable` row's
+/// `SingleChildScrollView`: the instant the horizontal scroll settles, flush every pending
+/// `VisibilityDetector` report (`VisibilityDetectorController.instance.notifyNow()`) instead of
+/// waiting up to the package's `updateInterval` (500 ms by default). A card that scrolls back into
+/// view therefore does not sit on a stale off-screen cover for that long before its
+/// `LoopingVideoView` (Android `release` policy) re-creates its controller. A top-level function
+/// (not a method) so it needs no `CarouselView` instance; returns `false` so the notification
+/// keeps bubbling to any ancestor listener.
+bool _flushVisibilityOnScrollEnd(ScrollNotification notification) {
+  if (notification is ScrollEndNotification) {
+    VisibilityDetectorController.instance.notifyNow();
+  }
+  return false;
 }

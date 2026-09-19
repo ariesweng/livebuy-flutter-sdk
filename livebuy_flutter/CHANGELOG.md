@@ -6,6 +6,59 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.5.0 - 2026-09-20
+
+> **三套件版號 lockstep bump（`livebuy_flutter` core / `livebuy_flutter_ui` / 
+> `livebuy_flutter_reference_ui` 皆有實際內容變動）。** 自 `2.4.0` 以來累積 23 個內容
+> commit，主軸是 VOD/回放拖曳進度條 scrub-tolerance 全鏈路（seek 合併、Android
+> CLOSEST_SYNC/EXACT 動態切換、結算順序修復、Android 專屬視覺節流）、design R39/R45/D8/R46/R47
+> 五輪視覺批次、MiniCartPeek 原價劃線 parity 收尾（四端完成）、widget 卡片預覽 Android 解碼器
+> 資源管理批次、Android 平台視圖重複 `load()` 修復、PiP 凍結緩解、`togglePlayPause` bridge
+> 死接線修復，以及 pubspec SDK 下限修正與測試維護。**零 BREAKING。**
+
+### Added
+
+- **MiniCartPeek 原價劃線渲染**（reference-ui，`originalPriceShow`）：`LBMiniCartPeek`
+  template 型別新增 additive 欄位，`MiniCartPeek` 補上原價劃線渲染，parity iOS/Android/RN
+  已完成，四端全數完成。
+- **`seek()` 合併連續 absolute seek 呼叫至最新目標**（core，`flutter-vod-seek-request-
+  coalescing-core`）：避免快速/長距離拖曳時一連串 seek 呼叫在 Android UI thread 上堆積成
+  MethodChannel 佇列；`seekBy()`（相對位移）刻意不合併，避免破壞累加偏移量。
+- **`PlaybackEngine` 新增 `beginScrub()`/`endScrub()`**（core + reference-ui，Android-only，
+  透過 `defaultTargetPlatform` guard、零 iOS 檔案異動，`flutter-vod-scrub-seek-tolerance-core`
+  /`-reference-ui`）：拖曳中切換 `CLOSEST_SYNC`、結算前還原 `EXACT`，修正拖曳後 2–3 秒追趕
+  延遲，同時避免全域套用 `CLOSEST_SYNC` 導致的音畫不同步；`LivebuyPlayer` 既有
+  `onScrubbingChange` callback 接上這組開關。
+
+### Fixed
+
+- **Design R39/R45/D8/R46/R47 五輪視覺批次**（reference-ui）：商品列名稱前標籤改用
+  `Text.rich`/`WidgetSpan` 修正換行擠壓（R39 parity）、商品列表 row 排版重分組 + 新增折扣
+  百分比（R45）、商品明細「更多商品」grid 原價改用 `Wrap` 換行、雙擊快進/快退提示改半螢幕
+  漸層、`AddToCartSheet` 主圖旁價格區改垂直堆疊（原價移到現價上方）；商品明細 sheet 原價
+  劃線色票統一 `#A0A0A0`。皆為純視覺/排版修正，parity iOS/Android/RN。
+- **`VideoInfoPanel` 三態文案改版**（reference-ui，`rb-flutter-video-info-panel-replay-copy`，
+  R44 parity，四端完成）。
+- **修正 Android 平台視圖建立時重複發送 `load()`**：避免造成雙重 `POST /sdk/video`。
+- **修復 scrub 結算 seek 順序 bug**（reference-ui，`fix-flutter-scrub-end-before-final-seek-
+  reference-ui`）：`PlaybackProgressBarView._handleUp()` 的 release/cancel 路徑此前最終強制
+  `onSeek` 早於 `onScrubEnd` 送出，使結算畫面仍套用 `beginScrub()` 的 `CLOSEST_SYNC`，造成
+  真機實測拖曳後畫面持續落後音訊 2–3 秒；改為 `onScrubEnd` 先送，讓 `endScrub()` 在最終 seek
+  前生效。
+- **Android 拖曳進度條視覺更新加 33ms 節流**（reference-ui，僅 Android，
+  `flutter-android-scrub-drag-visual-throttle-reference-ui`）：Flutter Android 用 Hybrid
+  Composition 內嵌播放器，逐幀合成成本高於原生 TLHC，拖曳把手先前每次觸控移動都無節流觸發
+  `setState` 造成卡頓；新增獨立 33ms 節流（與既有 120ms `onSeek` 節流分開），最終
+  release/cancel seek 仍讀取未節流的精確值，不受影響。
+- **widget 卡片預覽 Android 解碼器資源管理補強**（reference-ui）：離屏 1 秒後釋放解碼器、
+  滾入重建；偵測 opaque route 覆蓋時同步釋放/重建、初始化失敗有上限重試；捲動停止即整新
+  可見性回報（免等 500ms 節流）；不再參與 audio focus 仲裁（parity 原生 ExoPlayer 預設）。
+- **緩解 Android/Flutter PiP 凍結**、修正 `togglePlayPause` bridge 未轉發到真實原生方法。
+- **`flutter-reference-ui` pubspec `flutter` SDK 下限修正**：`>=3.10.0` → 對齊實際使用的
+  `Color.withValues` API 所需版本，純 metadata 修正，不影響渲染行為。
+- **測試維護**：修正 `uninstall()` method-channel fire-and-forget 造成的偶發測試失敗；
+  重生 EndScreen 倒數變體 golden 追上 R41 遮罩改色。皆無行為變化。
+
 ## 2.4.0 - 2026-09-13
 
 > **三套件版號 lockstep bump（`livebuy_flutter` core 有實際內容變動，`livebuy_flutter_ui` 有

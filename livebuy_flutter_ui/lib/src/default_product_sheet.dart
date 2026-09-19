@@ -599,7 +599,7 @@ class DefaultQtyStepper extends ChangeNotifier {
 
 // ── 4. mini-cart ────────────────────────────────────────────────────────────────
 
-/// mini-cart peek snapshot (`{ productId, name, priceShow, soldOut }`, D4).
+/// mini-cart peek snapshot (`{ productId, name, priceShow, originalPriceShow, soldOut }`, D4).
 @immutable
 class LBMiniCartPeek {
   final String productId;
@@ -611,12 +611,21 @@ class LBMiniCartPeek {
   /// setPeek 仍可建構、placeholder 不變；reference-ui 的 VOD 介紹輪播以 photos.first ?? pic 填入。
   final String pic;
 
+  /// 原價劃線（vod-now-introducing-original-price-template-flutter）比照
+  /// `LBProductRecommendation.originalPriceShow` 型別/慣例：非 nullable `String`，`''` = 無原價 —
+  /// MUST NOT 比照 `LBProductDetailState.originalPriceShow` 的 `String?` 三態寫法。預設值 `''`
+  /// （而非 `required`）是刻意的：`default_template.dart` 兩個既有 `LBMiniCartPeek(...)` 建構呼叫點
+  /// （加購成功/去重浮卡）與既有測試皆未帶此欄位——加預設值讓新欄位對既有呼叫端保持加法相容。是否
+  /// 畫出劃線價像素屬 reference-ui 版面判斷，本欄位本身不預先過濾或清空。
+  final String originalPriceShow;
+
   const LBMiniCartPeek({
     required this.productId,
     required this.name,
     required this.priceShow,
     required this.soldOut,
     this.pic = '',
+    this.originalPriceShow = '',
   });
 
   @override
@@ -626,10 +635,12 @@ class LBMiniCartPeek {
       other.name == name &&
       other.priceShow == priceShow &&
       other.soldOut == soldOut &&
-      other.pic == pic;
+      other.pic == pic &&
+      other.originalPriceShow == originalPriceShow;
 
   @override
-  int get hashCode => Object.hash(productId, name, priceShow, soldOut, pic);
+  int get hashCode =>
+      Object.hash(productId, name, priceShow, soldOut, pic, originalPriceShow);
 }
 
 /// mini-cart view-model (D4). `peek` = the most recent successfully-added

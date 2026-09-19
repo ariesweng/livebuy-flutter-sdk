@@ -447,11 +447,44 @@ class LivebuyPlayerController {
   /// A host typically supplies `liveStatus` from the latest
   /// `LBPlayerChannelInfo.liveStatus` (`onChannelChange`) and `duration` from
   /// the latest `LBPlaybackProgress.duration` (`onPlaybackProgressChange`).
+  ///
+  /// **Request coalescing** (flutter-vod-seek-request-coalescing-core): at most
+  /// one `'seek'` MethodChannel call is ever in flight. A call made while a
+  /// previous one hasn't resolved does NOT dispatch immediately — it records
+  /// its target as the pending value (overwriting any earlier pending value)
+  /// and returns the in-flight call's `Future`; the pending target dispatches
+  /// the moment the in-flight call resolves. This exists to avoid saturating
+  /// the Android main thread with a backlog of stale seeks during a fast/long
+  /// drag (see `docs/reference-ui/parity-debt-ledger.md` #33). Deliberately
+  /// NOT applied to [seekBy]: coalescing a relative delta
+  /// would silently drop intermediate deltas and corrupt the caller's total
+  /// accumulated offset.
   Future<void> seek(double seconds, {int? liveStatus, double? duration}) {
     if (liveStatus != null && !vodScrubAllowed(liveStatus, duration ?? 0)) {
       return Future.value();
     }
-    return _invoke('seek', {'seconds': seconds});
+    if (_inFlightSeek != null) {
+      _pendingSeekSeconds = seconds;
+      return _inFlightSeek!;
+    }
+    return _dispatchSeek(seconds);
+  }
+
+  Future<void>? _inFlightSeek;
+  double? _pendingSeekSeconds;
+
+  Future<void> _dispatchSeek(double seconds) {
+    final future = _invoke('seek', {'seconds': seconds});
+    _inFlightSeek = future;
+    future.whenComplete(() {
+      _inFlightSeek = null;
+      final pending = _pendingSeekSeconds;
+      if (pending != null) {
+        _pendingSeekSeconds = null;
+        _dispatchSeek(pending);
+      }
+    });
+    return future;
   }
 
   /// Relative seek (VOD-1 control exit; parity iOS `Player.seekBy(_:)` —
@@ -464,6 +497,29 @@ class LivebuyPlayerController {
       return Future.value();
     }
     return _invoke('seekBy', {'seconds': seconds});
+  }
+
+  /// Hint: an active drag-to-scrub is starting (flutter-vod-scrub-seek-tolerance-core). Android
+  /// only — the underlying `ExoPlaybackEngine` capability this hints at does not exist on iOS,
+  /// so this short-circuits BEFORE touching the method channel (same pattern as
+  /// [notifyPictureInPictureModeChanged]), avoiding an unhandled-method exception on iOS. Same
+  /// optional [vodScrubAllowed] gate / silent-no-op posture as [seek].
+  Future<void> beginScrub({int? liveStatus, double? duration}) {
+    if (defaultTargetPlatform != TargetPlatform.android) return Future.value();
+    if (liveStatus != null && !vodScrubAllowed(liveStatus, duration ?? 0)) {
+      return Future.value();
+    }
+    return _invoke('beginScrub');
+  }
+
+  /// Hint: drag-to-scrub ended or was cancelled (flutter-vod-scrub-seek-tolerance-core). Same
+  /// Android-only short-circuit and gate posture as [beginScrub].
+  Future<void> endScrub({int? liveStatus, double? duration}) {
+    if (defaultTargetPlatform != TargetPlatform.android) return Future.value();
+    if (liveStatus != null && !vodScrubAllowed(liveStatus, duration ?? 0)) {
+      return Future.value();
+    }
+    return _invoke('endScrub');
   }
 
   /// Toggle play ⇄ pause (VOD-1 control exit; parity iOS `Player.togglePlayPause()`
@@ -958,22 +1014,41 @@ class _LivebuyPlayerCoreState extends State<LivebuyPlayerCore> {
     };
 
     if (defaultTargetPlatform == TargetPlatform.android) {
-      // flutter-android-player-hybrid-composition: explicit Hybrid Composition
-      // (NOT the bare `AndroidView(...)` constructor, which leaves the engine
-      // to pick its own default composition mode). A genuinely-live channel's
-      // native `SurfaceView` (AWS IVS Player, android-ivs-player-live-engine-
-      // core) has been confirmed on-device to visually paint over every
-      // Flutter-drawn overlay (header / rail / sheets) under the engine's
-      // default Texture Layer Hybrid Composition on some device/GPU
-      // combinations — hit-testing still routes correctly (only the pixels
-      // are wrong). Hybrid Composition inserts this platform view directly
-      // into the real Android view hierarchy so the OS resolves `SurfaceView`
-      // z-order the same way it does for a normal (non-Flutter) app. See
-      // design.md Decision 1. `creationParams` / `creationParamsCodec` /
-      // `_onPlatformViewCreated` are forwarded unchanged. Scoped to THIS
-      // view only (`LivebuyPlayerCore`) — `LivebuyWidgetCore` /
-      // `LivebuyFloatingWidget` below keep the existing `AndroidView(...)`
-      // mount (see design.md Non-Goals: unverified on those surfaces).
+      // flutter-android-texture-layer-composition-core: Texture Layer
+      // composition via `initSurfaceAndroidView` (engine display mode
+      // `TEXTURE_WITH_HYBRID_FALLBACK`). The native view tree is drawn into a
+      // Flutter-owned render target (`PlatformViewWrapper`), so the raster
+      // thread is NOT merged into the Android main thread, the Flutter UI
+      // does not go through `FlutterImageView`, and a PiP transition is a
+      // plain window resize of the embedded `TextureView` — the same cost
+      // profile as the native reference-ui / RN embeddings of the very same
+      // `LivebuyPlayerView`. MUST NOT go back to `initExpensiveAndroidView`
+      // (true Hybrid Composition: raster thread merged into the platform
+      // thread every frame, LayoutParams reset per frame, overlay surfaces
+      // torn down per frame — the root cause of ledger #33 / #35).
+      //
+      // Why this never falls back: the engine checks the native view tree
+      // for a `SurfaceView` exactly ONCE, at platform-view creation. The
+      // Kotlin bridge (`LivebuyFlutterPlayerView.init`) sets
+      // `liveVideoSurfaceMode = LBLiveVideoSurfaceMode.TEXTURE_VIEW` before
+      // any `load()` (sibling core change `android-ivs-texture-view-surface-
+      // core`), so the live IVS engine renders into a `TextureView` too —
+      // VOD / replay / intro already do (`lb_exo_player_view.xml`). The view
+      // tree therefore contains no `SurfaceView` at any point in time: no
+      // fallback at creation, and no later-added `SurfaceView` that could
+      // punch through the Flutter overlays (the bug the former Hybrid
+      // Composition mount was chosen for). Fallback semantics, for the
+      // record: `initSurfaceAndroidView` would degrade to Hybrid Composition
+      // (known-working) if a `SurfaceView` WERE present at creation, whereas
+      // the bare `AndroidView(...)` would degrade to Virtual Display — that
+      // is why this constructor is used. Spec:
+      // `flutter-android-player-view-composition`.
+      //
+      // `creationParams` / `creationParamsCodec` / `_onPlatformViewCreated`
+      // are forwarded unchanged. Scoped to THIS view only
+      // (`LivebuyPlayerCore`) — `LivebuyWidgetCore` / `LivebuyFloatingWidget`
+      // below keep their existing `AndroidView(...)` mount (already Texture
+      // Layer).
       return PlatformViewLink(
         viewType: viewType,
         surfaceFactory: (context, controller) {
@@ -984,7 +1059,7 @@ class _LivebuyPlayerCoreState extends State<LivebuyPlayerCore> {
           );
         },
         onCreatePlatformView: (params) {
-          return PlatformViewsService.initExpensiveAndroidView(
+          return PlatformViewsService.initSurfaceAndroidView(
             id: params.id,
             viewType: viewType,
             layoutDirection: TextDirection.ltr,

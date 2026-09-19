@@ -112,6 +112,14 @@ const List<BoxShadow> _cardShadow = [
 /// this literal is kept as-is, mirroring `product_row.dart`'s own `_soldOutColor`).
 final Color _soldOutColor = colorFromHex('#9A96A3') ?? const Color(0xFF9A96A3);
 
+/// Struck-through original-price color `#A0A0A0` (design `sdk-components.jsx:939`
+/// literal, `vod-now-introducing-original-price-reference-ui-flutter`). Mirrors
+/// `product_row.dart`'s own `_originalPriceColor` — deliberately re-declared here
+/// rather than imported (this file's existing convention of NOT sharing private
+/// color constants across files, same as `_soldOutColor` above). MUST NOT vary with
+/// the merchant theme.
+final Color _originalPriceColor = colorFromHex('#A0A0A0') ?? const Color(0xFFA0A0A0);
+
 /// Product-photo placeholder gradient stops (mirrors `ProductDetailSheet` — the
 /// design's warm media chip; deterministic, NO network image).
 final Color _photoStart = colorFromHex('#C7C7CC') ?? const Color(0xFFC7C7CC);
@@ -338,18 +346,55 @@ class MiniCartPeek extends StatelessWidget {
 
         // Price line — sold-out → 已售完 (unchanged `_soldOutColor` literal; Flutter's
         // `ReferenceUITheme` has no `surface.textDim` field to source it from); else the
-        // priceShow, now colored with the merchant `accent` (was the fixed on-glass pink
-        // `#FF7B8A`).
-        Text(
-          _isSoldOut ? miniCartSoldOutLabel : p.priceShow,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: _isSoldOut ? _soldOutColor : theme.accent,
-            fontSize: 12 * theme.fontScale,
-            fontWeight: _isSoldOut ? FontWeight.w600 : FontWeight.w700,
+        // priceShow (accent), optionally followed by a struck-through original price
+        // (vod-now-introducing-original-price-reference-ui-flutter — current price
+        // FIRST, original price SECOND, mirroring `LBPMiniCart`'s own layout; the
+        // OPPOSITE order from this package's `product_row.dart`, which is that
+        // component's own established layout and MUST NOT be cross-applied here).
+        if (_isSoldOut)
+          Text(
+            miniCartSoldOutLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: _soldOutColor,
+              fontSize: 12 * theme.fontScale,
+              fontWeight: FontWeight.w600,
+            ),
+          )
+        else
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                p.priceShow,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: theme.accent,
+                  fontSize: 12 * theme.fontScale,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              if (p.originalPriceShow.isNotEmpty &&
+                  p.originalPriceShow != p.priceShow) ...[
+                const SizedBox(width: 6),
+                Text(
+                  p.originalPriceShow,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _originalPriceColor,
+                    fontSize: 12 * theme.fontScale,
+                    decoration: TextDecoration.lineThrough,
+                    decorationColor: _originalPriceColor,
+                  ),
+                ),
+              ],
+            ],
           ),
-        ),
       ],
     );
   }

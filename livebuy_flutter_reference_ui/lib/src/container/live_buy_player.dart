@@ -1976,7 +1976,18 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // 那個 `_scrubBarExpanded &&` 判斷，直接反映「手指是否還按著」本身。
       isScrubbing: _isScrubbingProgressBar,
       onScrubbingChange: (v) {
-        if (v != _isScrubbingProgressBar) setState(() => _isScrubbingProgressBar = v);
+        if (v != _isScrubbingProgressBar) {
+          setState(() => _isScrubbingProgressBar = v);
+          // flutter-vod-scrub-seek-tolerance-reference-ui: notify the Android engine of the
+          // drag boundary so it can switch to a cheap seek precision WHILE dragging and restore
+          // exact precision the instant the drag ends — no gate params, native remains the sole
+          // vodScrubAllowed authority (same posture as the onSeek default wiring below).
+          if (v) {
+            _controller.beginScrub();
+          } else {
+            _controller.endScrub();
+          }
+        }
       },
       onScrubBarExpandedChange: (v) {
         if (v != _scrubBarExpanded) setState(() => _scrubBarExpanded = v);

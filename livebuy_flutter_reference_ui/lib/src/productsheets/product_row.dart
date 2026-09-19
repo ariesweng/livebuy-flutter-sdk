@@ -9,6 +9,7 @@ import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
 import 'equalizer_glyph.dart';
 import 'hot_glyph.dart';
+import 'product_row_discount_badge.dart';
 import 'product_row_name_tag.dart' as name_tag;
 import 'product_row_overlay.dart' show ProductRowMode, isReplayNeverIntroduced;
 import 'product_status_badge.dart';
@@ -407,127 +408,219 @@ class ProductRow extends StatelessWidget {
                 }),
               ),
               const SizedBox(width: 12),
+              // design R45 (rb-flutter-product-row-layout-and-price-color): the name /
+              // price+buttons column REPLACES the pre-R45 three-column layout (thumb /
+              // Expanded(name+price) / button group as three Row siblings). Name now sits
+              // on its own line; the price block and the detail/share/cart button group
+              // moved onto a SHARED second line below it (see the inner `Row` below) —
+              // matching the design source's `flexDirection:'column'` wrapper around a
+              // name `<div>` and a `justifyContent:'space-between'` second `<div>`.
               Expanded(
-                child: GestureDetector(
-                  key: LbTestKeys.productRowDetail(rowIndex),
-                  behavior: HitTestBehavior.opaque,
-                  onTap: _open,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // 商品名稱前標籤（design R39，rb-flutter-product-row-name-tag-system）：
-                      // `nameTag == none` 時維持 byte-identical 的裸 `Text`（不多包一層
-                      // `Row`）；否則於名稱前插入直播價 / 即將售完 / 熱賣中三種小圓角標籤之一
-                      // （`_NameTagPill`，三者共用同一套圓角/padding/字級）。
-                      if (nameTag == name_tag.ProductRowNameTag.none)
-                        Text(
-                          product.name,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: theme.text,
-                            fontSize: 14 * theme.fontScale,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        )
-                      else
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            // Non-null: this branch only runs when `nameTag != none`.
-                            _nameTagPillFor(theme, nameTag)!,
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(
-                                product.name,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: theme.text,
-                                  fontSize: 14 * theme.fontScale,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 商品名稱前標籤（design R39，rb-flutter-product-row-name-tag-system）：
+                    // `nameTag == none` 時維持 byte-identical 的裸 `Text`（不多包一層
+                    // `Row`）；否則於名稱前插入直播價 / 即將售完 / 熱賣中三種小圓角標籤之一
+                    // （`_NameTagPill`，三者共用同一套圓角/padding/字級）。
+                    //
+                    // rb-flutter-product-row-name-tag-wrap-fix: 標籤與名稱 SHALL 共用同一個
+                    // `Text.rich`（`WidgetSpan` 承載標籤 + 名稱 `TextSpan`），MUST NOT 用
+                    // `Row(pill, Flexible(Text(name)))` 兩個並排子項渲染——後者的
+                    // `Flexible` 把「Row 寬度減去標籤寬度」這個窄欄寬度套用到名稱的**每一
+                    // 行**,換行後的第二行即使左側已無標籤佔用空間也用不到完整寬度。
+                    // `Text.rich` 的段落換行只在標籤實際所在的第一行套用 WidgetSpan 佔位,
+                    // 換行後的行拿到父層給的完整可用寬度——等效設計來源
+                    // `sdk-components.jsx` 把標籤畫成 `display:inline-block` `<span>`、跟
+                    // 名稱文字節點共用同一個 CSS inline formatting context 的文繞圖行為。
+                    //
+                    // design R45: this `GestureDetector` (key + `_open`) now owns ONLY the
+                    // name line — pre-R45 it wrapped the WHOLE name+price `Column`. The
+                    // price block below has its OWN independent `GestureDetector` calling
+                    // the same `_open` handler (no key — the key stays here) so the
+                    // pre-existing tap-to-open hot zone over the price text is preserved,
+                    // just split into two siblings instead of one shared wrapper.
+                    GestureDetector(
+                      key: LbTestKeys.productRowDetail(rowIndex),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: _open,
+                      child: nameTag == name_tag.ProductRowNameTag.none
+                          ? Text(
+                              product.name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: theme.text,
+                                fontSize: 14 * theme.fontScale,
+                                fontWeight: FontWeight.w600,
                               ),
-                            ),
-                          ],
-                        ),
-                      const SizedBox(height: 4),
-                      if (!hideSub)
-                        if (soldOut)
-                          Text(
-                            _soldOutLabel,
-                            style: TextStyle(
-                              color: _soldOutColor,
-                              fontSize: 12 * theme.fontScale,
-                            ),
-                          )
-                        else
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              if (product.originalPriceShow.isNotEmpty &&
-                                  product.originalPriceShow !=
-                                      product.priceShow)
-                                Padding(
-                                  padding: const EdgeInsets.only(right: 6),
-                                  child: Text(
-                                    product.originalPriceShow,
-                                    style: TextStyle(
-                                      color: _textDim,
-                                      fontSize: 12 * theme.fontScale,
-                                      decoration: TextDecoration.lineThrough,
-                                      decorationColor: _textDim,
-                                    ),
+                            )
+                          : Text.rich(
+                              TextSpan(
+                                children: [
+                                  WidgetSpan(
+                                    // `.middle` (vertical-center against the surrounding
+                                    // line) mirrors the old `Row`'s
+                                    // `CrossAxisAlignment.center` — the pill's vertical
+                                    // relationship to the name text is unchanged in INTENT.
+                                    // Other `PlaceholderAlignment` values were tried
+                                    // (`.baseline`/`.top`/`.bottom`) and produce a LARGER or
+                                    // differently-shaped 1px golden diff on
+                                    // `product-list-outsoon-hot-labels.png` (see
+                                    // rb-flutter-product-row-name-tag-wrap-fix tasks.md §3)
+                                    // — none achieve byte-identical parity, because
+                                    // `Text.rich`'s paragraph layout computes the line's
+                                    // height/rounding differently from a plain `Row`
+                                    // regardless of alignment. `.middle` is kept as the
+                                    // semantically-correct choice (true vertical centering),
+                                    // not picked to minimize an incidental pixel-diff count.
+                                    alignment: PlaceholderAlignment.middle,
+                                    // Non-null: this branch only runs when `nameTag != none`.
+                                    child: _nameTagPillFor(theme, nameTag)!,
                                   ),
-                                ),
-                              Text(
-                                product.priceShow,
-                                style: TextStyle(
-                                  color: _saleColor,
-                                  fontSize: 14 * theme.fontScale,
-                                  fontWeight: FontWeight.w900,
-                                ),
+                                  // 對應舊 `Row` 的 `const SizedBox(width: 4)` 間距——獨立
+                                  // `WidgetSpan`,不用文字流裡的 literal 空白字元湊寬度（空白
+                                  // glyph 寬度不等於 4 邏輯像素,會讓間距隨字型 fallback 漂移）。
+                                  const WidgetSpan(child: SizedBox(width: 4)),
+                                  TextSpan(text: product.name),
+                                ],
                               ),
-                            ],
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: theme.text,
+                                fontSize: 14 * theme.fontScale,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                    ),
+                    const SizedBox(height: 4),
+                    // 價格區塊 + detail/share/cart 按鈕群同一行（design R45，rb-flutter-
+                    // product-row-layout-and-price-color）——取代先前「名稱+價格」欄與「按鈕」
+                    // 欄左右並排的三欄式排版。價格區塊擁有自己獨立的 `GestureDetector`（同一個
+                    // `_open` handler，無 key）；按鈕群樣式/間距/`showShare` 條件/售完時 icon
+                    // 換補貨鈴鐺，維持不變，只是搬到這一行。[hideSub] 為 `true` 時整個價格/
+                    // 已售完子行隱藏（既有語意不變），但按鈕群仍照常顯示在這一行。
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: hideSub
+                              ? const SizedBox.shrink()
+                              : GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: _open,
+                                  child: soldOut
+                                      ? Text(
+                                          _soldOutLabel,
+                                          style: TextStyle(
+                                            color: _soldOutColor,
+                                            fontSize: 12 * theme.fontScale,
+                                          ),
+                                        )
+                                      : _rowPriceBlock(theme),
+                                ),
+                        ),
+                        const SizedBox(width: 8),
+                        // 明細鈕 icon — self-drawn `DetailGlyph` (design `Icons.detail`,
+                        // size 16), replacing the prior text-character '≣' glyph
+                        // (rb-flutter-icon-parity-product-detail-button). `DetailGlyph` is
+                        // reused verbatim from `../playershell/detail_glyph.dart` (already
+                        // migrated for the clean-mode exit button by `rb-flutter-clean-
+                        // mode-exit-icon-fix`) — same design source glyph, no duplicate
+                        // CustomPainter needed.
+                        _RowOutlineIcon(
+                          theme: theme,
+                          onTap: _open,
+                          child: DetailGlyph(color: theme.accent, size: 16),
+                        ),
+                        const SizedBox(width: 8),
+                        if (showShare) ...[
+                          _RowOutlineIcon(
+                            buttonKey: LbTestKeys.productRowShare(rowIndex),
+                            theme: theme,
+                            onTap: _share,
+                            child: ShareGlyph(color: theme.accent, size: 14),
                           ),
-                    ],
-                  ),
+                          const SizedBox(width: 8),
+                        ],
+                        _RowCartButton(
+                          buttonKey: LbTestKeys.productRowCart(rowIndex),
+                          theme: theme,
+                          soldOut: soldOut,
+                          onTap: soldOut ? _notifyRestock : _quickAdd,
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              // 明細鈕 icon — self-drawn `DetailGlyph` (design `Icons.detail`, size 16),
-              // replacing the prior text-character '≣' glyph (rb-flutter-icon-parity-
-              // product-detail-button). `DetailGlyph` is reused verbatim from
-              // `../playershell/detail_glyph.dart` (already migrated for the clean-mode
-              // exit button by `rb-flutter-clean-mode-exit-icon-fix`) — same design source
-              // glyph, no duplicate CustomPainter needed.
-              _RowOutlineIcon(
-                theme: theme,
-                onTap: _open,
-                child: DetailGlyph(color: theme.accent, size: 16),
-              ),
-              const SizedBox(width: 8),
-              if (showShare) ...[
-                _RowOutlineIcon(
-                  buttonKey: LbTestKeys.productRowShare(rowIndex),
-                  theme: theme,
-                  onTap: _share,
-                  child: ShareGlyph(color: theme.accent, size: 14),
-                ),
-                const SizedBox(width: 8),
-              ],
-              _RowCartButton(
-                buttonKey: LbTestKeys.productRowCart(rowIndex),
-                theme: theme,
-                soldOut: soldOut,
-                onTap: soldOut ? _notifyRestock : _quickAdd,
               ),
             ],
           ),
         ),
         Container(height: 1, color: _stroke),
+      ],
+    );
+  }
+
+  /// `.row` price block (未售完 only) — design R45, rb-flutter-product-row-layout-and-
+  /// price-color. When there's a strikeable original price (existing
+  /// `originalPriceShow.isNotEmpty && != priceShow` guard, UNCHANGED), the struck-
+  /// through original price (+ discount percentage, when computable via
+  /// [productRowDiscountPercent]) renders ABOVE the sale price — the REVERSE of the
+  /// pre-R45 arrangement (original price beside the sale price, both on one line).
+  /// `.grid`'s `_gridPriceText` already stacks sale-above/original-below for its OWN
+  /// design source; this `.row` block stacks original-above/sale-below for ITS design
+  /// source (`sdk-components.jsx`'s `.row` branch) — the two layouts are not required to
+  /// mirror each other's vertical order, only their own.
+  Widget _rowPriceBlock(ReferenceUITheme theme) {
+    final hasOriginalPrice = product.originalPriceShow.isNotEmpty &&
+        product.originalPriceShow != product.priceShow;
+    final discountPercent = hasOriginalPrice
+        ? productRowDiscountPercent(
+            price: product.price, originalPrice: product.originalPrice)
+        : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasOriginalPrice)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                product.originalPriceShow,
+                style: TextStyle(
+                  color: _originalPriceColor,
+                  fontSize: 12 * theme.fontScale,
+                  decoration: TextDecoration.lineThrough,
+                  decorationColor: _originalPriceColor,
+                ),
+              ),
+              if (discountPercent != null) ...[
+                const SizedBox(width: 6),
+                Text(
+                  '(-$discountPercent%)',
+                  style: TextStyle(
+                    color: _discountColor,
+                    fontSize: 11 * theme.fontScale,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        Text(
+          product.priceShow,
+          style: TextStyle(
+            color: _saleColor,
+            fontSize: 14 * theme.fontScale,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
       ],
     );
   }
@@ -539,11 +632,13 @@ class ProductRow extends StatelessWidget {
   // instances render it as a static full-opacity circle, keeping the golden
   // byte-stable per this codebase's "no animation for determinism" convention) +
   // (when sold out) a translucent 已售完 overlay; below it, the name (2-line clamp),
-  // price row (accent sale price, stacked with a struck-through original price when
-  // [LBProduct.originalPriceShow] is non-empty and differs from priceShow — design R21
-  // `sdk-components.jsx:1108-1123`; this is UNCONDITIONAL on [hideSub], see that
-  // field's doc comment — `add-recommendation-original-price-reference-ui-flutter`)
-  // with an independent accent cart button.
+  // price row (accent sale price, sharing one line with a struck-through original price
+  // when [LBProduct.originalPriceShow] is non-empty and differs from priceShow — design
+  // R21 `sdk-components.jsx:1108-1123`, wrapping to a second line only when the combined
+  // width doesn't fit, per design D8 (`rb-flutter-product-row-grid-price-wrap`); this is
+  // UNCONDITIONAL on [hideSub], see that field's doc comment —
+  // `add-recommendation-original-price-reference-ui-flutter`) with an independent accent
+  // cart button.
 
   Widget _buildGrid(BuildContext context) {
     final soldOut =
@@ -652,13 +747,20 @@ class ProductRow extends StatelessWidget {
     );
   }
 
-  /// `.grid` price cell (未售完 only). Design R21 `sdk-components.jsx:1108-1123`: when
-  /// there's a strikeable original price, the sale price stacks ABOVE a struck-through
-  /// original price (`Column`, left-aligned, no gap) — a DIFFERENT arrangement from
-  /// `.row`'s horizontal side-by-side layout (`.row`'s condition/logic is the ONLY thing
-  /// mirrored here, not its visual arrangement — design.md D1). UNCONDITIONAL on
-  /// [hideSub] (design.md D2 — `.grid`'s `hideSub` only ever gated the not-yet-implemented
-  /// `p.sub` caption line, never this price cell).
+  /// `.grid` price cell (未售完 only). Design R21 `sdk-components.jsx:1108-1123`, D8
+  /// (`design/contract/claude-design-sync.md`, 2026-09-18): the sale price and a
+  /// struck-through original price (when present) share ONE row by default and only wrap
+  /// to a second line when the combined width doesn't fit — matching the design source's
+  /// `display:flex, flexWrap:'wrap', alignItems:'baseline', gap:4` (the SAME flexWrap
+  /// idiom the `.row` layout's original-price-line already uses), which replaced the prior
+  /// unconditional `flexDirection: p.was ? 'column' : 'row'` two-way hardcode. Sale price
+  /// is ALWAYS first, struck-through original price ALWAYS second (`.row`'s
+  /// condition/logic is the ONLY thing mirrored here, not its visual arrangement —
+  /// design.md D1). UNCONDITIONAL on [hideSub] (design.md D2 — `.grid`'s `hideSub` only
+  /// ever gated the not-yet-implemented `p.sub` caption line, never this price cell).
+  /// `Wrap` has no true CSS-baseline cross-axis alignment; `WrapCrossAlignment.end`
+  /// (bottom-align) is the closest native approximation for these two single-line texts
+  /// (design.md D-wrap-cross-align).
   Widget _gridPriceText(ReferenceUITheme theme, bool hasOriginalPrice) {
     final priceText = Text(
       product.priceShow,
@@ -671,9 +773,10 @@ class ProductRow extends StatelessWidget {
       ),
     );
     if (!hasOriginalPrice) return priceText;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.end,
+      spacing: 4,
+      runSpacing: 4,
       children: [
         priceText,
         Text(
@@ -681,10 +784,10 @@ class ProductRow extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: _textDim,
+            color: _originalPriceColor,
             fontSize: 11 * theme.fontScale,
             decoration: TextDecoration.lineThrough,
-            decorationColor: _textDim,
+            decorationColor: _originalPriceColor,
           ),
         ),
       ],
@@ -1128,11 +1231,20 @@ class _GridCartButton extends StatelessWidget {
 
 // MARK: - Decorative design tokens (literal minimal hex, mirrors `product_list_sheet.dart`)
 
-final Color _textDim = colorFromHex('#6B6775') ?? const Color(0xFF6B6775);
 final Color _stroke = colorFromHex('#ECEAF0') ?? const Color(0xFFECEAF0);
 final Color _bgSunken = colorFromHex('#F4F4F6') ?? const Color(0xFFF4F4F6);
 final Color _saleColor = colorFromHex('#E0334B') ?? const Color(0xFFE0334B);
 final Color _soldOutColor = colorFromHex('#9A96A3') ?? const Color(0xFF9A96A3);
+
+/// `.row`/`.grid` 原價劃線文字色（design R45，rb-flutter-product-row-layout-and-price-
+/// color）——固定 `#A0A0A0`，取代原本隨主題色調的 `_textDim`（`#6B6775`）。`_textDim` 在本次
+/// 修改前的兩個唯一呼叫點皆已改用這個常數，故不保留 `_textDim`（避免留下永遠不會再被讀取的
+/// 死碼）。MUST NOT 隨商家 theme 變動。
+final Color _originalPriceColor = colorFromHex('#A0A0A0') ?? const Color(0xFFA0A0A0);
+
+/// `.row` 排版折扣百分比 `(-N%)` 文字色（design R45，新元素，`.grid` 沒有此元素）——固定
+/// `#3C3C3C`，取代原本隨商家主題色調的 `theme.sale`。MUST NOT 隨商家 theme 變動。
+final Color _discountColor = colorFromHex('#3C3C3C') ?? const Color(0xFF3C3C3C);
 
 /// 名稱前「🔥 即將售完」標籤底色（rb-flutter-product-row-name-tag-system，design R39，取代
 /// R38）——由先前「畫在價格列之後」時期的 `#F5A623` 訂正為設計來源
