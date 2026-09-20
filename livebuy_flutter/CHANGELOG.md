@@ -6,6 +6,29 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.5.1 - 2026-09-20
+
+> **Patch — regression fix for a broken v2.5.0 release.** `v2.5.0` shipped with
+> `flutter/android/build.gradle`'s core dependency pin (`tv.livebuy:livebuy`) still at
+> `4.19.0`, two versions behind the core symbols the Android bridge
+> (`LivebuyPlayerViewFactory.kt`) already referenced (`LBLiveVideoSurfaceMode`, introduced in
+> `android-v4.21.0`; `beginScrub()`/`endScrub()`, introduced in `android-v4.20.0`) — the
+> published `v2.5.0` tag itself fails to compile for any consumer resolving the real remote
+> Maven artifact. Discovered when a downstream host app upgrading to `v2.5.0` hit a build
+> failure. This release only bumps the pin to `4.21.0` (`flutter-android-bridge-core-pin-4-21-0`);
+> `v2.5.0` cannot be overwritten, so this patch supersedes it. **Android-only fix** — pure
+> Dart consumers and the iOS build are unaffected (`livebuy_flutter.podspec` / `Package.swift`
+> already float on `~> 4.0` / `from: "4.0.0"`, which already covered `4.21.0`). **Zero
+> BREAKING.**
+
+### Fixed
+
+- **`flutter/android/build.gradle` core dependency pin bumped `4.19.0` → `4.21.0`**
+  (`flutter-android-bridge-core-pin-4-21-0`): closes the real compile-time symbol gap that made
+  the published `v2.5.0` Android build fail (`LBLiveVideoSurfaceMode` + `beginScrub()`/
+  `endScrub()`). No Dart or bridge Kotlin source changed — pin coordinate + explanatory comment
+  only.
+
 ## 2.5.0 - 2026-09-20
 
 > **三套件版號 lockstep bump（`livebuy_flutter` core / `livebuy_flutter_ui` / 

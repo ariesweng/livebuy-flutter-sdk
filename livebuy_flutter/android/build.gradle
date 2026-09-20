@@ -85,21 +85,32 @@ dependencies {
     // pub.dev consumers). Distinct from this file's own `version` (the tv.livebuy.flutter plugin
     // artifact version) — different version axis.
     //
-    // Current pin: 4.19.0 (flutter-android-bridge-core-pin-4-19-0, routine follow-up to
-    // v4.19.0's real, lockstep iOS+Android release) — bumped from 4.18.0. The PRIOR bump
-    // (4.17.0 -> 4.18.0) closed a real symbol gap (`LivebuyPlayerView.isMuted`, already called
-    // by this bridge's `LivebuyPlayerViewFactory.kt`). THIS bump is back to routine version
-    // tracking against a core release with ZERO impact on this bridge: `[4.19.0]`'s core items
-    // — `requireLoginForAddToCart` (pure Dart-side gate, never reaches native) and
-    // `CART_ADD_REQUEST.num` (Flutter forwards notification-event params generically, no
-    // per-key bridge mapping to update) — are both additive and neither is referenced
-    // anywhere under this module's Kotlin source.
+    // Current pin: 4.21.0 (flutter-android-bridge-core-pin-4-21-0) — bumped from 4.19.0.
+    //
+    // ⚠️ THIS IS A REGRESSION FIX, NOT ROUTINE VERSION TRACKING. `livebuy_flutter` v2.5.0
+    // shipped (2026-09-20, rn-flutter-release-prep-v2-5-0, commit 3d91391fe) with this pin
+    // still at 4.19.0 while this bridge (LivebuyPlayerViewFactory.kt) already referenced two
+    // NEWER core symbols:
+    //   - `LBLiveVideoSurfaceMode` (import + `playerView.liveVideoSurfaceMode =
+    //     LBLiveVideoSurfaceMode.TEXTURE_VIEW`) — introduced in android-v4.21.0 (commit
+    //     c3c6c203c); NOT present in android-v4.20.0.
+    //   - `playerView.beginScrub()` / `endScrub()` — introduced in android-v4.20.0 (commit
+    //     6f28fdd3a); present in both 4.20.0 and 4.21.0.
+    // Combined floor is 4.21.0 (the stricter of the two). The published v2.5.0 tag's pin
+    // (4.19.0) was two versions behind BOTH floors — both the import and the two method calls
+    // failed to resolve against the real published 4.19.0 remote artifact. This is the exact
+    // failure mode this comment has warned about for several bumps running, except this time
+    // it wasn't caught during apply-time verification — it shipped, and was only discovered
+    // when a downstream consumer (woocommerce-app) tried to upgrade to v2.5.0 and hit a build
+    // failure. v2.5.0 itself cannot be overwritten; a v2.5.1 patch carries this fix.
     //
     // Prior pin history: 4.13.1 → 4.16.0 was an AD-HOC bump (commit 671cdcbe6, 2026-09-09,
     // diagnosing a Flutter live-chat delivery issue later found unrelated to this pin) made
     // WITHOUT going through the OpenSpec change flow. 4.16.0 → 4.17.0
     // (flutter-android-bridge-core-pin-4-17-0) backfilled that governance gap and was itself a
-    // zero-core-change routine bump.
+    // zero-core-change routine bump. 4.17.0 → 4.18.0 closed a real symbol gap
+    // (`LivebuyPlayerView.isMuted`, already called by this bridge). 4.18.0 → 4.19.0 was back to
+    // a zero-core-impact routine bump.
     //
     // ⚠️ THIS PIN WILL GO STALE AGAIN — read before bumping it (or trusting it).
     // In the monorepo + CI this pin does NOT gate correctness: flutter-bridge-build.yml /
@@ -113,7 +124,7 @@ dependencies {
     // `flutter-distribution-core-pin-refresh` for the incident). Always re-check bridge Kotlin
     // source against the target version's CHANGELOG for new public API the bridge already
     // references, not just "did core change at all".
-    implementation "tv.livebuy:livebuy:4.19.0"
+    implementation "tv.livebuy:livebuy:4.21.0"
 
     // The bridge uses kotlinx.coroutines directly (CoroutineScope / Dispatchers / launch).
     // The SDK pulls it transitively but as `implementation`, so it is not on the
