@@ -124,7 +124,7 @@ dependencies {
     // `flutter-distribution-core-pin-refresh` for the incident). Always re-check bridge Kotlin
     // source against the target version's CHANGELOG for new public API the bridge already
     // references, not just "did core change at all".
-    implementation "tv.livebuy:livebuy:4.21.0"
+    implementation "tv.livebuy:livebuy:4.21.2"
 
     // The bridge uses kotlinx.coroutines directly (CoroutineScope / Dispatchers / launch).
     // The SDK pulls it transitively but as `implementation`, so it is not on the

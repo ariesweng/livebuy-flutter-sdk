@@ -655,16 +655,11 @@ class LivebuyFlutterPlayerView(
         // (1) API 31+: hand PiP entry timing entirely to the system. Guarded by an explicit
         // SDK_INT check so the API 31 `setAutoEnterEnabled` call is lint/compile-legal;
         // AutoPipPolicy carries the same threshold as the invariant.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            AutoPipPolicy.shouldArmAutoEnter(Build.VERSION.SDK_INT, PiPHelper.isPiPSupported(activity))
-        ) {
-            activity.setPictureInPictureParams(
-                PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(9, 16))
-                    .setAutoEnterEnabled(true)
-                    .build()
-            )
-        }
+        // android-bridge-auto-pip-disarm-on-dispose-core: remember whether the arm write actually
+        // landed so dispose() can undo exactly that (and nothing the host set itself).
+        val armedAutoEnter = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            AutoPipPolicy.shouldArmAutoEnter(Build.VERSION.SDK_INT, PiPHelper.isPiPSupported(activity)) &&
+            setAutoEnterPiP(activity, enabled = true)
 
         // (2) API 26–30 best-effort: forward a GENUINE background (onActivityStopped, filtered to
         // this host Activity) to core's requestAutoPiP(). onActivityStopped (not onPause) is chosen
@@ -743,7 +738,26 @@ class LivebuyFlutterPlayerView(
 
         return AutoPipWiring(
             view, activity, token, listener, lifecycleCallbacks, userLeaveForward, modeChangeForward,
+            armedAutoEnter,
         )
+    }
+
+    /**
+     * Writes [enabled] into the host Activity's auto-enter-PiP params; returns whether the write
+     * landed. `runCatching` because `setPictureInPictureParams` on an Activity whose manifest omits
+     * `android:supportsPictureInPicture` is understood to throw (AOSP
+     * `ensureValidPictureInPictureActivityParams`; same posture as native reference-ui's
+     * `setAutoEnterPiP`): a caught failure is reported as "did not arm", never as success.
+     * Only `autoEnterEnabled` is written — PiP params merge per field, so the aspect ratio set at
+     * arm time is left alone on disarm.
+     */
+    private fun setAutoEnterPiP(activity: Activity, enabled: Boolean): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
+        return runCatching {
+            val builder = PictureInPictureParams.Builder().setAutoEnterEnabled(enabled)
+            if (enabled) builder.setAspectRatio(Rational(9, 16))
+            activity.setPictureInPictureParams(builder.build())
+        }.isSuccess
     }
 
     override fun getView() = playerView
@@ -764,6 +778,12 @@ class LivebuyFlutterPlayerView(
 /**
  * Retains + tears down one view's auto-PiP wiring (flutter-android-auto-pip-entry). [listener] is
  * held strongly here because core's `addEventListener` keeps only a WEAK reference.
+ *
+ * [armedAutoEnter] (android-bridge-auto-pip-disarm-on-dispose-core): whether `installAutoPip`'s
+ * API 31+ `setAutoEnterEnabled(true)` write actually landed on [activity]. Auto-enter is a property
+ * of the ACTIVITY and outlives the view; before this flag existed, [dispose] left it armed, so a
+ * host that closed the player and then pressed Home got its CURRENT screen (e.g. the store home
+ * page — reproduced on a downstream Flutter host, Pixel 7 API 34) pushed into the PiP window.
  */
 private class AutoPipWiring(
     private val view: LivebuyPlayerView,
@@ -773,12 +793,24 @@ private class AutoPipWiring(
     private val lifecycleCallbacks: Application.ActivityLifecycleCallbacks,
     private val userLeaveForward: () -> Unit,
     private val modeChangeForward: (Boolean) -> Unit,
+    private val armedAutoEnter: Boolean,
 ) {
     fun dispose() {
         view.removeEventListener(token)
         activity.application.unregisterActivityLifecycleCallbacks(lifecycleCallbacks)
         LivebuyPiPUserLeaveHint.unregister(userLeaveForward)
         LivebuyPiPModeChangeHint.unregister(modeChangeForward)
+        // Undo ONLY the bridge's own arm (never host-owned params); decision is the pure, tested
+        // AutoPipPolicy.shouldDisarmOnDispose. runCatching: same failure posture as the arm write.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            AutoPipPolicy.shouldDisarmOnDispose(Build.VERSION.SDK_INT, armedAutoEnter)
+        ) {
+            runCatching {
+                activity.setPictureInPictureParams(
+                    PictureInPictureParams.Builder().setAutoEnterEnabled(false).build()
+                )
+            }
+        }
     }
 }
 

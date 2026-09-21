@@ -6,6 +6,37 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.5.2 - 2026-09-21
+
+> **三套件版號 lockstep bump。** 自 `2.5.1` 以來累積 3 個內容項目（1 個 Android bridge core pin
+> 追新 + 1 個既有 auto-enter PiP 修復 + 1 個新增 reference-ui 行為），**零 BREAKING**。
+
+### Fixed
+
+- **Android bridge：播放器 dispose 時解除 API 31+ 系統 auto-enter PiP**
+  （`android-bridge-auto-pip-disarm-on-dispose-core`）：`installAutoPip` 掛載時對 host Activity
+  寫的 `setAutoEnterEnabled(true)` 此前從未在 `dispose()` 撤回，auto-enter 是 Activity 的屬性、
+  比 view 長壽，關閉播放器後按 Home 會把 app 當下畫面（例如商店首頁）塞進 PiP 小窗（下游 Flutter
+  host + Pixel 7 API 34 實測）。現在只撤回 bridge 自己成功 arm 過的（arm 寫入改包 `runCatching`，
+  失敗不 crash、不偽報成功），host 自設的 PiP params 不受影響；決策抽成純函式
+  `AutoPipPolicy.shouldDisarmOnDispose` 並補 JVM 測試。host 零改動。
+- **`flutter/android/build.gradle` core dependency pin 追新 `4.21.0` → `4.21.2`**
+  （`fix-android-view-mode-pip-state-change-core` 的 consumer 端追新）：Android core `4.21.2`
+  補齊了 `LivebuyPlayerView.notifyPictureInPictureModeChanged`（View-mode，本 bridge 走的正是
+  這條路徑）原本完全不 emit 統一事件 `PIP_STATE_CHANGE` 的既有缺口——這個 pin 若不追新，下面
+  新增的 `flutter-android-pip-hide-chrome-reference-ui` 訂閱的事件實際上永遠不會抵達，是一段
+  看似正確、實際死碼的功能（同一種 regression 模式見 `2.5.1` 那筆——core symbol 已被 bridge/
+  reference-ui 引用但 pin 沒追新）。無 Dart 或 bridge Kotlin 行為改動，純 pin coordinate 提升。
+
+### Added
+
+- **Android PiP 進行中隱藏 overlay chrome**（`flutter-android-pip-hide-chrome-reference-ui`，
+  reference-ui 層，僅 Android）：`livebuy_flutter_reference_ui` 的 drop-in 容器 `LivebuyPlayer`
+  在 Android OS Picture-in-Picture 進行中只保留底層影片，隱藏整層 overlay chrome（header /
+  操作列 / 商品卡 / 字幕 / 合流聊天 / composer / 活動通知），退出 PiP 立即復原，對齊 Android 原生
+  `:livebuy-reference-ui` 既有行為。iOS 完全不受影響（`AVPictureInPictureController` 天生
+  video-layer-based，chrome 本來就進不去 PiP 視窗）。
+
 ## 2.5.1 - 2026-09-20
 
 > **Patch — regression fix for a broken v2.5.0 release.** `v2.5.0` shipped with

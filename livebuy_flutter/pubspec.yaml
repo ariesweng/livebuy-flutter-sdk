@@ -1,6 +1,6 @@
 name: livebuy_flutter
 description: Flutter plugin for Livebuy live-shopping SDK (iOS & Android).
-version: 2.5.1
+version: 2.5.2
 homepage: https://github.com/livebuy/livebuy-sdk/tree/main/flutter
 
 environment:

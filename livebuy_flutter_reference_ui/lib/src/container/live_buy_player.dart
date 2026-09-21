@@ -75,6 +75,21 @@ String? videoSwitchToId(String eventName, Map<String, Object?> params) {
 bool shouldSyncAutoAdvance(String? to, String currentId) =>
     to != null && to != currentId;
 
+/// 「PiP 進行中，overlay chrome 是否該渲染」的決策（flutter-android-pip-hide-chrome-reference-ui，
+/// parity Android 原生 `:livebuy-reference-ui`'s `overlayChromeVisibleInPip(isInPip): Boolean =
+/// !isInPip` — same name, same "single容器層短路整層 overlay" granularity, but Flutter's version
+/// ALSO gates on platform). 純函式，不依賴 widget 樹 / BuildContext / platform channel，供單元測 +
+/// `build()` 的 Stack 條件式共用一份。
+///
+/// 回 `false`（不顯示 chrome）僅當 [isInPip] 為真 **且** [platform] 是 Android——iOS 的 OS PiP 是
+/// `AVPictureInPictureController` 綁定單一 video layer，Flutter 畫的 overlay chrome 本來就進不去
+/// PiP 小窗（天生 video-only），`PIP_STATE_CHANGE` 在 iOS 上本來就會正常 emit（服務既有
+/// `ForegroundResumeController`），若不分平台一律隱藏，會在 iOS PiP 進行中（此時使用者可能仍在瀏覽
+/// app 其他畫面，chrome 根本沒被系統 PiP 小窗擷取）誤隱藏本該顯示的 UI——這是本函式存在的唯一理由：
+/// 把「是否隱藏」與「是否真的處於 PiP」分開，讓隱藏行為明確只在 Android 生效。
+bool overlayChromeVisibleInPip(bool isInPip, TargetPlatform platform) =>
+    !(isInPip && platform == TargetPlatform.android);
+
 /// Host-reply-first / template-reply-fallback priority for the container's wrapper
 /// `setListener` closure (rb-flutter-dropin-container-event-forwarding, matching
 /// design.md D3 of add-flutter-dropin-container-event-forward-template verbatim).
@@ -1372,7 +1387,11 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   LBPlayerState _lastPlayerState = LBPlayerState.loading;
 
   /// Whether the wrapped core is CURRENTLY in real OS PiP (maintained from `PIP_STATE_CHANGE`
-  /// `active`). Feeds the controller's `isInPiP` seam.
+  /// `active`). Tracked on EVERY platform (flutter-android-pip-hide-chrome-reference-ui — was
+  /// iOS-only until then, since it originally only fed the iOS `ForegroundResumeController`'s
+  /// `isInPiP` seam). Now ALSO drives `build()`'s Android-only overlay-chrome visibility via
+  /// [overlayChromeVisibleInPip] — the platform gate lives in that consumer, not here, so this
+  /// field keeps one honest, platform-agnostic meaning.
   bool _isInPiP = false;
 
   /// rb-flutter-endscreen-live-empty-state — debounced "VOD/回放 ended with no
@@ -1564,18 +1583,26 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
           _vodEndedCloseGate.handleStateChange(lbPlayerStateFromString(s));
         }
       }
-      // iOS-gated (rc != null): track the latest player state for the was-playing latch, and drive
-      // the deferred PiP-exit resume.
+      // iOS-gated (rc != null): track the latest player state for the was-playing latch.
       final rc = _resumeController;
-      if (rc != null) {
-        if (event.eventName == LBEvent.videoStateChange) {
-          final s = event.params['state'];
-          if (s is String) _lastPlayerState = lbPlayerStateFromString(s);
-        } else if (event.eventName == LBEvent.pipStateChange) {
-          final active = event.params['active'] == true;
-          _isInPiP = active;
-          if (!active)
-            rc.pipDidExit(); // PiP truly ended → deferred resume (iff intent recorded)
+      if (rc != null && event.eventName == LBEvent.videoStateChange) {
+        final s = event.params['state'];
+        if (s is String) _lastPlayerState = lbPlayerStateFromString(s);
+      }
+      // flutter-android-pip-hide-chrome-reference-ui: `_isInPiP` is now tracked on EVERY
+      // platform (not just iOS) — it now also drives whether `build()` hides the Android
+      // overlay chrome via `overlayChromeVisibleInPip`. `mounted` + changed-value guards
+      // mirror this file's existing toggle-driven rebuild convention (`_onLiveNowChanged`,
+      // `onInfoPanelOpenChange`). `rc?.pipDidExit()` stays null-safe: on iOS this drives the
+      // deferred PiP-exit resume unchanged; on Android `rc` is still null, so this stays the
+      // inert no-op it always was.
+      if (event.eventName == LBEvent.pipStateChange) {
+        final active = event.params['active'] == true;
+        if (_isInPiP != active) {
+          if (mounted) setState(() => _isInPiP = active);
+        }
+        if (!active) {
+          rc?.pipDidExit(); // PiP truly ended → deferred resume (iff intent recorded, iOS-only)
         }
       }
       final hostReply = await hostListener?.call(event);
@@ -1881,7 +1908,16 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
           // The WHOLE overlay (shell / feed-win / product-sheets / moments / gap-surfaces /
           // composer) is composed by the resolved design (granularity A). Default MinimalDesign
           // = the verbatim minimal composition (behavior unchanged); a host injects its own.
-          widget.config.design.playerOverlay(_overlayContext(theme)),
+          //
+          // flutter-android-pip-hide-chrome-reference-ui: on Android, while real OS PiP is
+          // active, this ENTIRE Stack child is elided — parity with Android's native
+          // `:livebuy-reference-ui` (`android-pip-hide-player-chrome-reference-ui`), which hides
+          // the whole overlay chrome layer (not per-surface) while in PiP. iOS is UNAFFECTED
+          // (see [overlayChromeVisibleInPip] doc) — its layer-based PiP never captures this
+          // chrome in the first place, so hiding it there would only regress a user still
+          // browsing the rest of the host app.
+          if (overlayChromeVisibleInPip(_isInPiP, defaultTargetPlatform))
+            widget.config.design.playerOverlay(_overlayContext(theme)),
         ],
       ),
     );
