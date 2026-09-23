@@ -55,6 +55,14 @@ object MomentFieldsBridge {
         // the FULL multi-narrating-product set is instead derived from [products] downstream, not
         // from this field). `null` when no product is currently being narrated.
         val narratingProduct: Map<String, Any?>?,
+        // rb-flutter-endscreen-live-duration — mirrors native `LBPlayerMomentState
+        // .liveDurationSeconds` (added by `endscreen-live-duration-android-core`): the raw second
+        // count of this live's currently-known playback duration, sourced from
+        // `StatContextStore.liveTime(videoId)`. `null` means no value has been obtained yet (a
+        // VOD, a Player instance that has not yet received a goods-poll response, or
+        // `enableStatReporting == false`) — raw second count, NOT a pre-formatted string;
+        // formatting is a reference-ui concern.
+        val liveDurationSeconds: Int? = null,
     )
 
     /**
@@ -84,6 +92,7 @@ object MomentFieldsBridge {
         )
         snapshot.nextItem?.let { body["nextItem"] = navItemToMap(it) }
         snapshot.narratingProduct?.let { body["narratingProduct"] = it }
+        snapshot.liveDurationSeconds?.let { body["liveDurationSeconds"] = it }
         return body
     }
 }

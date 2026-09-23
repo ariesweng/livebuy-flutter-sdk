@@ -309,6 +309,8 @@ class LivebuyFlutterPlayerView(
                 hotItems = state.hotItems,
                 products = state.products.map { productToMap(it) },
                 narratingProduct = state.narratingProduct?.let { productToMap(it) },
+                // rb-flutter-endscreen-live-duration
+                liveDurationSeconds = state.liveDurationSeconds,
             )
             if (MomentFieldsBridge.shouldEmit(snapshot, lastMomentFieldsSnapshot)) {
                 lastMomentFieldsSnapshot = snapshot
@@ -665,12 +667,35 @@ class LivebuyFlutterPlayerView(
         // this host Activity) to core's requestAutoPiP(). onActivityStopped (not onPause) is chosen
         // because onPause fires on ANY focus loss (e.g. a dialog) — too wide, would wrongly enter
         // PiP. Framework ActivityLifecycleCallbacks avoids any androidx.lifecycle dependency.
+        //
+        // flutter-android-pause-on-background-core: the SAME onActivityStopped/onActivityStarted
+        // pair also forwards pause()/play() — real-device evidence (`dumpsys activity activities`,
+        // `finishing=false`) proved the system PiP overlay's close(X) button does NOT call
+        // `Activity.finish()`, it only demotes the Activity to STOPPED, identical to a plain
+        // Home-press backgrounding. Before this, nothing in the bridge ever called pause() on
+        // backgrounding, so playback (and the underlying engine/process) ran indefinitely.
+        // `pausedByBackground` tracks whether THIS forwarder caused the pause, so onActivityStarted
+        // only auto-resumes a pause it caused itself — never overrides a pause the user/host caused
+        // independently. Mirrors native Android reference-ui's `PauseOnBackground` (`LivebuyPlayer.kt`).
+        var pausedByBackground = false
         val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
             override fun onActivityStopped(a: Activity) {
-                if (a === activity) view.requestAutoPiP()
+                if (a !== activity) return
+                view.requestAutoPiP()
+                val wasPlaying = view.playerState == LBPlayerState.PLAYING
+                if (AutoPipPolicy.shouldPauseOnStop(isInPiP = a.isInPictureInPictureMode, wasPlaying = wasPlaying)) {
+                    view.pause()
+                    pausedByBackground = true
+                }
+            }
+            override fun onActivityStarted(a: Activity) {
+                if (a !== activity) return
+                if (AutoPipPolicy.shouldResumeOnStart(pausedByThis = pausedByBackground)) {
+                    view.play()
+                }
+                pausedByBackground = false
             }
             override fun onActivityCreated(a: Activity, savedInstanceState: Bundle?) {}
-            override fun onActivityStarted(a: Activity) {}
             override fun onActivityResumed(a: Activity) {}
             override fun onActivityPaused(a: Activity) {}
             override fun onActivitySaveInstanceState(a: Activity, outState: Bundle) {}

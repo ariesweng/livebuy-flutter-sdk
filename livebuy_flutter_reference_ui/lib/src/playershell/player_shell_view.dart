@@ -220,10 +220,11 @@ enum TapZone { rewind, fastForward }
 /// `allowsDoubleTapLike` decision points, which decided a DIFFERENT pair of gestures that no
 /// longer exist). `= isFinishedLiveReplay || !(isLive || isUpcoming)` — kept as a 3-argument
 /// mirror of the design formula (parity iOS `isSeekable(isLive:isUpcoming:isFinishedLiveReplay:)`),
-/// even though [isUpcoming] is always `false` at `PlayerShellView`'s own gesture call site
-/// (`_buildUpcoming` composes no gesture detector at all, same established precedent as
-/// [allowsSwipeNav] / [showsPlaybackProgressBar] in this file) — 1:1 fidelity with the design
-/// formula costs nothing.
+/// even though [isUpcoming] is always `false` at the two call sites that actually invoke this
+/// function ([_handleVideoTap] / [_handleLongPressStart], both hardcode `isUpcoming: false`) —
+/// `_buildUpcoming` (rb-flutter-clean-mode-upcoming-not-triggered) composes NO gesture detector
+/// at all, so `isUpcoming` never reaches a real call site here. 1:1 fidelity with the design
+/// formula still costs nothing for the two real call sites.
 ///
 /// NOT seekable (a real live broadcast in progress, or its upcoming preview) → a short tap
 /// toggles `_cleanMode` IMMEDIATELY (no double-tap outcome to protect on this branch — LIVE has
@@ -239,6 +240,45 @@ bool isSeekable({
   required bool isFinishedLiveReplay,
 }) =>
     isFinishedLiveReplay || !(isLive || isUpcoming);
+
+/// PURE: whether a video-area SHORT TAP should be dispatched to [_PlayerShellViewState
+/// ._handleSeekableTap]'s double-tap-seek judgment, given BOTH [isSeekable]'s MAIN-CHANNEL
+/// classification AND whether the opening MP4 preroll is currently playing
+/// (`PlayerShellModel.startPhase == LBPStartPhase.splash`, rb-flutter-intro-double-tap-seek).
+///
+/// The intro MP4 is a short, finite, independently-seekable clip whose own playback state is
+/// completely orthogonal to the MAIN channel's `isLive` / `isFinishedLiveReplay` classification
+/// [isSeekable] gates on — a channel airing an opening MP4 splash is very commonly ALSO
+/// classified `isLive == true` for the broadcast that follows it. That is exactly why
+/// `_handleVideoTap` calling bare `isSeekable(...)` during splash always evaluated `false`:
+/// every tap fell straight into the `_toggleCleanMode()` branch and `_handleSeekableTap` (the
+/// double-tap-seek judgment + `_commitSeek`) was never reachable while the intro played — the
+/// reported bug this function fixes. [introSplashPlaying] therefore ORs onto [isSeekable]'s
+/// result — it never SUBSTITUTES for it, so every pre-existing call
+/// (`introSplashPlaying == false`, the only case before this change) is byte-identical.
+///
+/// [introSplashPlaying] MUST be fed `PlayerShellModel.startPhase == LBPStartPhase.splash` — MUST
+/// NOT be fed `PlayerShellModel.introPlaying` (`template?.upcoming.introPlaying`, keyed on
+/// `_lastState == 'startScreenPlaying' && hasStart && isUpcomingChannel(liveStatus, type)` — a
+/// STRICT SUBSET scoped to channels that were previously an upcoming scheduled live, the narrower
+/// scenario `rb-flutter-intro-cleanmode-bottombar-fix` addressed). An ordinary live/VOD channel
+/// airing an intro MP4 (`channel.start` non-empty) that was never "upcoming" leaves `introPlaying`
+/// `false` — using it here would silently miss the main case this change fixes. `startPhase ==
+/// LBPStartPhase.splash` is the channel-type-independent signal that covers every "some channel's
+/// opening MP4 is currently playing" case, and is the SAME signal `MomentsModel.introPosition` /
+/// `.introDuration` / `.introIsPlaying` (`rb-flutter-intro-progress-bar-interactive`) key their own
+/// "read the shared `playbackProgress` as the intro's own" behavior on — which is also why
+/// `_commitSeek`'s existing `_model.playbackPosition`/`.playbackDuration` computation needs NO
+/// change: during `splash` those getters already report the intro clip's own position/duration
+/// (same shared `DefaultPlaybackProgressState` field), not the main video's.
+///
+/// Deliberately scoped to [_PlayerShellViewState._handleVideoTap]'s short-tap dispatch ONLY —
+/// MUST NOT be threaded into [_PlayerShellViewState._handleLongPressStart]'s 2x-speed-hold gate,
+/// which stays governed by bare [isSeekable] alone (the long-press hold is a separate feature;
+/// extending it to the intro window is an independent, not-requested product decision, out of
+/// scope for this change). Unit-testable without a widget.
+bool isSeekableTap({required bool isSeekable, required bool introSplashPlaying}) =>
+    isSeekable || introSplashPlaying;
 
 /// PURE: which [TapZone] a video-area press landed in, given its horizontal offset from the
 /// video area's own left edge and the area's total width (rb-flutter-gesture-clean-mode-v2,
@@ -963,6 +1003,12 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// Toggle `_cleanMode` and report every flip up via [PlayerShellView.onCleanModeChange]
   /// (bubble pattern copied verbatim from [_setInfoPanel] / rb-ios-info-panel-not-covered-
   /// by-chat) so the container can hide the higher-layer LIVE合流聊天 feed while it is up.
+  /// Called from BOTH `_handleVideoTap`'s immediate-toggle branch / `_handleSeekableTap`'s
+  /// deferred timer AND the「退出乾淨模式」exit button's `onTap`
+  /// (fix-flutter-cleanmode-exit-button-notification-gap — the exit button previously bypassed
+  /// this with a bare `setState(() => _cleanMode = false)`, so the container was never notified
+  /// and stayed on stale `cleanMode == true`). Every call site that flips `_cleanMode` MUST go
+  /// through this method — never mutate the field directly elsewhere.
   void _toggleCleanMode() {
     setState(() => _cleanMode = !_cleanMode);
     widget.onCleanModeChange?.call(_cleanMode);
@@ -982,6 +1028,12 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   ///   [TapZone] can cancel it and seek instead — this is the exact "delay-commit + double-tap
   ///   cancels it" shape the retired `_handleLiveTap` / `_handleReplayTap` already used to
   ///   protect double-tap-to-LIKE; R29 reuses the same shape to protect double-tap-SEEK instead.
+  /// - **the opening MP4 preroll is currently playing** (`_model.startPhase ==
+  ///   LBPStartPhase.splash`, rb-flutter-intro-double-tap-seek): ALSO routes to
+  ///   [_handleSeekableTap], regardless of the bare [isSeekable] classification above — see
+  ///   [isSeekableTap]'s own doc comment for why the intro clip's own seekability is orthogonal to
+  ///   the main channel's LIVE/replay classification, and why this fixes double-tap-seek being
+  ///   structurally unreachable while a LIVE channel's intro plays.
   ///
   /// [tapX] is the tap's horizontal offset from the video area's own left edge
   /// (`TapUpDetails.localPosition.dx`, read at the `GestureDetector.onTapUp` call site) — only
@@ -989,7 +1041,12 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   void _handleVideoTap(double tapX) {
     final isLive = _model.isLive;
     final isFinishedLiveReplay = _model.isFinishedLiveReplay;
-    if (!isSeekable(isLive: isLive, isUpcoming: false, isFinishedLiveReplay: isFinishedLiveReplay)) {
+    final seekable = isSeekableTap(
+      isSeekable: isSeekable(
+          isLive: isLive, isUpcoming: false, isFinishedLiveReplay: isFinishedLiveReplay),
+      introSplashPlaying: _model.startPhase == LBPStartPhase.splash,
+    );
+    if (!seekable) {
       _toggleCleanMode();
       return;
     }
@@ -1827,8 +1884,9 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 // opener now that the rail no longer carries a `more` pill).
                 onTapHostBadge: () => _setInfoPanel(!_infoPanelOpen),
                 // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：隱藏 host pill、保留 minimize 鈕
-                // 原位（design.md D3）。upcoming 分支（下方 `_buildUpcoming`）維持不傳（預設 false）——
-                // `_cleanMode` 在該分支結構上不可達。
+                // 原位（design.md D3）。upcoming 分支（下方 `_buildUpcoming`）自己的 `PlayerHeaderBarView`
+                // call site 現在也轉發同一個 `_cleanMode`（rb-flutter-clean-mode-upcoming-intro-
+                // coverage 補上 `_buildUpcoming` 自己的 tap 手勢後，該分支已可達，不再是「維持不傳」）。
                 hideHostPill: _cleanMode,
                 // 右上角按鈕圖示 minimize ↔ close（rb-flutter-player-direct-close-button），純呈現
                 // by-value 旗標轉發，比照 titleScroll / showSubscribe 的既有轉發慣例。
@@ -1927,11 +1985,15 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // `LbTestKeys.cleanModeExitButton`（`m.isLive` 互斥，永遠只有一顆存在於渲染子樹）。
         // rb-flutter-player-shell-bottom-chrome-safearea 起，base 值之上疊加 `safeAreaBottom`
         // （取代先前「這裡刻意不新增 safe-area」的舊決策——見本 change design.md）。
+        // `onTap` 呼叫既有 `_toggleCleanMode()`（fix-flutter-cleanmode-exit-button-notification-gap
+        // ——取代先前直接 `setState(() => _cleanMode = false)` 繞過 `onCleanModeChange` 回調的寫法；
+        // 這顆鈕只在 `_cleanMode == true` 時渲染，`_toggleCleanMode()` 的 `!_cleanMode` 在此恆等於
+        // 切到 `false`，同時與視訊區域單擊退出共用同一個會正確通知容器的出口）。
         if (_cleanMode)
           Positioned(
             left: 14,
             bottom: cleanModeExitButtonBottomInset(safeAreaBottom, isLive: m.isLive),
-            child: _CleanModeExitButton(onTap: () => setState(() => _cleanMode = false)),
+            child: _CleanModeExitButton(onTap: _toggleCleanMode),
           ),
 
         // LIVE bottom bar — surfaces the design's `LBLiveBottomBar` at the bottom in the
@@ -2396,14 +2458,22 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   }
 
   /// The UPCOMING (直播預告 awaitingLive) chrome — the design's LIVE chrome
-  /// composition for upcoming. Background = [UpcomingCountdownView] (`live: false`
-  /// here so the golden paints the deterministic solid background — the host supplies
-  /// the real cover at runtime). Chrome = [PlayerHeaderBarView] (`isLive: false` so
+  /// composition for upcoming. Background = [UpcomingCountdownView], forwarding
+  /// `widget.live` (rb-flutter-upcoming-live-wiring-fix — previously hardcoded to
+  /// `live: false` here, which meant the golden's deterministic solid background was
+  /// ALSO what host runtime always showed, since the drop-in container assembles
+  /// `PlayerShellView` with `live: true`): `live == false` (golden / demo only) paints
+  /// the deterministic solid background; `live == true` (host runtime) paints the
+  /// cover placeholder / real cover photo + dark mask. Chrome = [PlayerHeaderBarView] (`isLive: false` so
   /// the LIVE pill / viewer count are hidden) + the SLIM [LiveBottomBarView]
   /// (`isUpcoming: true` → bag + spacer + share + like). It draws NEITHER the VOD side
   /// rail / floating bag / mini-cart NOR the [LiveOverlayChromeView] announce-pinned
   /// card / info panel. Flutter parity of iOS PlayerShellView's upcoming branch /
   /// Android `UpcomingScaffold`. Plain `Stack` / `Column` only (golden-deterministic).
+  ///
+  /// MUST NOT support `_cleanMode` (rb-flutter-clean-mode-upcoming-not-triggered — this branch
+  /// composes no gesture detector at all, so nothing in it can ever toggle `_cleanMode`): the
+  /// header host pill / logo and the SLIM bottom bar are ALWAYS shown, unconditionally.
   ///
   /// [safeAreaBottom] (rb-flutter-player-shell-bottom-chrome-safearea): `_buildContent`'s own
   /// `MediaQuery.of(context).padding.bottom` read, threaded in as a plain `double` — this method
@@ -2426,17 +2496,29 @@ class _PlayerShellViewState extends State<PlayerShellView> {
 
     return Stack(
       children: [
-        // Background: the upcoming countdown surface (date + big time). `live: false`
-        // → solid theme.background (deterministic golden, no remote cover load). The
-        // host supplies the real cover behind this chrome at runtime.
+        // Background: the upcoming countdown surface (date + big time). Forwards
+        // `widget.live` — SAME value every other sub-component in this method forwards
+        // (`PlayerHeaderBarView` below, `LiveBottomBarView`, etc.) — NOT a hardcoded
+        // literal (rb-flutter-upcoming-live-wiring-fix fixed a `live: false` literal
+        // bug here: since the drop-in container always assembles `PlayerShellView`
+        // with `live: true`, the hardcoded literal meant this background NEVER showed
+        // the cover placeholder + dark mask at runtime, only the golden's solid
+        // `theme.background`). `live == false` (golden / demo only) → solid
+        // `theme.background`, no cover load. `live == true` (host runtime) → cover
+        // placeholder (+ real cover photo once `m.upcomingCover` resolves) + dark mask.
         Positioned.fill(
           child: UpcomingCountdownView(
             theme: theme,
             scheduledStartAt: m.upcomingStartAt,
-            live: false,
+            live: widget.live,
             coverUrl: m.upcomingCover,
           ),
         ),
+
+        // rb-flutter-clean-mode-upcoming-not-triggered: 直播預告 MUST NOT 支援乾淨模式（訂正
+        // rb-flutter-clean-mode-upcoming-intro-coverage 的誤判——使用者原始回報描述的其實是期望
+        // 行為，不是 bug）。先前在這裡掛的 `GestureDetector` 已移除，這個分支重新回到完全沒有
+        // 手勢偵測的狀態。
 
         // Header pinned top (LIVE pill / viewer count hidden since isLive == false
         // for upcoming). The minimize / subscribe lambdas forward as usual.
@@ -2478,6 +2560,8 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 // fix-flutter-endscreen-close-button-blocked: forced true while the end
                 // screen is active — see resolveHeaderCloseButton above.
                 showCloseIcon: headerCloseButton.showCloseIcon,
+                // rb-flutter-clean-mode-upcoming-not-triggered — upcoming MUST NOT 支援乾淨模式，
+                // `hideHostPill` 不轉發，維持預設值 `false`。
               ),
             ),
           ],
@@ -2492,6 +2576,9 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // matching the design's `LBLiveBottomBar` (same component as the main branch's own call
         // site, see `liveBottomBarBottomInset`'s doc comment). `lift: 0.0` — the upcoming slim
         // state has no playback progress bar / `_scrubBarExpanded` concept.
+        //
+        // 永遠顯示，與乾淨模式無關（rb-flutter-clean-mode-upcoming-not-triggered）——upcoming 不
+        // 支援乾淨模式。
         Align(
           alignment: Alignment.bottomCenter,
           child: Padding(

@@ -6,6 +6,42 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.5.3 - 2026-09-23
+
+> **三套件版號 lockstep bump。** 存底自 iOS/Android `v4.22.0`（2026-09-23）相關批次，自 `2.5.2`
+> 以來累積 7 個內容項目（2 個新增能力 + 5 個修復，含本次追新的 Android bridge core pin），
+> **零 BREAKING**。
+
+### Added
+
+- 開場影片乾淨模式展開進度條改為完全可互動（可暫停/播放/拖曳 seek）並隱藏略過鈕
+  （`rb-flutter-clean-mode-upcoming-intro-coverage`、`rb-flutter-intro-progress-bar-
+  interactive`）。
+- 直播結束畫面顯示真實直播時長（`rb-flutter-endscreen-live-duration`，含原生 bridge 三處
+  補傳 `liveDurationSeconds`；`flutter-ui` template 層仍未透傳，見
+  `docs/reference-ui/parity-debt-ledger.md` #44，reference-ui 改用容器直通繞過）。
+
+### Fixed
+
+- 直播預告單擊訂正為完全不觸發乾淨模式（`rb-flutter-clean-mode-upcoming-not-triggered`）。
+- 直播結束時 `VodEndedCloseGate` 誤判為「VOD 播完無 next」而自動關閉整個播放器，補上 `isLive`
+  判斷（`fix-flutter-vod-ended-gate-live-endscreen`）。
+- 開場影片乾淨模式展開進度條播放/暫停按鈕熱區加大（`rb-flutter-intro-progress-bar-touch-
+  target`；拖動失去同步問題在 Flutter 原生實作不存在，未修）。
+- Android bridge：背景化 / PiP 關閉（X）補轉發暫停（`flutter-android-pause-on-background-
+  core`）。
+- **`flutter/android/build.gradle` core dependency pin 追新 `4.21.2` → `4.22.0`**
+  （`flutter-android-bridge-core-pin-4-22-0`）：現行 pin `4.21.2` 對本檔上面已記錄的
+  `直播結束畫面顯示真實直播時長`（`rb-flutter-endscreen-live-duration`）其實已經編譯不過——該
+  change 的 bridge Kotlin 原始碼已直接讀取 `LBPlayerMomentState.liveDurationSeconds`，這個
+  欄位只存在於 Android core `4.22.0`（`endscreen-live-duration-android-core`），`4.21.2`
+  不含，對真實已發布 remote artifact 編譯會失敗（monorepo CI 因 mavenLocal 一律從 HEAD 源碼
+  建置而測不出）。同批 `4.22.0` 也修好了本檔上面
+  `開場影片乾淨模式展開進度條改為完全可互動` 的原生行為缺口
+  （`togglePlayPause()`/`seek()`/`seekBy()` intro 播放期路由，`android-intro-player-seek-
+  progress-core`）——若不追新這個 pin，這兩個已經 apply 完成的 Flutter 側能力對真實已發布 core
+  artifact 會是死碼 / 編譯失敗風險。無 Dart 或 bridge Kotlin 行為改動，純 pin coordinate 提升。
+
 ## 2.5.2 - 2026-09-21
 
 > **三套件版號 lockstep bump。** 自 `2.5.1` 以來累積 3 個內容項目（1 個 Android bridge core pin

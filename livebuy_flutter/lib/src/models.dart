@@ -1528,6 +1528,20 @@ class LBPlayerMomentInfo {
   /// [products]'s doc comment); `null` on RN / older native binaries.
   final LBProduct? narratingProduct;
 
+  /// rb-flutter-endscreen-live-duration — mirrors native
+  /// `LBPlayerMomentState.liveDurationSeconds` (added by
+  /// `endscreen-live-duration-ios-core` / `endscreen-live-duration-android-core`): the
+  /// raw second count of this live's currently-known playback duration, sourced from
+  /// `StatContextStore.liveTime(videoId)`. `null` means no value has been obtained yet
+  /// (a VOD, a Player instance that has not yet received a goods-poll response, or
+  /// `enableStatReporting == false`) — UNLIKE [viewerCount]/[autoNextRemainingSeconds],
+  /// this field does NOT default to `0` when absent, preserving the "no value yet" vs.
+  /// "0 seconds" distinction. Raw second count, NOT a pre-formatted string — formatting
+  /// (e.g. `HH:MM:SS`, or the `'--:--:--'` fallback) is a reference-ui concern. Bridged
+  /// on Android and iOS (see [products]'s doc comment pattern); `null` on RN / older
+  /// native binaries that don't send this key.
+  final int? liveDurationSeconds;
+
   const LBPlayerMomentInfo({
     this.viewerCount = 0,
     this.isSubscribed = false,
@@ -1537,6 +1551,7 @@ class LBPlayerMomentInfo {
     this.hotItems = const [],
     this.products = const [],
     this.narratingProduct,
+    this.liveDurationSeconds,
   });
 
   /// Decode from the native `{"event":"momentStateChange", …}` EventChannel
@@ -1546,7 +1561,9 @@ class LBPlayerMomentInfo {
   /// [LBNavItem.fromMapOrNull]; `hotItems` via [_asHotItemList]; `products`
   /// via [_asProductList] (missing/null/non-List → `[]`, mirrors
   /// `LBPlayerChannelInfo.goods`); `narratingProduct` via [LBProduct.fromMap]
-  /// when present as a `Map`, else `null`.
+  /// when present as a `Map`, else `null`; `liveDurationSeconds` via a tolerant
+  /// num cast — missing/null/non-num → `null` (NOT `0`, see [liveDurationSeconds]'s
+  /// own doc comment).
   factory LBPlayerMomentInfo.fromMap(Map<Object?, Object?> map) =>
       LBPlayerMomentInfo(
         viewerCount: (map['viewerCount'] as num?)?.toInt() ?? 0,
@@ -1562,6 +1579,7 @@ class LBPlayerMomentInfo {
             ? LBProduct.fromMap(
                 Map<Object?, Object?>.from(map['narratingProduct'] as Map))
             : null,
+        liveDurationSeconds: (map['liveDurationSeconds'] as num?)?.toInt(),
       );
 }
 

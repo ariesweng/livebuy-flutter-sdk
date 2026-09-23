@@ -101,6 +101,30 @@ class MomentsModel {
   /// confused with (or merged into) that one.
   String get loadingCover => template?.loadingCover ?? '';
 
+  /// The opening MP4 preroll's OWN current playback position, in seconds
+  /// (rb-flutter-intro-progress-bar-interactive — supersedes the `0`-default-only posture
+  /// `rb-flutter-clean-mode-upcoming-intro-coverage` shipped). Mirrors `PlayerShellModel
+  /// .playbackPosition`'s EXACT pattern (`template?.playbackProgress.position`) — the SAME
+  /// shared `DefaultPlaybackProgressState` instance, not a second copy. This is correct because
+  /// the native side (iOS/Android core, fixed the same day as this change) now reports the intro
+  /// player's OWN progress through the identical `onPlaybackProgressChange` channel while
+  /// `startScreen.phase == splash`, and the main video's progress afterward — one shared field,
+  /// correct for both consumers depending on which phase is active. Demo default `0` (no
+  /// template bound), same as `PlayerShellSeeds.playbackPosition`.
+  double get introPosition => template?.playbackProgress.position ?? 0;
+
+  /// The opening MP4 preroll's OWN total duration, in seconds — companion to [introPosition].
+  /// Same source / same reasoning. Demo default `0`.
+  double get introDuration => template?.playbackProgress.duration ?? 0;
+
+  /// Whether the opening MP4 preroll is currently playing — companion to [introPosition] /
+  /// [introDuration], drives the clean-mode progress bar's play/pause glyph. Same source / same
+  /// reasoning. Demo default `false` (mirrors `PlayerShellSeeds.isPlaybackPlaying`; NOTE this
+  /// differs from `StartScreenView.introIsPlaying`'s own widget-level default of `true` — that
+  /// default only matters for direct `StartScreenView(...)` construction without a bound model,
+  /// a different call path from this template-bound getter).
+  bool get introIsPlaying => template?.playbackProgress.isPlaying ?? false;
+
   // -- Surface 2: EndScreenView ← auto-next countdown + next + hot ---------------
 
   /// Auto-next countdown snapshot (`endScreen.countdown`); non-null ONLY while

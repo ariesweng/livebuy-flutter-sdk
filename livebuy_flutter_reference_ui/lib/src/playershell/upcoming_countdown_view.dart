@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import '../productsheets/sheet_scaffold.dart' show liveProductImage;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 
@@ -17,9 +18,14 @@ import '../testing/lb_test_keys.dart';
 // background (see PlayerShellView's upcoming branch). Binds the template
 // DefaultUpcomingState (republished onto PlayerShellModel.upcomingStartAt /
 // upcomingCover):
-//   - live == true  -> cover placeholder background (NO Image.network — uses the
-//                      established deterministic gradient convention) + a
-//                      Color.black @ 0.35 dark mask (so the text reads),
+//   - live == true  -> cover placeholder gradient background, with the REAL channel
+//                      cover photo (`coverUrl`, once resolved) overlaid on top via the
+//                      shared `liveProductImage` primitive (rb-flutter-upcoming-live-
+//                      wiring-fix — parity iOS `UpcomingCountdownView.swift:44-52` +
+//                      Android `rb-android-upcoming-cover-real-image`), plus a
+//                      Color.black @ 0.35 dark mask on top of everything (so the text
+//                      reads). Blank / loading / failed `coverUrl` falls back to the
+//                      gradient placeholder alone (`liveProductImage`'s own gating).
 //   - live == false -> solid theme.background (golden-deterministic, no cover load).
 //   - centered Column: scheduled DATE (small ~14/600) + scheduled TIME (big ~56/800).
 //
@@ -27,13 +33,16 @@ import '../testing/lb_test_keys.dart';
 // scrollable, NO Canvas ring, NO ticking countdown / Timer, NO DateTime.now()
 // dependency. Date / time are pure string reformats of the backend publish_at (see
 // scheduledDate / scheduledTime below), so the live == false baseline is byte-stable.
+// The live == true path's real cover load never runs during the live == false golden
+// (it takes the separate `else` branch entirely), so the golden stays byte-identical.
 
 // MARK: - Cover placeholder gradient (live == true runtime background)
 //
-// Reuses the same deterministic cover gradient as the widget CarouselCardView's
-// thumbnail (top-left dark -> bottom-right darker), so a real network cover is NEVER
-// fetched in this layer; the host supplies the real video surface behind the chrome
-// at runtime.
+// The SAME deterministic cover gradient as the widget CarouselCardView's thumbnail
+// (top-left dark -> bottom-right darker) — passed to `liveProductImage` as its
+// `placeholder:`, so it stays visible whenever there is no resolved real cover yet
+// (blank `coverUrl`, in-flight load, or network error) and disappears under the real
+// photo once one decodes successfully.
 
 const Color _coverGradientTop = Color(0xFF3A3A44);
 const Color _coverGradientBottom = Color(0xFF111118);
@@ -57,12 +66,15 @@ class UpcomingCountdownView extends StatelessWidget {
   final String scheduledStartAt;
 
   /// Runtime opt-in. `false` (default — demo / golden) → solid `theme.background`,
-  /// no cover (deterministic). `true` (host runtime) → cover placeholder + 0.35 mask.
+  /// no cover (deterministic). `true` (host runtime) → cover placeholder (or the
+  /// real cover photo, see [coverUrl]) + 0.35 mask.
   final bool live;
 
   /// The video cover URL (`PlayerShellModel.upcomingCover` ← `channel.cover`).
-  /// Retained for host-supplied wiring; this layer paints a deterministic
-  /// placeholder, never a network image.
+  /// When [live] is true and this resolves to a non-blank http(s) URL, the real
+  /// cover photo is overlaid on the gradient placeholder via [liveProductImage]
+  /// (rb-flutter-upcoming-live-wiring-fix). Blank / unparsable / still-loading /
+  /// failed → the gradient placeholder stays visible (no blank region).
   final String coverUrl;
 
   const UpcomingCountdownView({
@@ -80,16 +92,22 @@ class UpcomingCountdownView extends StatelessWidget {
       key: LbTestKeys.momentCountdownRoot,
       fit: StackFit.expand,
       children: [
-        // Background: cover placeholder + dark mask (runtime); else solid background.
+        // Background: cover placeholder (or real cover photo once resolved) + dark
+        // mask (runtime); else solid background.
         if (live) ...[
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [_coverGradientTop, _coverGradientBottom],
+          liveProductImage(
+            live: live,
+            url: coverUrl,
+            placeholder: const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [_coverGradientTop, _coverGradientBottom],
+                ),
               ),
             ),
+            fit: BoxFit.cover,
           ),
           const ColoredBox(color: _darkMask),
         ] else

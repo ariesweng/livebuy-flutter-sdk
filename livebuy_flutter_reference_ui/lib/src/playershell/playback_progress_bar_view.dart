@@ -20,10 +20,12 @@ import '../testing/lb_test_keys.dart';
 // hit-area above it so a touch does not need to land precisely on the 3px line. EXPANDED state
 // (triggered by a touch-down, zero minimum distance — `onPanDown`, not `onPanStart`, which only
 // fires after Flutter's own pan-slop threshold): a full transport bar — a 28×28 play/pause icon
-// button (left) + a draggable 3px seek track (`Color(0x59FFFFFF)` background, white fill) with a
-// 14px circular white handle + shadow (right). The parent (`PlayerShellView`) owns WHEN it stays
-// expanded (2.8s after release) via [scrubBarExpanded]; this leaf only renders the two visual
-// states and reports raw gesture edges upward.
+// button (left, VISUAL frame unchanged — see [_playPauseHitAreaWidth] /
+// [_playPauseHitAreaHeight] for its separately-enlarged, invisible TAPPABLE region,
+// rb-flutter-intro-progress-bar-touch-target) + a draggable 3px seek track (`Color(0x59FFFFFF)`
+// background, white fill) with a 14px circular white handle + shadow (right). The parent
+// (`PlayerShellView`) owns WHEN it stays expanded (2.8s after release) via [scrubBarExpanded];
+// this leaf only renders the two visual states and reports raw gesture edges upward.
 //
 // GESTURE CARRIER: ONE `GestureDetector` (explicit key, fixed Stack-child position) spans the
 // FULL width in BOTH idle and expanded states — never itself swapped by the idle/expanded
@@ -114,10 +116,46 @@ const double _expandedTrailingPadding = 12;
 /// parity). (rb-flutter-progress-bar-expanded-ui-parity)
 const double _playPauseIconSize = 14;
 
-/// The play/pause button's own tappable frame (unchanged — already at parity with iOS
+/// The play/pause button's own VISUAL frame (unchanged — already at parity with iOS
 /// `playPauseButtonSize` / Android `playPauseButtonSize`, both `28`). Named so the icon-vs-button
 /// size distinction is explicit at every call site (rb-flutter-progress-bar-expanded-ui-parity).
+/// This is the PAINTED frame only — see [_playPauseHitAreaWidth] / [_playPauseHitAreaHeight] for
+/// the (larger) actual tappable region (rb-flutter-intro-progress-bar-touch-target).
 const double _playPauseButtonSize = 28;
+
+/// (rb-flutter-intro-progress-bar-touch-target) Enlarged, INVISIBLE tappable width for the
+/// play/pause button — [_playPauseButtonSize] (`28`) plus a `4`px rightward expansion into the
+/// unused gap before the expanded track begins. The gap available to expand into is exactly
+/// `_transportBarInset (36) - _playPauseButtonSize (28) == 8`px; `4` uses half of it, leaving a
+/// deliberate 4px buffer so the enlarged hit-area can never reach — let alone overlap — the
+/// track's own leading edge at local x == 36. This gap is narrower than the leading inset on
+/// iOS/Android/RN (`playButtonWidth + 10pt/dp gap` there vs `28 + 8` here), which is why Flutter's
+/// achievable expansion is smaller than a naive "match the other platforms' constant" approach.
+///
+/// LEFT / TOP / BOTTOM are deliberately NOT expanded, unlike a typical "pad every edge" touch-
+/// target fix:
+/// - LEFT: the button's `Positioned(left: 0, ...)` already sits flush against the outer `Stack`'s
+///   own left edge (`x == 0`), which in turn is the full width the parent `Column`
+///   (`crossAxisAlignment: CrossAxisAlignment.stretch`) hands this leaf — there is no unused
+///   space to its left within this widget. Flutter hit-testing is gated by each ancestor
+///   `RenderBox`'s OWN `size` before it ever delegates to a child (`RenderBox.hitTest`'s
+///   `size.contains(position)` check) — this holds regardless of `clipBehavior: Clip.none` on the
+///   `Stack` (`Clip.none` only affects PAINTING of overflow, not hit-testing), so a `Positioned`
+///   child with `left < 0` would paint outside the Stack's bounds but never receive touches there.
+///   Reaching further left would require growing the Stack's/this leaf's own width, which belongs
+///   to the caller's layout (`start_screen.dart` / `player_shell_view.dart`), not this shared leaf.
+/// - TOP / BOTTOM: the transport row's `SizedBox` height is exactly `28` while expanded — already
+///   IDENTICAL to [_playPauseButtonSize] — so the button already touches both the top and bottom
+///   of its own `Stack`, by the same size-gating logic above. Growing the row's own height would
+///   also re-center the separately-`Center`-aligned track/handle (`_expandedTrackVisual`) at a new
+///   vertical midpoint, visibly shifting it — forbidden by this change's "no visual-design change"
+///   constraint. So vertical hit-area growth is intentionally out of scope here.
+const double _playPauseHitAreaWidth = _playPauseButtonSize + 4;
+
+/// (rb-flutter-intro-progress-bar-touch-target) Enlarged tappable height for the play/pause
+/// button — identical to [_playPauseButtonSize] (no vertical room available; see
+/// [_playPauseHitAreaWidth]'s doc comment for why).
+const double _playPauseHitAreaHeight = _playPauseButtonSize;
 
 /// Minimum real-time gap (milliseconds) between two consecutive drag-triggered
 /// [PlaybackProgressBarView.onSeek] emissions during an in-progress drag (touch-down and
@@ -401,6 +439,13 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
                     // every tap. Occluding it via Stack z-order instead means a tap here never
                     // reaches the drag detector underneath at all.
                     if (widget.scrubBarExpanded)
+                      // (rb-flutter-intro-progress-bar-touch-target) Outer box is the enlarged,
+                      // invisible hit-area (`_playPauseHitAreaWidth` × `_playPauseHitAreaHeight`)
+                      // — the `GestureDetector` itself, so `onTap` fires anywhere within it. The
+                      // inner `SizedBox` is the UNCHANGED 28×28 visual frame, `topLeft`-aligned so
+                      // its painted pixels land at the exact same offset as before this change
+                      // (height is identical between the two boxes, so alignment only matters
+                      // horizontally).
                       Positioned(
                         left: 0,
                         top: 0,
@@ -409,12 +454,20 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
                           behavior: HitTestBehavior.opaque,
                           onTap: widget.onTogglePlayPause,
                           child: SizedBox(
-                            width: _playPauseButtonSize,
-                            height: _playPauseButtonSize,
-                            child: Icon(
-                              widget.isPlaying ? Icons.pause : Icons.play_arrow,
-                              color: Colors.white,
-                              size: _playPauseIconSize,
+                            width: _playPauseHitAreaWidth,
+                            height: _playPauseHitAreaHeight,
+                            child: Align(
+                              alignment: Alignment.topLeft,
+                              child: SizedBox(
+                                key: LbTestKeys.playbackProgressPlayPauseVisual,
+                                width: _playPauseButtonSize,
+                                height: _playPauseButtonSize,
+                                child: Icon(
+                                  widget.isPlaying ? Icons.pause : Icons.play_arrow,
+                                  color: Colors.white,
+                                  size: _playPauseIconSize,
+                                ),
+                              ),
                             ),
                           ),
                         ),

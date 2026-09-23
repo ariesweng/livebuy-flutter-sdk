@@ -85,24 +85,31 @@ dependencies {
     // pub.dev consumers). Distinct from this file's own `version` (the tv.livebuy.flutter plugin
     // artifact version) — different version axis.
     //
-    // Current pin: 4.21.0 (flutter-android-bridge-core-pin-4-21-0) — bumped from 4.19.0.
+    // Current pin: 4.22.0 (flutter-android-bridge-core-pin-4-22-0) — bumped from 4.21.2.
     //
-    // ⚠️ THIS IS A REGRESSION FIX, NOT ROUTINE VERSION TRACKING. `livebuy_flutter` v2.5.0
-    // shipped (2026-09-20, rn-flutter-release-prep-v2-5-0, commit 3d91391fe) with this pin
-    // still at 4.19.0 while this bridge (LivebuyPlayerViewFactory.kt) already referenced two
-    // NEWER core symbols:
-    //   - `LBLiveVideoSurfaceMode` (import + `playerView.liveVideoSurfaceMode =
-    //     LBLiveVideoSurfaceMode.TEXTURE_VIEW`) — introduced in android-v4.21.0 (commit
-    //     c3c6c203c); NOT present in android-v4.20.0.
-    //   - `playerView.beginScrub()` / `endScrub()` — introduced in android-v4.20.0 (commit
-    //     6f28fdd3a); present in both 4.20.0 and 4.21.0.
-    // Combined floor is 4.21.0 (the stricter of the two). The published v2.5.0 tag's pin
-    // (4.19.0) was two versions behind BOTH floors — both the import and the two method calls
-    // failed to resolve against the real published 4.19.0 remote artifact. This is the exact
-    // failure mode this comment has warned about for several bumps running, except this time
-    // it wasn't caught during apply-time verification — it shipped, and was only discovered
-    // when a downstream consumer (woocommerce-app) tried to upgrade to v2.5.0 and hit a build
-    // failure. v2.5.0 itself cannot be overwritten; a v2.5.1 patch carries this fix.
+    // ⚠️ THIS IS A REGRESSION FIX, NOT ROUTINE VERSION TRACKING (same failure class as the
+    // 4.19.0 → 4.21.0 bump below, this time caught BEFORE a downstream consumer hit it).
+    // The prior pin (4.21.2) was already compile-broken against the bridge's own HEAD Kotlin
+    // source for any consumer resolving the real published remote artifact:
+    //   - `LBPlayerMomentState.liveDurationSeconds` (Int?, read directly at
+    //     LivebuyPlayerViewFactory.kt:313 — `liveDurationSeconds = state.liveDurationSeconds`)
+    //     — introduced in android-v4.22.0 (commit a986ed566,
+    //     endscreen-live-duration-android-core); NOT present in android-v4.21.2. This bridge
+    //     reference itself already landed via commit f4028aded
+    //     (rb-flutter-endscreen-live-duration) — i.e. HEAD's bridge source has been compile-
+    //     broken against the real 4.21.2 remote AAR since that commit, only masked because
+    //     monorepo CI/bootstrap.sh always publish :livebuy to mavenLocal from HEAD source
+    //     under this same coordinate string, never the real remote artifact.
+    //   - `playerView.togglePlayPause()` / `seek()` / `seekBy()` / progress reporting did not
+    //     correctly route to the intro engine during intro (MP4 preroll) playback — fixed by
+    //     android-v4.22.0 (commit 8245bb849, android-intro-player-seek-progress-core). These
+    //     three method signatures already existed pre-4.22.0 (not a new import), so this is a
+    //     BEHAVIOR floor, not a compile-time symbol floor — javap cannot detect it, only the
+    //     commit ancestry (`git merge-base --is-ancestor 8245bb849 <tag>`) can. Without this
+    //     fix, the intro clean-mode expand progress bar's drag-to-seek and play/pause button
+    //     are silent no-ops (the exact bug reported by users).
+    // Combined floor is 4.22.0 (both land in the same release this time, unlike the
+    // 4.19.0 → 4.21.0 bump's split 4.20.0/4.21.0 floors).
     //
     // Prior pin history: 4.13.1 → 4.16.0 was an AD-HOC bump (commit 671cdcbe6, 2026-09-09,
     // diagnosing a Flutter live-chat delivery issue later found unrelated to this pin) made
@@ -110,7 +117,13 @@ dependencies {
     // (flutter-android-bridge-core-pin-4-17-0) backfilled that governance gap and was itself a
     // zero-core-change routine bump. 4.17.0 → 4.18.0 closed a real symbol gap
     // (`LivebuyPlayerView.isMuted`, already called by this bridge). 4.18.0 → 4.19.0 was back to
-    // a zero-core-impact routine bump.
+    // a zero-core-impact routine bump. 4.19.0 → 4.21.0
+    // (flutter-android-bridge-core-pin-4-21-0) was a real regression fix — the published
+    // v2.5.0 tag itself failed to compile for real consumers (`LBLiveVideoSurfaceMode` +
+    // `beginScrub()`/`endScrub()`), only discovered downstream after shipping; v2.5.1 patched
+    // it. 4.21.0 → 4.21.2 was another AD-HOC bump (commit a71b45e05,
+    // docs(rn-flutter-release-prep), 2026-09-21) made WITHOUT a dedicated
+    // flutter-android-bridge-core-pin-4-XX-0 change — same governance gap as 4.13.1 → 4.16.0.
     //
     // ⚠️ THIS PIN WILL GO STALE AGAIN — read before bumping it (or trusting it).
     // In the monorepo + CI this pin does NOT gate correctness: flutter-bridge-build.yml /
@@ -124,7 +137,7 @@ dependencies {
     // `flutter-distribution-core-pin-refresh` for the incident). Always re-check bridge Kotlin
     // source against the target version's CHANGELOG for new public API the bridge already
     // references, not just "did core change at all".
-    implementation "tv.livebuy:livebuy:4.21.2"
+    implementation "tv.livebuy:livebuy:4.22.0"
 
     // The bridge uses kotlinx.coroutines directly (CoroutineScope / Dispatchers / launch).
     // The SDK pulls it transitively but as `implementation`, so it is not on the

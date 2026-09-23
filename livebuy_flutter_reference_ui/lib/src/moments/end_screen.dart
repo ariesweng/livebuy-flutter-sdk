@@ -69,13 +69,18 @@ import '../testing/lb_test_keys.dart';
 // of ever building this widget — so this file itself needs NO `isLive` check of its
 // own; the fact that it was constructed at all already means "this was a live end".
 //
-// 直播時長 (liveDuration): `component-contracts/spec.md` documents `live_time`'s wire
-// semantics as UNKNOWN / unreliable ("SDK v1 不依此欄位做業務邏輯" — a measured
-// 58885224 for a 38s video) and NO platform threads it into any UI today. This surface
-// therefore accepts an OPTIONAL [liveDuration] string (host-fed, already formatted;
-// default `''`) and renders the design's own `'--:--:--'` fallback when it is empty —
-// `MomentsOverlayView` does not yet pass a real value (no reliable source exists), so
-// in practice this always renders the placeholder until a future change wires one.
+// 直播時長 (liveDuration): this surface accepts an OPTIONAL [liveDuration] string
+// (host-fed, already formatted; default `''`) and renders the design's own `'--:--:--'`
+// fallback when it is empty. rb-flutter-endscreen-live-duration wired a REAL data
+// source: native core's `LBPlayerMomentState.liveDurationSeconds` (`Int?`, raw seconds,
+// sourced from `StatContextStore.liveTime(videoId)` — supersedes the earlier `live_time`
+// wire field this doc comment used to cite as unreliable) is bridged through
+// `LBPlayerMomentInfo.liveDurationSeconds` and formatted by `live_buy_player.dart`'s
+// `formatEndScreenLiveDuration` (reusing the shared `formatPlaybackTimestamp` `HH:MM:SS`
+// formatter) before reaching `MomentsOverlayView.liveDuration` → this widget's
+// [liveDuration]. `null` (no value obtained yet — a VOD, a Player instance that hasn't
+// received a goods-poll response yet, or `enableStatReporting == false`) formats to `''`,
+// so the fallback below still covers that case.
 //
 // One-way data flow: this surface reads ONLY its passed-in values; it never reaches
 // back into `MomentsModel` / `DefaultPlayerTemplate`, holds NO second copy of

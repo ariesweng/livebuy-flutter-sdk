@@ -100,9 +100,18 @@ abstract final class LbTestKeys {
   /// different component).
   static const Key playbackProgressBar = ValueKey('lb_playback_progress_bar');
 
-  /// Transport-bar play/pause icon button (expanded state only).
+  /// Transport-bar play/pause icon button (expanded state only). Keys the OUTER, enlarged
+  /// invisible hit-area `GestureDetector` (`rb-flutter-intro-progress-bar-touch-target`) — NOT
+  /// the visual frame, see [playbackProgressPlayPauseVisual].
   static const Key playbackProgressPlayPause =
       ValueKey('lb_playback_progress_play_pause');
+
+  /// The play/pause button's unchanged 28×28 VISUAL frame (icon container), nested inside the
+  /// enlarged invisible hit-area keyed by [playbackProgressPlayPause]
+  /// (`rb-flutter-intro-progress-bar-touch-target`). Not itself hit-tested — its ancestor
+  /// `GestureDetector` handles taps for the whole enlarged region.
+  static const Key playbackProgressPlayPauseVisual =
+      ValueKey('lb_playback_progress_play_pause_visual');
 
   /// Transport-bar draggable seek track (expanded state only) — also the idle state's
   /// invisible drag hit-area, since both are the SAME structurally-stable gesture carrier.

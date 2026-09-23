@@ -203,6 +203,24 @@ class MomentsOverlayView extends StatefulWidget {
   /// cover images load. Parity iOS / Android / RN.
   final bool live;
 
+  /// 「乾淨模式」snapshot (rb-flutter-clean-mode-upcoming-intro-coverage, Requirement B)
+  /// — bubbled from `PlayerShellView`'s own `_cleanMode` gesture state, through the turnkey
+  /// container's `PlayerOverlayContext.cleanMode` (`live_buy_player.dart`'s `_cleanMode`,
+  /// already the SAME live value `reference_ui_design.dart` forwards to `FeedWinOverlayView`
+  /// today), forwarded straight through to `StartScreenView.cleanMode` (see [build]'s
+  /// `StartScreenView(...)` call site below) — only meaningful while `phase == .splash`, that
+  /// surface ignores it otherwise. `false` (DEFAULT — every EXISTING call site) keeps this
+  /// container's composition byte-identical to before this change. This container holds NO
+  /// state of its own for it (read-only snapshot, same one-way-data-flow discipline as [live]).
+  ///
+  /// NOTE — the opening MP4's own playback position/duration (`StartScreenView.introPosition`
+  /// / `.introDuration`) are DELIBERATELY NOT threaded here: there is no core-side data pipeline
+  /// yet that reports the intro player's own position back up through `MomentsModel` (that
+  /// pipeline is a cross-layer, core-touching follow-up — out of scope for a reference-ui-layer
+  /// change per OpenSpec's one-layer-per-change rule; see design.md). `StartScreenView` keeps
+  /// its `0`/`0` defaults for both, same as every platform's parallel same-batch sibling.
+  final bool cleanMode;
+
   // Host-wired interaction callbacks. The container owns NO core action — each is
   // forwarded to the host (which wires it to the core player exit). All optional;
   // a null callback means an inert CTA. The Model carries NO forwarder for these
@@ -248,11 +266,40 @@ class MomentsOverlayView extends StatefulWidget {
   /// Error / end-screen「返回」/「關閉」→ host → dismiss the moment / player.
   final void Function()? onDismiss;
 
+  /// Clean-mode intro progress bar play/pause tap (rb-flutter-intro-progress-bar-interactive) —
+  /// forwarded straight through to `StartScreenView.onTogglePlayPause`. Identical signature to
+  /// `PlayerShellView.onTogglePlayPause`; the turnkey container passes the SAME already-resolved
+  /// `PlayerOverlayContext.onTogglePlayPause` (`c.onTogglePlayPause`, already defaulted to
+  /// `_controller.togglePlayPause` in `live_buy_player.dart`) to both call sites — no new
+  /// default-resolution logic. `null` (default) → the bar's play/pause button is inert (demo /
+  /// golden / standalone).
+  final VoidCallback? onTogglePlayPause;
+
+  /// Clean-mode intro progress bar drag-seek (rb-flutter-intro-progress-bar-interactive) —
+  /// forwarded straight through to `StartScreenView.onSeek`. Identical signature to
+  /// `PlayerShellView.onSeek`; same reasoning as [onTogglePlayPause] — the SAME already-resolved
+  /// `c.onSeek` (defaulted to `_controller.seek`). `null` (default) → the bar's track is
+  /// draggable for local visual feedback only, no real seek fires.
+  final void Function(double seconds, {double? duration})? onSeek;
+
+  /// 空狀態「直播時長：HH:MM:SS」caption 資料源 (rb-flutter-endscreen-live-duration) — already
+  /// FORMATTED (host-fed, mirrors `EndScreenView.liveDuration`'s own contract; source is
+  /// `LBPlayerMomentInfo.liveDurationSeconds`, bridged from native `LBPlayerMomentState
+  /// .liveDurationSeconds` — see `live_buy_player.dart`'s `formatEndScreenLiveDuration`),
+  /// forwarded straight through to `EndScreenView.liveDuration` (see [build]'s `EndScreenView(...)`
+  /// call site below) — only meaningful while the 空狀態 (no-countdown) end-screen variant is
+  /// shown, that surface's own fallback (`'--:--:--'`) covers the rest. `''` (DEFAULT — every
+  /// EXISTING call site) keeps this container's composition byte-identical to before this change.
+  /// This container holds NO state of its own for it (read-only pass-through, same one-way-data-
+  /// flow discipline as [live]/[cleanMode]).
+  final String liveDuration;
+
   const MomentsOverlayView({
     super.key,
     this.template,
     required this.theme,
     this.live = false,
+    this.cleanMode = false,
     this.onSkip,
     this.onWatchNext,
     this.onPickHot,
@@ -260,6 +307,9 @@ class MomentsOverlayView extends StatefulWidget {
     this.onViewCart,
     this.onRetry,
     this.onDismiss,
+    this.onTogglePlayPause,
+    this.onSeek,
+    this.liveDuration = '',
   });
 
   @override
@@ -305,6 +355,13 @@ class _MomentsOverlayViewState extends State<MomentsOverlayView> {
         t.startScreen,
         t.endScreen,
         t.errorState,
+        // rb-flutter-intro-progress-bar-interactive: a progress tick during `splash` (the intro
+        // MP4's own position/duration/isPlaying, reported by native through the SAME shared
+        // `playbackProgress` the VOD progress bar reads — see `MomentsModel.introPosition`'s own
+        // doc comment) must re-run `_buildActiveMoment` so the clean-mode progress bar's fill
+        // stays live. Was NOT listened to before this change (introPosition/introDuration stayed
+        // static `0`/`0`, so there was nothing to react to).
+        t.playbackProgress,
       ],
     ];
 
@@ -368,6 +425,9 @@ class _MomentsOverlayViewState extends State<MomentsOverlayView> {
         onWatchNext: _handleWatchNext,
         onCancel: _handleCancel,
         onViewCart: _handleViewCart,
+        // rb-flutter-endscreen-live-duration — direct pass-through, see
+        // [MomentsOverlayView.liveDuration]'s own doc comment.
+        liveDuration: widget.liveDuration,
       );
     }
     if (m.startPhase != LBPStartPhase.done) {
@@ -382,6 +442,17 @@ class _MomentsOverlayViewState extends State<MomentsOverlayView> {
         // `EndScreenView` above (player-loading-cover-background-reference-ui-flutter).
         coverUrl: m.loadingCover,
         live: widget.live,
+        // rb-flutter-clean-mode-upcoming-intro-coverage — straight pass-through, see
+        // [MomentsOverlayView.cleanMode]'s own doc comment.
+        cleanMode: widget.cleanMode,
+        // rb-flutter-intro-progress-bar-interactive: real intro playback snapshot (supersedes
+        // the old always-`0`/`0` defaults) + the host-wired play/pause / seek control plane —
+        // see [MomentsModel.introPosition] / [onTogglePlayPause] / [onSeek]'s own doc comments.
+        introPosition: m.introPosition,
+        introDuration: m.introDuration,
+        introIsPlaying: m.introIsPlaying,
+        onTogglePlayPause: widget.onTogglePlayPause,
+        onSeek: widget.onSeek,
         onSkip: _handleSkip,
       );
     }

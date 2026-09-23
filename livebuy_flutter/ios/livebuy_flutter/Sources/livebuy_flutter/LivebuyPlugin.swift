@@ -766,6 +766,14 @@ private struct MomentFieldsSnapshot: Equatable {
     let hotItems: [HotItemFingerprint]
     let products: [GoodsFingerprint]
     let narratingProduct: GoodsFingerprint?
+    // rb-flutter-endscreen-live-duration — mirrors native `LBPlayerMomentState
+    // .liveDurationSeconds` (added by `endscreen-live-duration-ios-core`): the raw second
+    // count of this live's currently-known playback duration, sourced from
+    // `StatContextStore.liveTime(videoId:)`. `nil` means no value has been obtained yet (a
+    // VOD, a Player instance that has not yet received a goods-poll response, or
+    // `enableStatReporting == false`) — raw second count, NOT a pre-formatted string;
+    // formatting is a reference-ui concern. `Int?` is already `Equatable` for free.
+    let liveDurationSeconds: Int?
 
     init(_ state: LBPlayerMomentState) {
         viewerCount = state.viewerCount
@@ -776,6 +784,7 @@ private struct MomentFieldsSnapshot: Equatable {
         hotItems = state.hotItems.map(HotItemFingerprint.init)
         products = state.products.map(GoodsFingerprint.init)
         narratingProduct = state.narratingProduct.map(GoodsFingerprint.init)
+        liveDurationSeconds = state.liveDurationSeconds
     }
 }
 
@@ -1049,6 +1058,10 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
             }
             if let narrating = state.narratingProduct {
                 payload["narratingProduct"] = Self.lbProductToBody(narrating)
+            }
+            // rb-flutter-endscreen-live-duration — omit-when-nil, mirrors nextItem/narratingProduct.
+            if let liveDurationSeconds = state.liveDurationSeconds {
+                payload["liveDurationSeconds"] = liveDurationSeconds
             }
             LivebuyEventHandler.shared.emit(payload)
         }

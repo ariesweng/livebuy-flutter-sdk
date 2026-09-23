@@ -1,6 +1,9 @@
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show LBPStartPhase;
 
+import '../playershell/playback_progress_bar_view.dart' show PlaybackProgressBarView;
 import '../productsheets/sheet_scaffold.dart' show liveProductImage;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
@@ -51,7 +54,14 @@ import 'loading_mark_animation_view.dart';
 //                   chrome (LIVE / VOD) visible behind; the ONLY added UI is a
 //                   bottom-right「略過介紹」skip pill. NO 片頭 tag / muted indicator /
 //                   brand backdrop / lower-third title card / progress bar (all
-//                   removed — 開場影片有聲、不接管畫面).
+//                   removed — 開場影片有聲、不接管畫面). `cleanMode == true`
+//                   (rb-flutter-clean-mode-upcoming-intro-coverage, ADDED — no design.jsx
+//                   counterpart) flips this: the skip pill hides and an expanded, FULLY
+//                   INTERACTIVE progress bar (rb-flutter-intro-progress-bar-interactive —
+//                   supersedes the original read-only version; pause/resume + drag-seek,
+//                   bound to the intro's OWN `introPosition`/`introDuration`/`introIsPlaying`)
+//                   shows instead — see [StartScreenView.cleanMode]'s own doc comment,
+//                   including its SCOPE NOTE on end-to-end wiring.
 //   • `done`      → renders NOTHING (`SizedBox.shrink()`).
 //
 // RENDERING GOTCHAS (inherited from family-1/2/3 / iOS / Android): plain Column /
@@ -134,6 +144,25 @@ String? resolveLoadingCoverUrl({required bool live, required String? urlString})
   return trimmed;
 }
 
+// MARK: - Clean-mode splash progress bar bottom inset (pure)
+
+/// PURE: the `splash` phase's clean-mode progress-bar bottom inset
+/// (rb-flutter-clean-mode-upcoming-intro-coverage). A deliberate DUPLICATE of
+/// `player_shell_view.dart`'s `progressBarBottomSafeAreaInset` formula (same design source,
+/// `screens.jsx:420-424`'s `Math.max(0, safeArea.bottom - (platform==='android'?8:0))`) rather
+/// than an import of that family-1 file — this file (family-4 moments) has no existing dependency
+/// on `playershell/player_shell_view.dart` and this is a 2-line formula, not a stateful component;
+/// duplicating it here keeps the two families' implementation files independent, the same
+/// discipline this package already applies across iOS/Android/RN platform boundaries for
+/// formulas like [resolveLoadingCoverUrl]'s own design-parity siblings. A DIFFERENT drift here
+/// would only ever affect the visual bottom offset of one non-interactive bar — low blast radius —
+/// and any future divergence is easy to catch by diffing the two doc comments. Unit-testable
+/// without a widget.
+double splashProgressBarBottomInset(double safeAreaBottom, {required bool isAndroid}) {
+  final adjusted = safeAreaBottom - (isAndroid ? 8.0 : 0.0);
+  return adjusted < 0 ? 0 : adjusted;
+}
+
 /// The family-4 start-lifecycle surface. Dispatches by [phase]: a full-screen brand
 /// loader (`loading`), nothing (`buffering`), a lightweight bottom-right skip pill over
 /// the playing opening video (`splash`), or nothing (`done`). Read-only — it never skips
@@ -160,6 +189,70 @@ class StartScreenView extends StatelessWidget {
   /// (`moments_view.dart`).
   final bool live;
 
+  /// 「乾淨模式」snapshot (rb-flutter-clean-mode-upcoming-intro-coverage, Requirement B —
+  /// ADDED capability, no design.jsx counterpart: design's own `moments.jsx` splash component
+  /// carries no clean-mode concept at all, this is a Flutter-reference-ui EXTENSION, parity to
+  /// the sibling iOS/Android/RN changes landing the same behaviour in the same batch). Only
+  /// meaningful during [LBPStartPhase.splash] — the `loading` / `buffering` / `done` branches
+  /// ignore it entirely. `false` (DEFAULT — every EXISTING call site) keeps the `splash` branch
+  /// byte-identical to before this change: skip pill shown, no progress bar. `true` hides the
+  /// skip pill and shows a **fully interactive** expanded progress bar
+  /// (rb-flutter-intro-progress-bar-interactive — supersedes the prior read-only version) bound
+  /// to [introPosition] / [introDuration] / [introIsPlaying], reusing the SAME
+  /// `PlaybackProgressBarView` leaf `player_shell_view.dart`'s own clean-mode VOD transport bar
+  /// uses, UNMODIFIED and NOT wrapped in `IgnorePointer` — see [_splashScreen] /
+  /// [_cleanModeProgressBar].
+  ///
+  /// SCOPE NOTE: this surface only renders correctly GIVEN a `cleanMode` value — it does NOT
+  /// derive one itself (one-way data flow, per this file's own SUB-VIEW INPUT PATTERN doc
+  /// comment). A REAL value now reaches here end-to-end at runtime: `MomentsOverlayView`
+  /// (`moments_view.dart`) forwards its own `cleanMode` field verbatim to this parameter, and the
+  /// turnkey drop-in container (`reference_ui_design.dart`) forwards the SAME
+  /// `PlayerOverlayContext.cleanMode` it already forwards to `FeedWinOverlayView` — the live value
+  /// bubbled up from `PlayerShellView`'s own `_cleanMode` gesture state via `live_buy_player.dart`.
+  /// See design.md D8 (`rb-flutter-clean-mode-upcoming-intro-coverage`) for the full cleanMode
+  /// wiring chain, and this change's own design.md Decisions D2/D3
+  /// (`rb-flutter-intro-progress-bar-interactive`) for how [introPosition] / [introDuration] /
+  /// [introIsPlaying] / [onTogglePlayPause] / [onSeek] now reach here with real values instead of
+  /// staying at their old static defaults.
+  final bool cleanMode;
+
+  /// The opening MP4 preroll's OWN current playback position, in seconds — NOT the main video's
+  /// position. Only read while [cleanMode] is `true`; ignored (and the progress bar not composed
+  /// at all) otherwise. Default `0` (inert for any call site that doesn't also pass
+  /// `cleanMode: true`). At runtime (rb-flutter-intro-progress-bar-interactive) `MomentsOverlayView`
+  /// supplies the REAL value from `MomentsModel.introPosition`, which reads the SAME shared
+  /// `DefaultPlayerTemplate.playbackProgress` the VOD progress bar reads — native now reports the
+  /// intro player's own progress through that identical channel while `splash` is active.
+  final double introPosition;
+
+  /// The opening MP4 preroll's OWN total duration, in seconds — companion to [introPosition].
+  /// Default `0` (`playbackProgressRatio`'s own `duration <= 0` fallback renders an empty bar,
+  /// so an unwired default stays visually inert rather than throwing). Same real-value sourcing
+  /// as [introPosition] at runtime.
+  final double introDuration;
+
+  /// Whether the opening MP4 preroll is currently playing — companion to [introPosition] /
+  /// [introDuration] (rb-flutter-intro-progress-bar-interactive, ADDED). Drives the clean-mode
+  /// progress bar's play/pause glyph. Default `true` — source-compat with the prior hardcoded
+  /// visual for any existing `cleanMode: true` call site that doesn't also pass this explicitly
+  /// (see design.md D4 for why this widget-level default differs from
+  /// `MomentsModel.introIsPlaying`'s own `false` demo default). At runtime `MomentsOverlayView`
+  /// supplies the real value from `MomentsModel.introIsPlaying`.
+  final bool introIsPlaying;
+
+  /// Clean-mode progress bar play/pause tap (rb-flutter-intro-progress-bar-interactive, ADDED) —
+  /// forwarded verbatim to the composed `PlaybackProgressBarView.onTogglePlayPause`. Only
+  /// reachable while [cleanMode] is `true` (the bar isn't composed otherwise). `null` (default)
+  /// → inert (demo / golden / standalone), same SUB-VIEW INPUT PATTERN as [onSkip].
+  final VoidCallback? onTogglePlayPause;
+
+  /// Clean-mode progress bar drag-seek (rb-flutter-intro-progress-bar-interactive, ADDED) —
+  /// invoked with the resolved absolute seconds and [introDuration] enriched in, matching
+  /// `PlayerShellView.onSeek`'s exact `(seconds, {duration})` contract so a host can wire the SAME
+  /// handler to both. `null` (default) → inert.
+  final void Function(double seconds, {double? duration})? onSeek;
+
   /// Splash「略過介紹」open intent. This surface does NOT own the skip — the
   /// container / host funnels it to core `skipStart()`. `null` for demo / golden
   /// instances — the pill renders correctly action-free.
@@ -171,6 +264,12 @@ class StartScreenView extends StatelessWidget {
     required this.phase,
     this.coverUrl = '',
     this.live = false,
+    this.cleanMode = false,
+    this.introPosition = 0,
+    this.introDuration = 0,
+    this.introIsPlaying = true,
+    this.onTogglePlayPause,
+    this.onSeek,
     this.onSkip,
   });
 
@@ -271,18 +370,62 @@ class StartScreenView extends StatelessWidget {
   /// replaces the prior literal `bottom: 16`), matching the same convention every other
   /// bottom-pinned player-shell chrome in this package uses, so the pill clears the home
   /// indicator / Android gesture bar on a real device. `right: 12` is unaffected.
+  ///
+  /// [cleanMode] (rb-flutter-clean-mode-upcoming-intro-coverage, Requirement B) flips this
+  /// branch between its two mutually-exclusive presentations: `false` (default) draws ONLY the
+  /// skip pill, byte-identical to before this change; `true` draws NO skip pill and instead an
+  /// expanded, **fully interactive** [PlaybackProgressBarView]
+  /// (rb-flutter-intro-progress-bar-interactive) bound to [introPosition] / [introDuration] /
+  /// [introIsPlaying] — see [_cleanModeProgressBar].
   Widget _splashScreen(BuildContext context) {
     final double safeAreaBottom = MediaQuery.of(context).padding.bottom;
     return Stack(
       key: LbTestKeys.momentStart,
       fit: StackFit.expand,
       children: [
-        Positioned(
-          right: 12,
-          bottom: 16 + safeAreaBottom,
-          child: _skipPill(),
-        ),
+        if (!cleanMode)
+          Positioned(
+            right: 12,
+            bottom: 16 + safeAreaBottom,
+            child: _skipPill(),
+          ),
+        if (cleanMode) _cleanModeProgressBar(safeAreaBottom),
       ],
+    );
+  }
+
+  /// Clean-mode's expanded, **fully interactive** progress bar
+  /// (rb-flutter-intro-progress-bar-interactive — supersedes the read-only version
+  /// `rb-flutter-clean-mode-upcoming-intro-coverage` shipped) — bound to [introPosition] /
+  /// [introDuration] / [introIsPlaying] (the OPENING MP4's own playback, NOT the main video's, per
+  /// those fields' own doc comments). Reuses `PlaybackProgressBarView` UNMODIFIED (same widget
+  /// `player_shell_view.dart`'s own clean-mode VOD transport bar composes), forced to its expanded
+  /// transport-bar visual (`scrubBarExpanded: true`) — matching the VOD reference visual this
+  /// Requirement asks for ("視覺參考 VOD 展開態 transport bar"), now genuinely interactive to match
+  /// too: [onTogglePlayPause] / [onSeek] are forwarded straight to the leaf's own
+  /// `onTogglePlayPause` / `onSeek`, so tapping the play/pause button and dragging the track behave
+  /// exactly like the VOD bar. `isScrubbing` stays fixed `false` (no floating drag timestamp
+  /// readout — design.md D1: this bar is permanently forced-expanded, so there is no
+  /// collapse-timer state machine like the VOD bar's `PlayerShellView._isScrubbing` to make that
+  /// readout meaningful here; the drag itself still tracks the finger correctly via the leaf's own
+  /// internal `_dragRatio`, independent of `isScrubbing`). NOT wrapped in `IgnorePointer` — every
+  /// one of `PlaybackProgressBarView`'s own gesture handlers IS reachable now.
+  Widget _cleanModeProgressBar(double safeAreaBottom) {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: splashProgressBarBottomInset(safeAreaBottom,
+          isAndroid: defaultTargetPlatform == TargetPlatform.android),
+      child: PlaybackProgressBarView(
+        theme: theme,
+        position: introPosition,
+        duration: introDuration,
+        isPlaying: introIsPlaying,
+        isScrubbing: false,
+        scrubBarExpanded: true,
+        onTogglePlayPause: onTogglePlayPause,
+        onSeek: (seconds) => onSeek?.call(seconds, duration: introDuration),
+      ),
     );
   }
 

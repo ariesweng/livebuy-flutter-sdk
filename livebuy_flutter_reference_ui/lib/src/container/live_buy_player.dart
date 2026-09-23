@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' hide LivebuyPlayer;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart';
 
+import '../playershell/playback_progress_bar_view.dart' show formatPlaybackTimestamp;
 import '../reference_ui_theme.dart';
 import 'channel_chrome.dart';
 import 'chat_composer_bar.dart';
@@ -586,11 +587,16 @@ void _defaultVodEndedCloseScheduler(Duration delay, VoidCallback callback) {
 /// genuinely dead-end video is STILL the same `ended` call when the scheduled
 /// callback runs.
 ///
-/// **Why no `isLive` check.** LIVE ending NEVER surfaces `LBPlayerState.ended` at
-/// all — `live-end-no-next-endstate` routes it straight to the DISTINCT
-/// `endScreenShown` state, which `MomentsOverlayView` renders as the countdown /
-/// 空狀態 end screen instead. So `state == ended` is, by construction, ALWAYS the
-/// VOD/回放 path; this gate never fires for a live end.
+/// **`isLive` check (fix-flutter-vod-ended-gate-live-endscreen).** The original design here
+/// assumed LIVE ending NEVER surfaces `LBPlayerState.ended` at all. Real-device / real-stream
+/// testing disproved that: the native core's ENGINE-detected live-end path (e.g. IVS detecting
+/// the stream terminate) can surface a bare `.ended` BEFORE (or independent of) the poll-detected
+/// `live_end==1` path that promotes to `endScreenShown` — so `state == ended` is NOT, by
+/// construction, always the VOD/回放 path. `handleStateChange` now takes the CURRENT `isLive`
+/// value (captured into the debounce closure at the moment `.ended` arrives, per D2 in this
+/// change's design.md) and skips scheduling entirely when it is `true` — the core's
+/// `endScreenShown` promotion is responsible for showing the end screen for a LIVE video; this
+/// gate MUST NOT race it closed.
 class VodEndedCloseGate {
   VodEndedCloseGate({
     required this.onClose,
@@ -620,9 +626,19 @@ class VodEndedCloseGate {
 
   /// Feed one player state change. `state != ended` invalidates ANY pending
   /// check (covers both "auto-advance under way" and "simply still
-  /// playing/loading/etc"); `state == ended` schedules a NEW check.
-  void handleStateChange(LBPlayerState state) {
+  /// playing/loading/etc"); `state == ended` schedules a NEW check — UNLESS
+  /// [isLive] is `true` (fix-flutter-vod-ended-gate-live-endscreen), in which case this
+  /// `.ended` MUST NOT trigger an auto-close: it belongs to a LIVE video whose end screen
+  /// is the core's `endScreenShown` promotion to show, not this gate's job to close.
+  /// [isLive] is read at the moment THIS `.ended` arrives — the same instant the debounce
+  /// decision is made — so there is no later window in which a channel refresh could flip
+  /// it and invalidate an already-made decision (see design.md D2).
+  void handleStateChange(LBPlayerState state, {required bool isLive}) {
     if (state != LBPlayerState.ended) {
+      _pending = null;
+      return;
+    }
+    if (isLive) {
       _pending = null;
       return;
     }
@@ -1425,6 +1441,14 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// （開瀏覽器）讀取。`''` 表示尚未收到任何 `onChannelChange`、或該頻道 shop 無 serviceLink。
   String _lastServiceLink = '';
 
+  /// Latest channel `liveStatus == 1`（fix-flutter-vod-ended-gate-live-endscreen）：mirrored from
+  /// every `onChannelChange` tick (same pattern as [_lastServiceLink] / [_lastDiversion] below),
+  /// fed into [_vodEndedCloseGate] so it can tell a LIVE `.ended` apart from a VOD one. `false`
+  /// before the first `onChannelChange` tick arrives — a `.ended` cannot occur before playback has
+  /// started, and `onChannelChange` always fires before any playback state transition (same timing
+  /// assumption [_lastServiceLink] / [_lastDiversion] already rely on).
+  bool _lastIsLive = false;
+
   /// flutter-product-tap-diversion-wiring-reference-ui: mirrors `_lastServiceLink`'s pattern —
   /// every `onChannelChange` tick also captures `info.diversion` here, so the default
   /// `onProductTap` handler (below) can call
@@ -1432,6 +1456,15 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// diversion flag. `0` (in-app product panel) is the safe default before the first
   /// `onChannelChange` tick arrives — matching both native SDKs' own decode default.
   int _lastDiversion = 0;
+
+  /// rb-flutter-endscreen-live-duration: mirrors `_lastServiceLink`/`_lastDiversion`/`_lastIsLive`'s
+  /// pattern — every `onMomentStateChange` tick captures `info.liveDurationSeconds` here (bypassing
+  /// `DefaultPlayerTemplate`, same "容器自持狀態" precedent, see design.md D1). Fed into
+  /// [_overlayContext] via [formatEndScreenLiveDuration] to build `PlayerOverlayContext
+  /// .liveDuration`. `null` (before the first tick, or the core has no value yet — a VOD, or
+  /// `enableStatReporting == false`) formats to `''`, letting `EndScreenView`'s own `'--:--:--'`
+  /// fallback cover that case.
+  int? _liveDurationSeconds;
 
   late String _currentVideoId;
 
@@ -1580,7 +1613,8 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       if (event.eventName == LBEvent.videoStateChange) {
         final s = event.params['state'];
         if (s is String) {
-          _vodEndedCloseGate.handleStateChange(lbPlayerStateFromString(s));
+          _vodEndedCloseGate.handleStateChange(lbPlayerStateFromString(s),
+              isLive: _lastIsLive);
         }
       }
       // iOS-gated (rc != null): track the latest player state for the was-playing latch.
@@ -1878,6 +1912,10 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
             onChannelChange: (info) {
               _lastServiceLink = info.serviceLink;
               _lastDiversion = info.diversion;
+              // fix-flutter-vod-ended-gate-live-endscreen: mirror `liveStatus == 1` for
+              // `_vodEndedCloseGate` (same capture pattern as `_lastServiceLink`/`_lastDiversion`
+              // above).
+              _lastIsLive = info.liveStatus == 1;
               forwardChannelChangeToTemplate(info, LivebuyUI.playerTemplate);
             },
             // flutter-moment-products-wiring-reference-ui — live-updating product state
@@ -1889,8 +1927,17 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
             // top-level function ([forwardMomentProductsToTemplate]) for the same
             // unit-testability reason as [forwardChannelChangeToTemplate] /
             // [forwardSubtitleChangeToTemplate] above.
-            onMomentStateChange: (info) =>
-                forwardMomentProductsToTemplate(info, LivebuyUI.playerTemplate),
+            onMomentStateChange: (info) {
+              // rb-flutter-endscreen-live-duration: capture `info.liveDurationSeconds` into the
+              // container's own State (bypassing `DefaultPlayerTemplate`, same "容器自持狀態"
+              // precedent as `_lastServiceLink`/`_lastDiversion`/`_lastIsLive` above; see
+              // design.md D1) — `setState` only when it actually changed, same pattern as
+              // `onCleanModeChange`/`onInfoPanelOpenChange` below.
+              if (info.liveDurationSeconds != _liveDurationSeconds) {
+                setState(() => _liveDurationSeconds = info.liveDurationSeconds);
+              }
+              forwardMomentProductsToTemplate(info, LivebuyUI.playerTemplate);
+            },
             // fix-flutter-replay-chat-progressive-reveal-reference-ui — replay chat
             // progressive-reveal DATA plane. `handleReplayChatRevealed` existed on
             // `DefaultPlayerTemplate` since `flutter-replay-chat-history-reveal-template`, but
@@ -2181,6 +2228,9 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // event-interceptor spec). No `productId` — the end screen has no
       // single-product context.
       onViewCart: c.onViewCart ?? () => _controller.requestViewCart(),
+      // 空狀態「直播時長」caption 資料源 (rb-flutter-endscreen-live-duration) — see
+      // [formatEndScreenLiveDuration] / [_liveDurationSeconds]'s own doc comments.
+      liveDuration: formatEndScreenLiveDuration(_liveDurationSeconds),
       onRetry: c.onRetry ?? () => _controller.load(_currentVideoId),
       onDismiss: c.onDismiss,
       onLogin: c.onLogin,
@@ -2796,6 +2846,19 @@ void forwardMomentProductsToTemplate(
   template.handleProducts(info.products, active: info.narratingProduct);
   template.handleViewerCount(info.viewerCount);
 }
+
+/// rb-flutter-endscreen-live-duration — PURE: formats `LBPlayerMomentInfo
+/// .liveDurationSeconds` for `EndScreenView.liveDuration` (via `PlayerOverlayContext
+/// .liveDuration` / `MomentsOverlayView.liveDuration`). `null` (no value received yet — a
+/// VOD, a Player instance that hasn't received a goods-poll response yet, or
+/// `enableStatReporting == false`) → `''`, which renders the design's own `'--:--:--'`
+/// fallback; otherwise formats via the SAME `formatPlaybackTimestamp` the playback-
+/// progress-bar timestamp readout already uses (`HH:MM:SS`, hour segment always shown) —
+/// no separate formatting logic / duplicate test coverage.
+String formatEndScreenLiveDuration(int? liveDurationSeconds) =>
+    liveDurationSeconds == null
+        ? ''
+        : formatPlaybackTimestamp(liveDurationSeconds.toDouble());
 
 /// Default product-row tap forward (flutter-product-tap-diversion-wiring-reference-ui). Calls
 /// `DefaultPlayerTemplate.handleProductTap(product:diversion:)` DIRECTLY — the correct exit per

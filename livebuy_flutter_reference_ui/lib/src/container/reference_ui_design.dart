@@ -380,6 +380,12 @@ class PlayerOverlayContext {
   final VoidCallback onRetry;
   final VoidCallback? onDismiss;
 
+  /// 空狀態「直播時長：HH:MM:SS」caption 資料源 (rb-flutter-endscreen-live-duration) — already
+  /// FORMATTED (host-fed, mirrors `EndScreenView.liveDuration`'s own contract), threaded straight
+  /// through to `MomentsOverlayView.liveDuration`. Default `''` (every EXISTING call site) →
+  /// `EndScreenView`'s own `'--:--:--'` fallback, byte-identical to before this change.
+  final String liveDuration;
+
   // Gap-surfaces seams.
   final VoidCallback? onLogin;
   // rb-flutter-nickname-taken-inline-error: `Future<String?>` — `null` = the host accepted +
@@ -465,6 +471,7 @@ class PlayerOverlayContext {
     required this.onPickHot,
     required this.onCancel,
     this.onViewCart,
+    this.liveDuration = '',
     required this.onRetry,
     required this.onDismiss,
     required this.onLogin,
@@ -797,13 +804,28 @@ class MinimalDesign extends ReferenceUIDesign {
           // recommended / watch-next cards load real `cover` images (parity the shell's
           // live: true above, :337). rb-flutter-endscreen-recommended-video-cover.
           live: true,
+          // 乾淨模式（rb-flutter-clean-mode-upcoming-intro-coverage）：轉發自容器（design.md），
+          // SAME `c.cleanMode` value already threaded to `FeedWinOverlayView` above (:726) —
+          // reaches `StartScreenView`'s splash branch (skip-pill vs progress-bar), see
+          // `MomentsOverlayView.cleanMode`'s own doc comment.
+          cleanMode: c.cleanMode,
           onSkip: c.onSkip,
           onWatchNext: c.onWatchNext,
           onPickHot: c.onPickHot,
           onCancel: c.onCancel,
           onViewCart: c.onViewCart,
+          // 空狀態「直播時長」資料源 (rb-flutter-endscreen-live-duration) — already-formatted
+          // String, direct pass-through into `EndScreenView.liveDuration`.
+          liveDuration: c.liveDuration,
           onRetry: c.onRetry,
           onDismiss: c.onDismiss,
+          // Clean-mode intro progress bar play/pause + drag-seek control plane
+          // (rb-flutter-intro-progress-bar-interactive) — the SAME already-resolved
+          // `c.onTogglePlayPause` / `c.onSeek` already forwarded to `PlayerShellView` above
+          // (defaulted to `_controller.togglePlayPause` / `_controller.seek` in
+          // `live_buy_player.dart`); no new plumbing needed there.
+          onTogglePlayPause: c.onTogglePlayPause,
+          onSeek: c.onSeek,
         ),
         GapSurfacesOverlayView(
           template: c.template,
