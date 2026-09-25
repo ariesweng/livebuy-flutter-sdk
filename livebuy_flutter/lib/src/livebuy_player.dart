@@ -335,6 +335,30 @@ void _fireInstantiationHook(LivebuyPlayerController? controller) {
 void fireInstantiationHookForTesting(LivebuyPlayerController? controller) =>
     _fireInstantiationHook(controller);
 
+/// player-load-initial-seek (Flutter parity): builds the wire args map for
+/// the `load` method-channel call — `videoId` plus an optional one-shot
+/// initial-seek `startAt`. `startAt` is omitted entirely (not sent as
+/// `null`) when absent, matching this file's existing `sendChat` `eventId`
+/// convention. Shared by [LivebuyPlayerController.load] and
+/// `LivebuyPlayerCore`'s two platform-view load triggers
+/// (`_onPlatformViewCreated` / `didUpdateWidget`) so all three stay in sync.
+///
+/// All business semantics (intro-aware consumption, live-video silent-drop,
+/// one-shot apply, per-load override of any stale pending value) live in the
+/// already-completed native `load(videoId:startAt:)` (iOS) /
+/// `load(videoId, startAt)` (Android) — this bridge's only job is correct,
+/// crash-free forwarding.
+Map<String, dynamic> _loadArgs(String videoId, double? startAt) => {
+      'videoId': videoId,
+      if (startAt != null) 'startAt': startAt,
+    };
+
+/// Test-only accessor for [_loadArgs]. Per `docs/unit-test-discipline.md`
+/// `*ForTesting` naming; not part of the public API.
+@visibleForTesting
+Map<String, dynamic> loadArgsForTesting(String videoId, {double? startAt}) =>
+    _loadArgs(videoId, startAt);
+
 class LivebuyPlayerController {
   MethodChannel? _channel;
 
@@ -536,8 +560,18 @@ class LivebuyPlayerController {
               ? {'message': message, 'eventId': eventId}
               : {'message': message});
 
-  Future<void> load(String videoId) =>
-      _invoke('load', {'videoId': videoId});
+  /// Loads a video, optionally jumping to an initial seek position.
+  ///
+  /// `startAt` (in seconds) is a one-shot initial-seek intent, forwarded
+  /// as-is to the native `load(videoId:startAt:)` (iOS) /
+  /// `load(videoId, startAt)` (Android) methods — parity
+  /// `player-load-initial-seek-core` — which own all business semantics
+  /// (intro-aware consumption, live-video silent-drop, one-shot apply, and
+  /// per-load override of any stale pending value). This method's only job
+  /// is correct, crash-free forwarding; it does not reimplement any of that
+  /// logic.
+  Future<void> load(String videoId, {double? startAt}) =>
+      _invoke('load', _loadArgs(videoId, startAt));
   Future<void> unload() => _invoke('unload');
   Future<void> skipStart() => _invoke('skipStart');
   Future<void> cancelAutoNext() => _invoke('cancelAutoNext');
@@ -822,6 +856,19 @@ class LivebuyPlayerController {
 /// keeps working through a deprecated alias until v2.0.
 class LivebuyPlayerCore extends StatefulWidget {
   final String videoId;
+
+  /// One-shot initial seek position (seconds) applied when this video's
+  /// main content first starts playing (parity `player-load-initial-seek`;
+  /// see [LivebuyPlayerController.load] for the full semantics — intro-aware
+  /// consumption, live-video silent-drop, one-shot apply).
+  ///
+  /// Changing ONLY `startAt` (without `videoId`) does NOT by itself
+  /// re-trigger a `load` — `didUpdateWidget` reloads solely on `videoId`
+  /// change (see that method). `startAt` is a one-shot value tied to a
+  /// specific `load`, not independent persistent state; a host that wants to
+  /// re-seek an already-loaded video should call the existing
+  /// [LivebuyPlayerController.seek] instead.
+  final double? startAt;
   final bool showChat;
   final bool showProducts;
   final bool enablePiP;
@@ -895,6 +942,7 @@ class LivebuyPlayerCore extends StatefulWidget {
   const LivebuyPlayerCore({
     super.key,
     required this.videoId,
+    this.startAt,
     this.showChat = true,
     this.showProducts = true,
     this.enablePiP = true,
@@ -941,14 +989,20 @@ class _LivebuyPlayerCoreState extends State<LivebuyPlayerCore> {
     // flutter-player-instantiation-hook-core: fire the Dart-side per-instance
     // hook right after attach (so the controller can already round-trip).
     _fireInstantiationHook(controller);
-    _methodChannel.invokeMethod('load', {'videoId': widget.videoId});
+    _methodChannel.invokeMethod(
+        'load', _loadArgs(widget.videoId, widget.startAt));
   }
 
   @override
   void didUpdateWidget(LivebuyPlayerCore old) {
     super.didUpdateWidget(old);
+    // Reload gate stays keyed on `videoId` alone (see `startAt`'s doc
+    // comment) — `startAt` is a one-shot value for THIS load, not
+    // independent persistent state, so changing it alone must not
+    // re-trigger a reload.
     if (old.videoId != widget.videoId) {
-      _methodChannel.invokeMethod('load', {'videoId': widget.videoId});
+      _methodChannel.invokeMethod(
+          'load', _loadArgs(widget.videoId, widget.startAt));
     }
   }
 

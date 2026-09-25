@@ -1,11 +1,12 @@
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem;
 
+import '../moments/loading_mark_animation_view.dart';
 import '../reference_ui_theme.dart';
 import '../reference_ui_widget_embed_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'carousel_card.dart';
-import 'widget_model.dart' show WidgetGoods;
+import 'widget_model.dart' show WidgetGoods, WidgetSeeds;
 
 // VideoShopGridView — family-5 widget surface 2 (影音商城 / LBPVideoShop).
 //
@@ -201,6 +202,14 @@ class VideoShopGridView extends StatelessWidget {
   /// unconditionally, so it is the majority state rather than a rare one).
   final String? widgetBgcolor;
 
+  /// Whether the widget content's FIRST page fetch is currently in flight
+  /// (`WidgetModel.isInitialLoading`, widget-loading-placeholder,
+  /// rb-flutter-widget-loading-placeholder). `true` → the 2-col grid / footer
+  /// rendering below is skipped entirely in favor of a 1-row loading placeholder
+  /// (see [_loadingRow]). Default `false` (every pre-existing caller / demo /
+  /// golden) keeps existing baselines byte-identical.
+  final bool isInitialLoading;
+
   const VideoShopGridView({
     super.key,
     required ReferenceUITheme theme,
@@ -216,6 +225,7 @@ class VideoShopGridView extends StatelessWidget {
     this.onLoadMore,
     this.maxCards = _maxGridCards,
     this.autoLoadOnScroll = false,
+    this.isInitialLoading = false,
   }) : resolvedTheme = theme;
 
   /// Whether more pages remain (LBPVideoShop's `hasMore`). Mirrors the widget list's
@@ -240,6 +250,14 @@ class VideoShopGridView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Three-state dispatch (widget-loading-placeholder, rb-flutter-widget-loading-
+    // placeholder — design D4): first-load placeholder takes priority; then a
+    // confirmed-empty list hides the ENTIRE widget (a deliberate behavior change
+    // from the prior "empty list still shows an empty grid shell"); otherwise the
+    // pre-existing rendering (2-col grid + footer) is unchanged.
+    if (!isInitialLoading && videos.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Container(
       key: LbTestKeys.widgetGrid,
       width: double.infinity,
@@ -256,6 +274,9 @@ class VideoShopGridView extends StatelessWidget {
         builder: (context, constraints) {
           final cellWidth =
               ((constraints.maxWidth - _gridGap) / 2).clamp(0.0, double.infinity);
+          if (isInitialLoading) {
+            return _loadingRow(cellWidth);
+          }
           return Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -271,6 +292,50 @@ class VideoShopGridView extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+
+  // MARK: - Loading placeholder (widget-loading-placeholder,
+  // rb-flutter-widget-loading-placeholder)
+  //
+  // Mirrors the design's `LBPVideoShopLoadingRow` (widgets.jsx 275-297): ONE row
+  // (2 cells) of real `CarouselCardView`s laid out but painted invisible
+  // (`Opacity(opacity: 0)`, the Flutter analogue of CSS `visibility: hidden` —
+  // still occupies its full layout box, only painting is suppressed) establishes
+  // the placeholder's 1-row height, and a `LoadingMarkAnimationView` is centered
+  // over that box. Reusing REAL cards (rather than a hand-picked literal height)
+  // means the placeholder height automatically tracks any future change to the
+  // card's own layout.
+
+  /// The deterministic 2-card placeholder row (`WidgetSeeds.videos`'s first two) used
+  /// ONLY to size the loading placeholder — its `goods` is deliberately omitted (the
+  /// placeholder is never actually seen), so `CarouselCardView`'s existing null-goods
+  /// `below`-slot handling already gives a correct height regardless of `productCard`.
+  Widget _loadingRow(double cellWidth) {
+    final items = WidgetSeeds.videos.take(2).toList();
+    final children = <Widget>[];
+    for (var i = 0; i < items.length; i++) {
+      if (i > 0) children.add(const SizedBox(width: _gridGap));
+      children.add(CarouselCardView(
+        theme: theme,
+        item: items[i],
+        width: cellWidth,
+        productCard: productCard,
+      ));
+    }
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Opacity(
+          opacity: 0,
+          child: Row(
+            mainAxisSize: MainAxisSize.max,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: children,
+          ),
+        ),
+        const LoadingMarkAnimationView(),
+      ],
     );
   }
 

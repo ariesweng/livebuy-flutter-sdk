@@ -197,6 +197,13 @@ class WidgetOverlayView extends StatefulWidget {
   /// Carousel header「查看更多 ›」link → host (navigate to the full video list).
   final VoidCallback? onSeeMore;
 
+  /// HOST-FACING opt-out for the carousel header row (`rb-flutter-widget-carousel-header-
+  /// visibility`). `true` (DEFAULT — every pre-existing caller / demo / golden) preserves the
+  /// pre-existing content-driven header rule; `false` → the carousel's entire header (title +
+  /// subtitle + 查看更多 link) never renders. Forwarded ONLY to the `carousel` mode branch — grid
+  /// has no header concept (D4). Mirrors iOS / Android / RN's identically-named field.
+  final bool showsHeader;
+
   /// Floating / minimized close → host → core `simulateClose()` / dismiss. The host
   /// self-manages re-mount; this layer NEVER re-mounts itself.
   final VoidCallback? onClose;
@@ -213,6 +220,7 @@ class WidgetOverlayView extends StatefulWidget {
     this.onTapVideo,
     this.onLoadMore,
     this.onSeeMore,
+    this.showsHeader = true,
     this.onClose,
     this.onExpand,
   });
@@ -307,8 +315,15 @@ class _WidgetOverlayViewState extends State<WidgetOverlayView> {
           // Turnkey carousel SCROLLS horizontally over ALL videos (parity iOS
           // ScrollableCarouselView); the embedded/golden CarouselView default stays windowed.
           scrollable: true,
+          // First-page fetch in flight → CarouselView shows its loading placeholder
+          // instead of the card row (widget-loading-placeholder,
+          // rb-flutter-widget-loading-placeholder).
+          isInitialLoading: m.isInitialLoading,
           onTapVideo: routedTapVideo,
           onSeeMore: widget.onSeeMore,
+          // Host-facing header opt-out (rb-flutter-widget-carousel-header-visibility) — grid
+          // has no header concept, so this is NOT forwarded to ScrollableVideoShopView below.
+          showsHeader: widget.showsHeader,
         );
       case LBWidgetContentMode.grid:
         // Grid mode uses the lazy-load wrapper (rb-flutter-widget-grid-lazy-load): it scrolls
@@ -325,6 +340,10 @@ class _WidgetOverlayViewState extends State<WidgetOverlayView> {
           // which owns the single derivation point.
           widgetColor: m.widgetColor,
           widgetBgcolor: m.widgetBgcolor,
+          // First-page fetch in flight → forwarded through the scroll wrapper to the
+          // grid it wraps, which owns the single loading-placeholder rendering point
+          // (widget-loading-placeholder, rb-flutter-widget-loading-placeholder).
+          isInitialLoading: m.isInitialLoading,
           onTapVideo: routedTapVideo,
           onLoadMore: widget.onLoadMore,
         );

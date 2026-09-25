@@ -785,6 +785,37 @@ String? resolvedLiveNowShopId({
   return explicitShopId ?? configuredShopId;
 }
 
+// rb-flutter-player-initial-seek -----------------------------------------------------------
+//
+// Parity iOS `resolvedInitialSeekStartAt` shape / Android `resolvedLoadStartAt` / RN
+// `resolvedInitialSeekStartAt`. Flutter's `_LivebuyPlayerState.build()` has exactly ONE
+// construction call site for `LivebuyPlayerCore` (unlike iOS's two separate
+// `makeUIViewController`/`updateUIViewController` functions, which are naturally split by the
+// platform view API itself), so — like Android's Compose `LaunchedEffect` and RN's
+// `useEffect` — this container needs an EXPLICIT one-shot flag
+// ([_LivebuyPlayerState._hasAppliedInitialSeek]) to distinguish "this State instance's FIRST
+// `build()`" from "any later `build()` for the SAME instance" (a `videoId` prop change, a
+// `setState`, an ancestor rebuild, …). This pure function exists to keep that decision
+// independently unit-testable (docs/unit-test-discipline.md), separate from the one call site
+// that actually flips the flag.
+
+/// Resolves the one-shot `LivebuyPlayerConfig.initialSeekSeconds` forward for
+/// [LivebuyPlayerCore]'s `startAt` parameter. Pure / deterministic — the one call site
+/// ([_LivebuyPlayerState.build]) hands it its own already-read
+/// [_LivebuyPlayerState._hasAppliedInitialSeek] flag + `config.initialSeekSeconds`.
+///
+/// - `hasAppliedInitialSeek == true` (every `build()` AFTER the FIRST for this State instance)
+///   → ALWAYS `null`, regardless of [initialSeekSeconds] — the one-shot "container-creation-time
+///   product-page intent" MUST NOT leak into any later rebuild (a host `videoId` prop change
+///   reaching [LivebuyPlayerCore]'s own `didUpdateWidget`, or any other reason `build()` re-runs).
+/// - `hasAppliedInitialSeek == false` (the FIRST `build()`) → forwards [initialSeekSeconds]
+///   as-is (including `null`, when the host never set it — existing behavior, byte-identical).
+double? resolvedInitialSeekStartAt({
+  required bool hasAppliedInitialSeek,
+  required double? initialSeekSeconds,
+}) =>
+    hasAppliedInitialSeek ? null : initialSeekSeconds;
+
 /// Per-instance wiring for [LivebuyPlayer]. Every interaction callback is OPTIONAL with a
 /// documented sensible default — a host that passes nothing still gets a working player
 /// ("不 wire 也能跑"); passing a callback REPLACES that one default. Mirrors iOS
@@ -1178,6 +1209,31 @@ class LivebuyPlayerConfig {
   /// 寫死值 `Offset(12, 24)`。與姊妹容器 `LivebuyLiveEntryConfig.inset` 同一套語意。
   final Offset? inset;
 
+  // -- rb-flutter-player-initial-seek --------------------------------------------------------
+
+  /// Host-controlled ONE-SHOT initial seek position (seconds), applied ONLY on the FIRST
+  /// `build()` of the `LivebuyPlayer` STATE INSTANCE it is passed to (e.g. a host opening a
+  /// specific video from a product page and wanting playback to start at that product's intro
+  /// timestamp). DEFAULT `null` — existing behavior, byte-identical, no initial seek.
+  ///
+  /// Purely forwarded to the already-completed core public API [LivebuyPlayerCore.startAt] →
+  /// native `load(videoId:startAt:)` (iOS) / `load(videoId, startAt)` (Android)
+  /// (`player-load-initial-seek-core`) — this container layer MUST NOT re-implement any of
+  /// core's own judgment (intro-aware consumption, live silent-drop, one-shot apply, every
+  /// `load()` overwriting a stale pending value).
+  ///
+  /// Forwarding happens ONLY on that first `build()` (resolved via [resolvedInitialSeekStartAt]
+  /// against the State's own one-shot flag) — parity iOS / Android / RN
+  /// `LivebuyPlayerConfig.initialSeekSeconds`. EVERY OTHER switch path this container drives —
+  /// [_switchVideo] (hot-pick / `onGoLive` / watch-next), [_onSwipeVideoLoad] (swipe reload
+  /// bypass), `onRetry`'s default (reload the current video) — calls
+  /// `_controller.load(id)` DIRECTLY (bypassing `build()`'s `LivebuyPlayerCore` construction
+  /// entirely) and is UNCHANGED by this field; a host `videoId` prop change that reaches
+  /// [LivebuyPlayerCore]'s own `didUpdateWidget` also resolves to `null` here, so the
+  /// container-creation-time intent never leaks into any later rebuild for the SAME State
+  /// instance.
+  final double? initialSeekSeconds;
+
   const LivebuyPlayerConfig({
     this.eventListener,
     this.onMinimize,
@@ -1223,6 +1279,7 @@ class LivebuyPlayerConfig {
     this.onGoLive,
     this.position,
     this.inset,
+    this.initialSeekSeconds,
   });
 
   /// Returns a copy with `onMinimize` / `onDismiss` overridden (all other seams passed through).
@@ -1306,6 +1363,13 @@ class LivebuyPlayerConfig {
       position: position,
       inset: inset,
       onGoLive: onGoLive,
+      // rb-flutter-player-initial-seek — must likewise survive the collapsible presenter's
+      // re-composition (see the ⚠️ note above): this is a HAND-ENUMERATED field, so dropping it
+      // here would silently reset a host's one-shot initial-seek intent back to `null` on the
+      // `CollapsibleLivebuyPlayer` path while the plain `LivebuyPlayer` path still works. It is
+      // harmless to keep forwarding it every `copyWith` call — the container's own
+      // `_hasAppliedInitialSeek` one-shot flag (not this field) is what actually gates re-apply.
+      initialSeekSeconds: initialSeekSeconds,
     );
   }
 }
@@ -1518,6 +1582,15 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// the design context) so its swipe-to-switch-video gesture can gate on it. Wiring copied
   /// verbatim from [_cleanMode] / [_moreMenuOpen] above. Default false (off).
   bool _productSheetsPresented = false;
+
+  /// One-shot flag (rb-flutter-player-initial-seek): whether [resolvedInitialSeekStartAt] has
+  /// already been resolved+applied once for THIS State instance. [build] flips it to `true`
+  /// immediately after reading it for the [LivebuyPlayerCore] construction below — every
+  /// subsequent `build()` (any reason: `videoId` prop change, `setState`, ancestor rebuild, …)
+  /// then resolves to `null`, so `widget.config.initialSeekSeconds` never leaks into a later
+  /// switch. Default `false` (mirrors [_muted]'s "simple bool field default, no initState
+  /// assignment needed" convention).
+  bool _hasAppliedInitialSeek = false;
 
   /// Resolved core theme (`sdkConfig.theme`), fetched async in [initState]; null → minimal
   /// fallback (the resolver's default), the safe degradation until the fetch completes / if it
@@ -1847,6 +1920,18 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   @override
   Widget build(BuildContext context) {
     final theme = _resolveTheme();
+    // rb-flutter-player-initial-seek: resolve BEFORE constructing `LivebuyPlayerCore` below,
+    // then immediately flip the one-shot flag. This is safe to do here (rather than in
+    // [initState]) because `LivebuyPlayerCore` is an IMMUTABLE widget — the `startAt` value is
+    // frozen into the specific widget INSTANCE built by THIS `build()` call the moment its
+    // constructor runs below; flipping `_hasAppliedInitialSeek` afterwards only changes what a
+    // LATER `build()` call (constructing a BRAND NEW `LivebuyPlayerCore` instance) resolves,
+    // never this one's already-frozen value.
+    final double? initialSeekStartAt = resolvedInitialSeekStartAt(
+      hasAppliedInitialSeek: _hasAppliedInitialSeek,
+      initialSeekSeconds: widget.config.initialSeekSeconds,
+    );
+    _hasAppliedInitialSeek = true;
     // rb-flutter-player-material-ancestor — LivebuyPlayer is a public drop-in container that
     // hosts may mount anywhere (a bare Stack sibling of Scaffold, Navigator.push, an
     // OverlayEntry, …), so it MUST NOT rely on the caller happening to provide a `Material`
@@ -1872,6 +1957,9 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
           const _PlayerOpaqueBackdrop(),
           LivebuyPlayerCore(
             videoId: widget.videoId,
+            // rb-flutter-player-initial-seek — resolved above; `null` on every `build()` after
+            // this State instance's first (see [resolvedInitialSeekStartAt]'s doc).
+            startAt: initialSeekStartAt,
             controller: _controller,
             enablePiP: true,
             // VOD-2 playback-progress DATA plane (rb-flutter-vod-playback-progress-bar) — was

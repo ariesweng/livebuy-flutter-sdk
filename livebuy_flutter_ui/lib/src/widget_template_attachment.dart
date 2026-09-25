@@ -33,7 +33,8 @@ class WidgetTemplateAttachment {
   /// created and reading this getter. Through it the host reads the bindable,
   /// observable widget content view-model — [DefaultWidgetTemplate.content] (a
   /// `ChangeNotifier`: `videos` / `mode` / `currentPage` / `lastPage` /
-  /// `liveVideo` / `widgetColor` / `widgetBgcolor` / `productCard`) — and binds it with
+  /// `liveVideo` / `widgetColor` / `widgetBgcolor` / `productCard` /
+  /// `isInitialLoading`) — and binds it with
   /// `ListenableBuilder`. The template's constructor and `handle*` ingestion
   /// methods are NOT for host use (the host consumes state; it does not build the
   /// instance or feed events). Parity with the player `TemplateAttachment.template`.

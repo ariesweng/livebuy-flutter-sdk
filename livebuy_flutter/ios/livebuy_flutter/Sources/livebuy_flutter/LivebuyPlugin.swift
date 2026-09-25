@@ -1304,7 +1304,15 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
         let args = call.arguments as? [String: Any]
         switch call.method {
         case "load":
-            if let videoId = args?["videoId"] as? String { playerVC.load(videoId: videoId) }
+            // player-load-initial-seek (Flutter parity): `startAt` is an
+            // optional one-shot initial-seek intent, forwarded as-is to the
+            // existing `playerVC.load(videoId:startAt:)`, which owns all
+            // business semantics (intro-aware consumption, live-video
+            // silent-drop, one-shot apply). Pure forwarding — no logic here.
+            if let videoId = args?["videoId"] as? String {
+                let startAt = args?["startAt"] as? Double
+                playerVC.load(videoId: videoId, startAt: startAt)
+            }
             result(nil)
         // Legacy method name preserved as alias for backward compat.
         case "release":

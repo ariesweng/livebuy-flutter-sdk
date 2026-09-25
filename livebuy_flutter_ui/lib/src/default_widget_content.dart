@@ -89,6 +89,21 @@ class LBWidgetContent {
   /// the `fetchWidget` map fed to [DefaultWidgetContent.handleWidgetSnapshot]).
   final String? productCard;
 
+  /// Whether widget content's FIRST page fetch is currently in flight
+  /// (widget-loading-placeholder-flutter). Mirrors design `widgets.jsx` D9's
+  /// `LBPCarousel.loading` / `LBPVideoShop.initialLoading` — a DIFFERENT concept
+  /// from `LBPVideoShop`'s own, independent "loading more" pagination spinner
+  /// (a reference-ui-local mechanism that does NOT read this field).
+  ///
+  /// Unlike every other field on this snapshot, `isInitialLoading` has NO core
+  /// state or bridge wire key backing it: it is not data a fetch RESPONSE
+  /// carries, it IS the time window before a response exists. So it is driven
+  /// PURELY by an explicit host call ([DefaultWidgetContent.handleWidgetInitialLoading])
+  /// rather than being read off [DefaultWidgetContent.handleWidgetSnapshot] like
+  /// [productCard] is. Defaults to `false` — nothing is "loading" until a host
+  /// explicitly says so.
+  final bool isInitialLoading;
+
   const LBWidgetContent({
     this.videos = const [],
     this.mode = LBWidgetContentMode.carousel,
@@ -98,6 +113,7 @@ class LBWidgetContent {
     this.widgetColor = 1,
     this.widgetBgcolor,
     this.productCard,
+    this.isInitialLoading = false,
   });
 
   LBWidgetContent copyWith({
@@ -109,6 +125,7 @@ class LBWidgetContent {
     int? widgetColor,
     Object? widgetBgcolor = _sentinel,
     Object? productCard = _sentinel,
+    bool? isInitialLoading,
   }) =>
       LBWidgetContent(
         videos: videos ?? this.videos,
@@ -127,6 +144,9 @@ class LBWidgetContent {
         productCard: identical(productCard, _sentinel)
             ? this.productCard
             : productCard as String?,
+        // Plain `??` (not sentinel) — `bool` has no "explicit null" state to
+        // distinguish from "omitted", same pattern as `currentPage`/`widgetColor`.
+        isInitialLoading: isInitialLoading ?? this.isInitialLoading,
       );
 
   static const Object _sentinel = Object();
@@ -141,7 +161,8 @@ class LBWidgetContent {
       identical(other.liveVideo, liveVideo) &&
       other.widgetColor == widgetColor &&
       other.widgetBgcolor == widgetBgcolor &&
-      other.productCard == productCard;
+      other.productCard == productCard &&
+      other.isInitialLoading == isInitialLoading;
 
   @override
   int get hashCode => Object.hash(
@@ -153,6 +174,7 @@ class LBWidgetContent {
         widgetColor,
         widgetBgcolor,
         productCard,
+        isInitialLoading,
       );
 }
 
@@ -248,6 +270,26 @@ class DefaultWidgetContent extends ChangeNotifier {
       widgetColor: colors.widgetColor,
       widgetBgcolor: colors.widgetBgcolor,
     ));
+  }
+
+  /// Explicit host-driven mutator for [LBWidgetContent.isInitialLoading]
+  /// (widget-loading-placeholder-flutter). Unlike [handleWidgetSnapshot] /
+  /// [handleWidgetColors], this field has NO snapshot-wire source — the Flutter
+  /// widget bridge only ever delivers a ONE-SHOT snapshot once a `fetchWidget`
+  /// response lands (design D7), there is no wire moment for "request just
+  /// started". So the reference-ui call site (`loadWidgetPage`) is the SOLE
+  /// caller: it MUST call this with `true` immediately before `await
+  /// fetchWidget(...)` for the first page, and with `false` once that call
+  /// settles — on BOTH the success and the failure path (e.g. in a `finally`),
+  /// or the view-model is left stranded showing a permanent loading placeholder.
+  ///
+  /// [handleWidgetSnapshot] deliberately does NOT auto-clear this flag: the two
+  /// mutators are orthogonal so a failed fetch (which never reaches
+  /// `handleWidgetSnapshot`) can still be recovered by the host. Diff-then-
+  /// notify, matching every other mutator here.
+  @internal
+  void handleWidgetInitialLoading(bool loading) {
+    _apply(_current.copyWith(isInitialLoading: loading));
   }
 
   /// Update just the floating `isClosed` derivation (host echoes `simulateClose`

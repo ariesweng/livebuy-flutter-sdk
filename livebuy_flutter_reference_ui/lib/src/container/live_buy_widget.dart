@@ -66,6 +66,14 @@ class LivebuyWidgetConfig {
   /// Carousel「查看更多 ›」header link. Default: `null` → inert.
   final VoidCallback? onSeeMore;
 
+  /// Whether the carousel mode's header row (title + subtitle + 查看更多 link) is allowed to
+  /// render at all (`rb-flutter-widget-carousel-header-visibility`). Default `true` (every
+  /// pre-existing caller) preserves the current always-on-when-content-exists behavior. `false` →
+  /// the host opts the WHOLE header row out — no need to bypass this turnkey container and
+  /// assemble `CarouselView` directly just to pass an empty `title`. No effect in grid mode (no
+  /// header concept there). Mirrors iOS / Android / RN's identically-named field.
+  final bool showsHeader;
+
   /// Called after the first load with the ordered video feed (e.g. to drive a
   /// player swipe feed). Default: none.
   final void Function(List<LBVideoItem> videos)? onVideosChanged;
@@ -108,6 +116,7 @@ class LivebuyWidgetConfig {
     this.hostOptions,
     this.onTapVideo,
     this.onSeeMore,
+    this.showsHeader = true,
     this.onVideosChanged,
     this.goodsFor,
     this.showsDemoFallbackWhenEmpty = false,
@@ -200,14 +209,17 @@ class _LivebuyWidgetState extends State<LivebuyWidget> {
     if (_loading) return;
     _loading = true;
     try {
-      final r = await loadWidgetPage(
+      // Brackets the fetch with `handleWidgetInitialLoading(true)` /`(false)` —
+      // widget-loading-placeholder — so the carousel / grid surfaces can show a
+      // loading placeholder for exactly the window the first page is in flight.
+      // Success AND failure both clear the flag (see `loadFirstWidgetPage`'s own
+      // doc comment); load-more (`_onLoadMore`) and the periodic refresh
+      // (`_startRefresh`) deliberately do NOT touch it (design D5).
+      final r = await loadFirstWidgetPage(
         fetchWidget: _fetchWidget,
         template: template,
         shopId: widget.shopId,
         mode: widget.mode,
-        accumulated: const <Object?>[],
-        page: 1,
-        append: false,
       );
       if (!mounted) return;
       _accumulated = r.videoMaps;
@@ -332,6 +344,9 @@ class _LivebuyWidgetState extends State<LivebuyWidget> {
       ),
       onSeeMore: widget.config.onSeeMore,
       onLoadMore: _onLoadMore,
+      // Host-facing header opt-out (rb-flutter-widget-carousel-header-visibility) — raw
+      // forward; only the carousel-mode surface consumes it.
+      showsHeader: widget.config.showsHeader,
     );
     final design = widget.config.design;
     final overlay = widget.mode == WidgetContainerMode.grid

@@ -87,6 +87,13 @@ class ScrollableVideoShopView extends StatefulWidget {
   /// RAW `widget_bgcolor` — same pass-through contract as [widgetColor].
   final String? widgetBgcolor;
 
+  /// PASS-THROUGH parameter, same contract as [productCard] / [widgetColor]: this
+  /// wrapper decides nothing about loading state itself — it just forwards
+  /// `WidgetModel.isInitialLoading` verbatim to the wrapped [VideoShopGridView],
+  /// which owns the single loading-placeholder rendering point
+  /// (widget-loading-placeholder, rb-flutter-widget-loading-placeholder).
+  final bool isInitialLoading;
+
   final void Function(LBVideoItem item)? onTapVideo;
   final VoidCallback? onLoadMore;
 
@@ -101,6 +108,7 @@ class ScrollableVideoShopView extends StatefulWidget {
     this.productCard,
     this.widgetColor = 1,
     this.widgetBgcolor,
+    this.isInitialLoading = false,
     this.onTapVideo,
     this.onLoadMore,
   });
@@ -155,6 +163,9 @@ class _ScrollableVideoShopViewState extends State<ScrollableVideoShopView> {
           // point (rb-flutter-widget-embed-colors FD4).
           widgetColor: widget.widgetColor,
           widgetBgcolor: widget.widgetBgcolor,
+          // Loading-placeholder state forwarded RAW — the wrapped grid owns the single
+          // rendering point (rb-flutter-widget-loading-placeholder).
+          isInitialLoading: widget.isInitialLoading,
           onTapVideo: widget.onTapVideo,
           onLoadMore: widget.onLoadMore,
           // Render ALL videos (no fixed cap) + drop the manual footer button — the wrapper

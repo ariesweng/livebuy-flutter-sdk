@@ -797,46 +797,11 @@ class ProductRow extends StatelessWidget {
 
 // MARK: - `.row`-only sub-widgets (moved verbatim from `ProductListSheet`)
 
-/// out_soon / hot 小徽章.
-class _StatusPill extends StatelessWidget {
-  final ReferenceUITheme theme;
-  final String text;
-  final Color color;
-
-  const _StatusPill({
-    required this.theme,
-    required this.text,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 6),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Text(
-          text,
-          style: TextStyle(
-            color: const Color(0xFFFFFFFF),
-            fontSize: 10 * theme.fontScale,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 // MARK: - Name-tag pill (design R39, rb-flutter-product-row-name-tag-system)
 //
 // 商品名稱前標籤——直播價 / 即將售完 / 熱賣中共用同一個小圓角 widget（`BorderRadius.circular
-// (3)`，MUST NOT 為全圓——與上方 `_StatusPill`（全圓，此後在本檔案已無呼叫點，保留但不重用）
-// 刻意區分開）。對齊設計來源 `sdk-components.jsx` 共用的 `nameTagEl` 樣式。
+// (3)`，MUST NOT 為全圓——刻意與圓形徽章樣式區分開）。對齊設計來源 `sdk-components.jsx` 共用的
+// `nameTagEl` 樣式。
 
 /// 商品名稱前小圓角標籤。[bg] 為 `null` 時填充透明（直播價的外框變體）；[border] 為 `null` 時
 /// 無邊框（即將售完 / 熱賣中的實心變體）。

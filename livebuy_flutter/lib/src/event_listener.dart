@@ -40,7 +40,9 @@ class LBEventReply {
   const LBEventReply._(this._map);
 
   /// For sync-interceptor events: tell the SDK "I'm handling this, skip your default UI."
-  /// Applies to `AUTH_REQUIRED`, `PRODUCT_CLICK`, `VIDEO_SHARE_REQUEST`, `INFO_CUSTOMER_SERVICE`.
+  /// Applies to `AUTH_REQUIRED`, `PRODUCT_CLICK`, `VIDEO_SHARE_REQUEST`, `INFO_CUSTOMER_SERVICE`,
+  /// `DISMISS_REQUEST`, `SERVICE_LINK_REQUEST`, `GUEST_NAME_EDIT_REQUEST`, `EVENT_JOIN_INTENT`,
+  /// `AWARD_CLAIM_INTENT`.
   static const LBEventReply intercept = LBEventReply._({'result': true});
 
   /// For sync-interceptor events: tell the SDK to show its default UI.

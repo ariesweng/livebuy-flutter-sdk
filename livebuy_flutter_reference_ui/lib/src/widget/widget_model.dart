@@ -218,6 +218,17 @@ class WidgetModel {
   /// rb-flutter-widget-product-card-modes.
   String? get productCard => content.productCard;
 
+  /// Whether the widget content's FIRST page fetch is currently in flight
+  /// (`content.isInitialLoading`) — RAW PASSTHROUGH, the SAME kind of mirrored
+  /// getter as [widgetColor] / [widgetBgcolor] / [productCard]. Driven purely by an
+  /// explicit host call (`loadFirstWidgetPage` / `DefaultWidgetTemplate.handleWidgetInitialLoading`,
+  /// `widget-loading-placeholder-flutter`), NOT by any snapshot wire key — this layer
+  /// only READS it to switch the carousel / grid surfaces into their loading-placeholder
+  /// state. Demo path (`template == null`) → `false` (`WidgetSeeds.content`'s default),
+  /// so demo / golden instances never show the placeholder.
+  /// rb-flutter-widget-loading-placeholder.
+  bool get isInitialLoading => content.isInitialLoading;
+
   // -- Shared LIVE derivation (single source for ALL family-5 surfaces) ----------
 
   /// Whether an [LBVideoItem] is a LIVE card. Core `LBVideoItem` carries only

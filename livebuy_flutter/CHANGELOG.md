@@ -6,6 +6,48 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.5.4 - 2026-09-25
+
+> **三套件版號 lockstep bump。** 自 `2.5.3` 以來累積 4 個內容項目（1 個新增能力橫跨 core +
+> reference-ui 兩層 + 1 個純文件 parity 查證 + 1 個 reference-ui 技術債清理），**零 BREAKING**。
+
+### Added
+
+- **播放器初始 seek（四端最後一塊 parity 缺口補齊）**
+  （`flutter-player-load-initial-seek-core` + `rb-flutter-player-initial-seek`）：`load()` /
+  `LivebuyPlayerController.load()` 新增可選 `startAt: double?`、`LivebuyPlayerCore` widget 新增
+  `startAt` 欄位，讓 host 從商品頁直接打開指定影片並跳到指定時間點；drop-in 容器 `LivebuyPlayer`
+  的 `LivebuyPlayerConfig` 同步新增對應欄位 `initialSeekSeconds`，只在容器首次建立套用，換片路徑
+  （`_switchVideo` / `_onSwipeVideoLoad` / `onRetry`）不套用，不外洩到之後任何使用者手勢換片。業務
+  語意（intro-aware、直播靜默丟棄、一次性套用、換片覆蓋殘留值）全部由既有原生 iOS/Android core 端
+  消化，本輪只是把參數沿橋接一路送達。
+
+### Fixed
+
+- **`flutter-reference-ui` 清理既有 `flutter analyze` 死碼技術債**
+  （`flutter-reference-ui-analyze-debt-cleanup`）：刪除未被引用的 `_StatusPill` class、兩個測試檔
+  的未用 show-import 符號與一條未用 import，`flutter analyze` 從 9 issue 降到 4。**尚未清零**——
+  剩餘 3 條 `Share`/`SharePlus` deprecation info（需要實機驗證分享功能，另案處理）+ 1 條刻意保留的
+  `_RowOutlineIcon.glyph` 具名參數（既有設計決策，不貿然砍簽章），見
+  `docs/reference-ui/parity-debt-ledger.md` #45。
+
+### Parity Notes
+
+- `event-progress-timestamp`（帶 `video_id`-shaped key 的通知事件 additive 附上播放進度
+  `position`）在 Flutter 端查證為 **no-op**——`LBSdkEvent.params` 全程整包泛型透傳、無 per-event
+  typed params class 需要補欄位，`position` 已自動可用，無任何 `.dart` / bridge 程式碼需要改動。
+  詳見 `docs/parity/event-progress-timestamp-flutter-noop.md`（`flutter-event-progress-timestamp-
+  noop-parity-doc`）。
+
+> ⚠️ **已知殘留風險，本輪未修**：`flutter/android/build.gradle` 目前 pin 的 Android core
+> `4.22.0`（tag `android-v4.22.0`，2026-09-23 cut）早於新增 `load(videoId, startAt)` 的 Android
+> commit（`63ecf6fbf`，屬於尚未 tag-publish 的 Android `4.23.0`）。在這個 pin 追新之前，真正拉取
+> 已發布 remote Maven（而非本機 `mavenLocal`）的 Android host 對上面的初始 seek 能力有編譯期落差
+> 風險——與 `v2.5.0 → v2.5.1`、`2.5.1 → 2.5.2`、`2.5.2 → 2.5.3` 三次先例同一種失效模式。這次
+> **尚未能修**（Android `4.23.0` 還沒有真正 tag-publish，沒有目標版本號可以追新），留給下一輪
+> Flutter release-prep（Android `4.23.0` 正式發布後）處理；在那之前不建議對這個 `2.5.4` 執行真正
+> 對外發版。
+
 ## 2.5.3 - 2026-09-23
 
 > **三套件版號 lockstep bump。** 存底自 iOS/Android `v4.22.0`（2026-09-23）相關批次，自 `2.5.2`

@@ -1996,7 +1996,9 @@ class DefaultWidgetTemplate {
   /// `lastPage` / `liveVideo` / `isClosed`-derived `minimized`) + the web-embed
   /// colors (raw passthrough from widget-bridge-color-core) + `productCard`
   /// (raw passthrough from widget-product-card-bridge-flutter, arriving on the
-  /// snapshot wire rather than the colors call). Host binds
+  /// snapshot wire rather than the colors call) + `isInitialLoading` (host-driven
+  /// first-page-fetch-in-flight flag, no wire source of its own —
+  /// widget-loading-placeholder-flutter). Host binds
   /// [DefaultWidgetContent.current] with `ListenableBuilder` to draw `widgets.jsx`.
   /// The template draws NO cards / rows / floating window / minimized bubble.
   ///
@@ -2054,6 +2056,16 @@ class DefaultWidgetTemplate {
   /// re-deriving `floating` ⇄ `minimized` (D3). No-op when not floating-derived.
   void handleFloatingClosed(bool isClosed) =>
       content.handleFloatingClosed(isClosed);
+
+  /// Host drives the FIRST page fetch-in-flight flag
+  /// (widget-loading-placeholder-flutter). Has NO wire source of its own — the
+  /// reference-ui call site MUST call this with `true` immediately before
+  /// `await fetchWidget(...)` for page 1, and with `false` once that call
+  /// settles on EITHER the success or the failure path, or [content] is left
+  /// stranded showing a permanent loading placeholder. [handleWidgetSnapshot]
+  /// does NOT auto-clear it — the two are orthogonal mutators.
+  void handleWidgetInitialLoading(bool loading) =>
+      content.handleWidgetInitialLoading(loading);
 
   // Widget layout well-known keys (Task 6.7)
 

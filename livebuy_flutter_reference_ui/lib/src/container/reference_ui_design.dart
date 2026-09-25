@@ -502,6 +502,13 @@ class WidgetSurfaceContext {
   final VoidCallback? onSeeMore;
   final VoidCallback onLoadMore;
 
+  /// HOST-FACING opt-out for the carousel header row (`rb-flutter-widget-carousel-header-
+  /// visibility`). Default `true` (every pre-existing `WidgetSurfaceContext(...)` call site) keeps
+  /// the pre-existing content-driven header rule, so existing baselines stay byte-identical.
+  /// `false` → the carousel's entire header never renders. No effect on the grid surface (no
+  /// header concept there). Mirrors iOS / Android / RN's identically-named field.
+  final bool showsHeader;
+
   const WidgetSurfaceContext({
     required this.template,
     required this.theme,
@@ -510,6 +517,7 @@ class WidgetSurfaceContext {
     required this.onTapVideo,
     required this.onSeeMore,
     required this.onLoadMore,
+    this.showsHeader = true,
   });
 }
 
@@ -870,6 +878,9 @@ class MinimalDesign extends ReferenceUIDesign {
         onTapVideo: c.onTapVideo,
         onSeeMore: c.onSeeMore,
         onLoadMore: c.onLoadMore,
+        // Host-facing header opt-out (rb-flutter-widget-carousel-header-visibility) — raw
+        // forward; WidgetOverlayView applies it only to the carousel-mode branch.
+        showsHeader: c.showsHeader,
       );
 
   /// The minimize floating-preview card — the existing family-5 `FloatingWidgetView`.

@@ -192,3 +192,42 @@ Future<LoadWidgetPageResult> loadWidgetPage({
   if (colors != null) template.handleWidgetColors(colors);
   return LoadWidgetPageResult(videos, currentPage, lastPage);
 }
+
+/// Fetch the FIRST page (`page: 1, append: false`) bracketed by
+/// `DefaultWidgetTemplate.handleWidgetInitialLoading` (widget-loading-placeholder,
+/// rb-flutter-widget-loading-placeholder): sets `isInitialLoading = true`
+/// IMMEDIATELY BEFORE the awaited [loadWidgetPage] call, and `isInitialLoading =
+/// false` once it settles — on BOTH the success and the failure path (`finally`),
+/// re-throwing any error so the caller's own error handling (`_firstLoad`'s
+/// `catch (_) { keep the list empty }`) is unaffected.
+///
+/// `handleWidgetSnapshot` (called inside [loadWidgetPage]) does NOT auto-clear
+/// `isInitialLoading` (see `DefaultWidgetContent.handleWidgetInitialLoading`'s own
+/// doc comment) — the two mutators are orthogonal so a FAILED fetch, which never
+/// reaches `handleWidgetSnapshot`, can still be recovered. Forgetting either half
+/// of this bracket leaves the reference-ui carousel / grid placeholder stranded
+/// forever. Extracted as its own function (rather than inlined at the `_firstLoad`
+/// call site) so the bracketing itself is unit-testable with a fake [WidgetFetcher]
+/// — including a THROWING one for the failure path — without a widget tree /
+/// `Timer` (mirrors this file's existing `loadWidgetPage` test pattern).
+Future<LoadWidgetPageResult> loadFirstWidgetPage({
+  required WidgetFetcher fetchWidget,
+  required DefaultWidgetTemplate template,
+  required String shopId,
+  required WidgetContainerMode mode,
+}) async {
+  template.handleWidgetInitialLoading(true);
+  try {
+    return await loadWidgetPage(
+      fetchWidget: fetchWidget,
+      template: template,
+      shopId: shopId,
+      mode: mode,
+      accumulated: const <Object?>[],
+      page: 1,
+      append: false,
+    );
+  } finally {
+    template.handleWidgetInitialLoading(false);
+  }
+}

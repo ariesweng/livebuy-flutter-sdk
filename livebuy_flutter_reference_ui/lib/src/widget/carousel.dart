@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem;
 import 'package:visibility_detector/visibility_detector.dart';
 
+import '../moments/loading_mark_animation_view.dart';
 import '../reference_ui_theme.dart';
 import '../reference_ui_widget_embed_theme.dart';
 import '../testing/lb_test_keys.dart';
@@ -145,6 +146,15 @@ class CarouselView extends StatelessWidget {
   /// ALL `videos` (uncapped), so the user can scroll through every video.
   final bool scrollable;
 
+  /// HOST-FACING opt-out: whether the header row (title + subtitle + 查看更多 link) is allowed
+  /// to render at all (`rb-flutter-widget-carousel-header-visibility`). `true` (DEFAULT — every
+  /// pre-existing caller / demo / golden) leaves the pre-existing content-driven rule
+  /// ([_hasHeaderContent]) as the sole gate, so existing baselines stay byte-identical. `false` →
+  /// the header never renders regardless of `title` / `subtitle` content — the card row moves up
+  /// to occupy the space. Distinct from [_hasHeaderContent] (whether there IS header content to
+  /// show); the two AND together in [build] (`showsHeader && _hasHeaderContent`).
+  final bool showsHeader;
+
   /// RAW `product_card` wire value (`WidgetModel.productCard`), forwarded VERBATIM to
   /// every [CarouselCardView] in the row — the fallback stays in the card's single pure
   /// entry point (`normalizeProductCardMode`). `null` (the DEFAULT) → `inside`, i.e. the
@@ -165,6 +175,14 @@ class CarouselView extends StatelessWidget {
   /// [build] (rb-flutter-carousel-bgcolor), parity with `VideoShopGridView`.
   final String? widgetBgcolor;
 
+  /// Whether the widget content's FIRST page fetch is currently in flight
+  /// (`WidgetModel.isInitialLoading`, widget-loading-placeholder,
+  /// rb-flutter-widget-loading-placeholder). `true` → the header (if shown) renders
+  /// unchanged, but the card row is replaced by a fixed-height loading placeholder
+  /// (see [_loadingRow]) instead of real cards. Default `false` (every pre-existing
+  /// caller / demo / golden) keeps existing baselines byte-identical.
+  final bool isInitialLoading;
+
   const CarouselView({
     super.key,
     required ReferenceUITheme theme,
@@ -180,11 +198,16 @@ class CarouselView extends StatelessWidget {
     this.onTapVideo,
     this.onSeeMore,
     this.scrollable = false,
+    this.isInitialLoading = false,
+    this.showsHeader = true,
   }) : resolvedTheme = theme;
 
-  /// Whether the header row shows — `title` non-empty OR a `subtitle` exists
-  /// (mirrors `LBPCarousel`'s `(title || subtitle) && (...)`, widgets.jsx 283).
-  bool get _showsHeader =>
+  /// Whether there IS header content to show — `title` non-empty OR a `subtitle` exists
+  /// (mirrors `LBPCarousel`'s `(title || subtitle) && (...)`, widgets.jsx 283). Renamed from
+  /// `_showsHeader` (`rb-flutter-widget-carousel-header-visibility` D2) to free that name for the
+  /// new HOST-FACING [showsHeader] opt-out — this getter is a pure CONTENT judgement, distinct
+  /// from the host's "do I want a header at all" decision.
+  bool get _hasHeaderContent =>
       title.isNotEmpty || (subtitle != null && subtitle!.isNotEmpty);
 
   /// The visible first N cards (FIXED SMALL set — the row is NOT scrollable). The
@@ -195,6 +218,14 @@ class CarouselView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Three-state dispatch (widget-loading-placeholder, rb-flutter-widget-loading-
+    // placeholder — design D4): first-load placeholder takes priority; then a
+    // confirmed-empty list hides the ENTIRE widget (including the header — a
+    // deliberate behavior change from the prior "empty list still shows a header /
+    // empty shell"); otherwise the pre-existing rendering is unchanged.
+    if (!isInitialLoading && videos.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Container(
       key: LbTestKeys.widgetCarousel,
       width: double.infinity,
@@ -203,8 +234,8 @@ class CarouselView extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_showsHeader) _header(),
-          _cardRow(context),
+          if (showsHeader && _hasHeaderContent) _header(),
+          isInitialLoading ? _loadingRow(context) : _cardRow(context),
         ],
       ),
     );
@@ -280,6 +311,54 @@ class CarouselView extends StatelessWidget {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  // MARK: - Loading placeholder (widget-loading-placeholder,
+  // rb-flutter-widget-loading-placeholder)
+  //
+  // Mirrors the design's `LBPCarouselLoadingRow` (widgets.jsx 258-273): a real
+  // `CarouselCardView` laid out but painted invisible (`Opacity(opacity: 0)`, the
+  // Flutter analogue of CSS `visibility: hidden` — the child still occupies its
+  // full layout box, only painting is suppressed) establishes the placeholder's
+  // size, and a `LoadingMarkAnimationView` is centered over that box. The
+  // placeholder's HEIGHT is taken from the existing [_cardHeight] formula (the
+  // SAME one the windowed card row's sizer already reads) fed a single
+  // deterministic placeholder card — not re-derived / hand-picked — so a future
+  // change to the card's own layout (title line height / below-slot height /
+  // thumbnail aspect ratio) keeps both call sites in sync automatically.
+
+  /// A single deterministic placeholder card (`WidgetSeeds.vodWithGoods`) used ONLY
+  /// to size the loading placeholder — its `goods` is deliberately `null` (the
+  /// placeholder is never actually seen, `Opacity(opacity: 0)`), so
+  /// `CarouselCardView`'s existing null-goods `below`-slot handling already gives a
+  /// correct height regardless of `productCard` mode.
+  static final List<LBVideoItem> _loadingPlaceholderCards = [
+    WidgetSeeds.vodWithGoods,
+  ];
+
+  Widget _loadingRow(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+      child: SizedBox(
+        width: cardWidth,
+        height: _cardHeight(context, _loadingPlaceholderCards),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Opacity(
+              opacity: 0,
+              child: CarouselCardView(
+                theme: theme,
+                item: WidgetSeeds.vodWithGoods,
+                width: cardWidth,
+                productCard: productCard,
+              ),
+            ),
+            const LoadingMarkAnimationView(),
+          ],
+        ),
       ),
     );
   }

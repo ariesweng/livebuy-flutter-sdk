@@ -341,7 +341,16 @@ class LivebuyFlutterPlayerView(
         methodChannel.setMethodCallHandler { call, result ->
             val callArgs = call.arguments as? Map<*, *>
             when (call.method) {
-                "load"     -> { playerView.load(callArgs?.get("videoId") as String); result.success(null) }
+                // player-load-initial-seek (Flutter parity): `startAt` is an optional
+                // one-shot initial-seek intent, forwarded as-is to the existing
+                // `playerView.load(videoId, startAt)`, which owns all business semantics
+                // (intro-aware consumption, live-video silent-drop, one-shot apply). Pure
+                // forwarding — no logic here.
+                "load"     -> {
+                    val startAt = (callArgs?.get("startAt") as? Number)?.toDouble()
+                    playerView.load(callArgs?.get("videoId") as String, startAt)
+                    result.success(null)
+                }
                 // `release` is the legacy method name (pre-headless API).
                 // headless SDK renamed it to `unload`; alias preserved.
                 "release"  -> { playerView.unload(); result.success(null) }
