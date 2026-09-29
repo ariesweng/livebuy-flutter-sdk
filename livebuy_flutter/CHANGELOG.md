@@ -6,6 +6,30 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.7.0 - 2026-09-29
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> 內容變動在 `livebuy_flutter` 與 `livebuy_flutter_ui`；`livebuy_flutter_reference_ui` 本輪無內容
+> 變更、僅隨版號。新增 public API、無符號移除、無簽章破壞，故為 minor。
+
+### Added
+
+- **`LivebuySDK.dispatchAuthRequired(...)` 與 Dart 端 pending-retry 註冊表**
+  （`flutter-dispatch-auth-required-dart-pending-retry-core`）：`dispatchAuthRequired(triggerAction,
+  {videoId, productId, retryToken, position}): Future<bool>` 經原生事件管線派發 `AUTH_REQUIRED`；
+  `registerPendingRetry(void Function())` 回傳 `dart-` 前綴 token，`retryPendingAction` /
+  `discardPendingAction` 命中時由 Dart 一次性處理（不呼叫原生），未命中落回原生；`clearUser()`
+  同時清空註冊表。原生 token 仍不可由 Dart 註冊。
+
+### Changed
+
+- **drop-in 主動加購登入閘改為派發 `AUTH_REQUIRED(cart_add)`**
+  （`flutter-cart-add-proactive-gate-retry-token-template`，`livebuy_flutter_ui`）：`requireLoginForAddToCart`
+  啟用且訪客點加購時，drop-in 原本只設本地旗標、不派發事件（host listener 收不到）；現在會註冊 retry 並經
+  `dispatchAuthRequired` 派發 `AUTH_REQUIRED`（`trigger_action = cart_add`），`params['retry_token']` 可交給
+  `retryPendingAction` / `discardPendingAction`。**行為變更**：既有 host listener 此後會收到這次攔截事件。
+  相依本版 `livebuy_flutter` 新增的 `dispatchAuthRequired` / `registerPendingRetry`（三套件 lockstep 同版即可）。
+
 ## 2.6.0 - 2026-09-29
 
 > **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。

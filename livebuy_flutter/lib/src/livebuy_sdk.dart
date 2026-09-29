@@ -270,15 +270,16 @@ class LivebuySDK {
   // MARK: - Reverse-notification APIs (Task 5.9 / 5.12)
 
   /// Notify the SDK that the host App user has logged in or switched accounts.
-  /// Triggers a 30 s auto-replay of any action blocked by `AUTH_REQUIRED`.
+  /// Does NOT auto-replay any action blocked by `AUTH_REQUIRED`; call [retryPendingAction] explicitly.
   /// Must be called after [configure].
   static Future<void> setUser(LBUser user) {
     return _channel.invokeMethod('setUser', user.toMap());
   }
 
   /// Notify the SDK that the host App user has logged out.
-  /// Reverts to Guest identity and clears any pending `AUTH_REQUIRED` action.
+  /// Reverts to Guest identity and clears any pending `AUTH_REQUIRED` action (native and Dart registries).
   static Future<void> clearUser() {
+    _pendingRetries.clear(); // Dart registry cleared alongside native's.
     return _channel.invokeMethod('clearUser');
   }
 
@@ -474,13 +475,78 @@ class LivebuySDK {
     });
   }
 
-  // MARK: - pending retry (flutter-auth-required-pending-action-retry-core)
+  // MARK: - pending retry (flutter-auth-required-pending-action-retry-core,
+  //         flutter-dispatch-auth-required-dart-pending-retry-core)
 
-  /// Re-run the action the SDK parked under [token] (the `retry_token` param of
-  /// an `AUTH_REQUIRED` event) — call after the user has logged in. One-shot;
-  /// returns `false` for an unknown / already-consumed / discarded token.
-  /// `registerPendingRetry` is intentionally not bridged (it takes a closure).
+  /// Dart-side pending-retry registry. Holds Dart closures registered via
+  /// [registerPendingRetry]; native tokens (from a natively dispatched
+  /// `AUTH_REQUIRED`) never live here — Dart cannot register native closures.
+  static final Map<String, void Function()> _pendingRetries = {};
+  static int _pendingRetrySeq = 0;
+
+  /// Build an opaque Dart-side retry token. Prefix `dart-` guarantees no
+  /// collision with native tokens. Pure — exposed for tests.
+  @visibleForTesting
+  static String buildDartRetryToken(int seq, int nonce) =>
+      'dart-$seq-${nonce.toRadixString(36)}';
+
+  /// Register a Dart [action] to be re-run by [retryPendingAction] after the
+  /// user logs in. Returns an opaque `dart-` token to fold into
+  /// [dispatchAuthRequired]'s `retryToken`. One-shot; cleared by [clearUser];
+  /// never auto-replayed by [setUser]. Serves only Dart closures (Flutter-side
+  /// template / host) — native tokens cannot be registered from Dart.
+  static String registerPendingRetry(void Function() action) {
+    final token = buildDartRetryToken(
+      ++_pendingRetrySeq,
+      DateTime.now().microsecondsSinceEpoch,
+    );
+    _pendingRetries[token] = action;
+    return token;
+  }
+
+  /// Test-only: empty the Dart registry and reset the counter.
+  @visibleForTesting
+  static void resetPendingRetriesForTesting() {
+    _pendingRetries.clear();
+    _pendingRetrySeq = 0;
+  }
+
+  /// Dispatch an `AUTH_REQUIRED` event through the native event pipeline
+  /// (`dispatchAuthRequired`). Returns whether the host listener intercepted
+  /// it. Only non-null fields are sent (a missing value omits the key).
+  static Future<bool> dispatchAuthRequired(
+    String triggerAction, {
+    String? videoId,
+    String? productId,
+    String? retryToken,
+    double? position,
+  }) async {
+    final ok = await _channel.invokeMethod<bool>('dispatchAuthRequired', {
+      'triggerAction': triggerAction,
+      if (videoId != null) 'videoId': videoId,
+      if (productId != null) 'productId': productId,
+      if (retryToken != null) 'retryToken': retryToken,
+      if (position != null) 'position': position,
+    });
+    return ok ?? false;
+  }
+
+  /// Re-run the action parked under [token] (the `retry_token` param of an
+  /// `AUTH_REQUIRED` event) — call after the user has logged in. One-shot;
+  /// returns `false` for an unknown / already-consumed / discarded token. A
+  /// token in the Dart registry runs its Dart closure (exceptions swallowed,
+  /// still returns `true`) without touching native; otherwise the call falls
+  /// through to native.
   static Future<bool> retryPendingAction(String token) async {
+    final action = _pendingRetries.remove(token);
+    if (action != null) {
+      try {
+        action();
+      } catch (e) {
+        debugPrint('[LivebuySDK] pending retry action threw: $e');
+      }
+      return true;
+    }
     final ok = await _channel.invokeMethod<bool>('retryPendingAction', {
       'token': token,
     });
@@ -488,9 +554,11 @@ class LivebuySDK {
   }
 
   /// Drop the action parked under [token] without running it (user gave up
-  /// logging in). Unknown token is a safe no-op.
-  static Future<void> discardPendingAction(String token) {
-    return _channel.invokeMethod('discardPendingAction', {'token': token});
+  /// logging in). A Dart-registry token is removed without native call;
+  /// otherwise forwarded to native. Unknown token is a safe no-op.
+  static Future<void> discardPendingAction(String token) async {
+    if (_pendingRetries.remove(token) != null) return;
+    await _channel.invokeMethod('discardPendingAction', {'token': token});
   }
 
   // MARK: - goods tracking (goods-await-notice-endpoints-core)

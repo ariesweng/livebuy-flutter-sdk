@@ -569,6 +569,25 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                 result.success(LivebuySDK.retryPendingAction(token))
             }
 
+            // flutter-dispatch-auth-required-dart-pending-retry-core — 經原生事件管線派發 AUTH_REQUIRED，回傳 host 是否攔截
+            "dispatchAuthRequired" -> {
+                val triggerAction: String = call.argument("triggerAction")
+                    ?: return result.error("BAD_ARG", "triggerAction required", null)
+                val videoId: String? = call.argument("videoId")
+                val productId: String? = call.argument("productId")
+                val retryToken: String? = call.argument("retryToken")
+                val position: Double? = call.argument<Number>("position")?.toDouble()
+                result.success(
+                    LivebuySDK.dispatchAuthRequired(
+                        triggerAction = triggerAction,
+                        videoId = videoId,
+                        productId = productId,
+                        position = position,
+                        retryToken = retryToken,
+                    )
+                )
+            }
+
             "discardPendingAction" -> {
                 val token: String = call.argument("token")
                     ?: return result.error("BAD_ARG", "token required", null)

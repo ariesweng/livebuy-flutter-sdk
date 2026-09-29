@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -68,6 +70,19 @@ typedef ViewCartRequester = void Function(String? productId);
 /// default `(_) {}` is an inert no-op (headless-safe) — EXACT parity with
 /// [EventJoinRequester] / [GuestNameEditRequester] / `AddToCartRequester`.
 typedef VideoLoadRequester = void Function(String videoId);
+
+/// flutter-cart-add-proactive-gate-retry-token-template — injectable seam over
+/// `LivebuySDK.registerPendingRetry` (parity iOS `registerPendingRetryProvider` /
+/// Android `registerPendingRetryProvider`). Returns the opaque retry token.
+typedef PendingRetryRegistrar = String Function(void Function() action);
+
+/// flutter-cart-add-proactive-gate-retry-token-template — injectable seam over
+/// `LivebuySDK.dispatchAuthRequired` (parity Android `dispatchAuthRequiredProvider`).
+typedef AuthRequiredDispatcher = Future<bool> Function(
+  String triggerAction, {
+  String? videoId,
+  String? retryToken,
+});
 
 /// Mute-intent forwarder (flutter-player-toggle-mute-template). Injectable so the
 /// reference-ui / host wires the core `LivebuyPlayerController.setMuted` (which
@@ -693,6 +708,12 @@ class DefaultPlayerTemplate {
   /// nav forwarders. Default `(_) {}` is an inert no-op (headless-safe).
   final VideoLoadRequester _videoLoadRequester;
 
+  /// flutter-cart-add-proactive-gate-retry-token-template — test-injectable seams for the
+  /// proactive add-to-cart gate's retry-token registration + AUTH_REQUIRED dispatch.
+  /// Defaults point at `LivebuySDK.*` (source-compatible).
+  final PendingRetryRegistrar _registerPendingRetry;
+  final AuthRequiredDispatcher _dispatchAuthRequired;
+
   /// flutter-player-toggle-mute-template — reference-ui/host-wired mute-intent
   /// forwarder for [setMuted] / [toggleMute] (`(muted) =>
   /// controller.setMuted(muted)`). Default `(_) {}` is an inert no-op
@@ -756,6 +777,8 @@ class DefaultPlayerTemplate {
     GoodsTrackingSetter? setNoticeGoods,
     AddToCartRequester? addToCartRequester,
     VideoLoadRequester? videoLoadRequester,
+    PendingRetryRegistrar? registerPendingRetryProvider,
+    AuthRequiredDispatcher? dispatchAuthRequiredProvider,
     MutedSetter? setMutedRequester,
     TogglePlayPauseRequester? togglePlayPauseRequester,
     VodSeekRequester? seekRequester,
@@ -778,6 +801,14 @@ class DefaultPlayerTemplate {
         _guestNameEditRequester = guestNameEditRequester ?? (() {}),
         _viewCartRequester = viewCartRequester ?? ((_) {}),
         _videoLoadRequester = videoLoadRequester ?? ((_) {}),
+        _registerPendingRetry =
+            registerPendingRetryProvider ?? LivebuySDK.registerPendingRetry,
+        _dispatchAuthRequired = dispatchAuthRequiredProvider ??
+            ((action, {videoId, retryToken}) => LivebuySDK.dispatchAuthRequired(
+                  action,
+                  videoId: videoId,
+                  retryToken: retryToken,
+                )),
         // flutter-player-toggle-mute-template — mute-intent forwarder. Default
         // no-op (headless-safe / unit tests); the `flutter-reference-ui`
         // container injects `(muted) => controller.setMuted(muted)`.
@@ -1842,6 +1873,28 @@ class DefaultPlayerTemplate {
   /// Reset the per-session cart-CTA count (teardown / new video, D4 / OQ2).
   void resetCartForSession() => cartCTA.resetForSession();
 
+  /// flutter-cart-add-proactive-gate-retry-token-template — 主動閘：註冊 retry closure 取得 token，
+  /// 再以 `retry_token` 派發 `AUTH_REQUIRED('cart_add')`。fire-and-forget（不延遲 [addToCart] 完成，
+  /// 例外吞掉只 debugPrint）；不論 host 是否攔截皆保留 token（parity iOS/Android）。
+  /// closure 重跑 [addToCart]，閘於重試時重新評估（已登入→正常加購；仍未登入→再註冊新 token；
+  /// detail 已關閉→既有 `detail == null` 早退為 no-op）。SDK 不自動 replay。
+  void _dispatchProactiveCartAddAuthRequired() {
+    try {
+      final token = _registerPendingRetry(() {
+        unawaited(addToCart().catchError((Object e) {
+          debugPrint('[livebuy] cart_add retry failed: $e');
+        }));
+      });
+      unawaited(_dispatchAuthRequired('cart_add',
+              videoId: _currentVideoId, retryToken: token)
+          .then((_) {}, onError: (Object e) {
+        debugPrint('[livebuy] cart_add AUTH_REQUIRED dispatch failed: $e');
+      }));
+    } catch (e) {
+      debugPrint('[livebuy] cart_add proactive gate dispatch failed: $e');
+    }
+  }
+
   /// product-sheet-stack-template (D5) — route-B add-to-cart intent. Gates on:
   /// (a) [hostOwnsCart] (host took over via route A) → MUST NOT delegate;
   /// (b) product has spec groups but selection is incomplete (`selectedSpec ==
@@ -1872,7 +1925,8 @@ class DefaultPlayerTemplate {
     if (requireLogin) {
       final loggedIn = await LivebuySDK.isLoggedIn();
       if (addToCartRequiresLoginLocally(requireLogin, loggedIn)) {
-        _addToCartNeedsLogin = true;
+        _addToCartNeedsLogin = true; // 同步先設好，再做（非阻塞的）token 註冊 + 派發。
+        _dispatchProactiveCartAddAuthRequired();
         return;
       }
     }

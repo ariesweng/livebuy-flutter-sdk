@@ -431,6 +431,19 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
             }
             result(Livebuy.retryPendingAction(token: token))
 
+        // flutter-dispatch-auth-required-dart-pending-retry-core — 經原生事件管線派發 AUTH_REQUIRED，回傳 host 是否攔截
+        case "dispatchAuthRequired":
+            guard let triggerAction = args?["triggerAction"] as? String else {
+                return result(FlutterError(code: "BAD_ARG", message: "dispatchAuthRequired requires triggerAction", details: nil))
+            }
+            result(Livebuy.dispatchAuthRequired(
+                triggerAction: triggerAction,
+                videoId: args?["videoId"] as? String,
+                productId: args?["productId"] as? String,
+                retryToken: args?["retryToken"] as? String,
+                position: (args?["position"] as? NSNumber)?.doubleValue
+            ))
+
         case "discardPendingAction":
             guard let token = args?["token"] as? String else {
                 return result(FlutterError(code: "BAD_ARG", message: "discardPendingAction requires token", details: nil))
