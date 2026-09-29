@@ -822,9 +822,19 @@ double? resolvedInitialSeekStartAt({
 /// `LivebuyPlayerConfig` (adapted to the Flutter surfaces' callback shapes).
 @immutable
 class LivebuyPlayerConfig {
-  /// The SDK-global event listener. If non-null the container installs it via
-  /// `LivebuySDK.setListener`; if null the container does NOT touch the host's existing
-  /// global listener (default: none — the host manages its own listener).
+  /// The host's event listener, reached THROUGH the container's own wrapper.
+  ///
+  /// ⚠️ On mount the container ALWAYS installs its own wrapper via `LivebuySDK.setListener`
+  /// (`_LivebuyPlayerState.initState`), REPLACING any global listener the host set earlier —
+  /// even when this field is null — and it does NOT restore that listener on dispose. This
+  /// field is therefore the ONLY way a host's handler keeps receiving events (e.g.
+  /// `CART_ADD_REQUEST` / `VIEW_CART` / `DISMISS_REQUEST`) while a container is mounted: the
+  /// wrapper awaits `eventListener?.call(event)` and merges its reply with the template's
+  /// ([resolveContainerEventReply]: host reply first, template reply as fallback).
+  ///
+  /// `LivebuyWidget` / `LivebuyLiveEntry` configs have no such field; their default tap opens
+  /// a `LivebuyPlayer` with a fresh config (no listener), so a host that needs events on that
+  /// path must wire `onTapVideo` and mount its own `LivebuyPlayer` with this field set.
   final LBEventListener? eventListener;
 
   /// Top-right minimize tap. DEFAULT (D-3): forwards to core `controller.minimize()` — the

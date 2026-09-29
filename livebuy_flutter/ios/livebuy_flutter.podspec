@@ -40,7 +40,9 @@ Flutter plugin for Livebuy live-shopping SDK (iOS & Android).
   #
   # `LivebuyPlugin.swift` `import LivebuySDK` and calls `Livebuy.configure(...)`,
   # so this pod must link the core `LivebuySDK` XCFramework to fully COMPILE.
-  # `~> 4.0` = CocoaPods optimistic operator, [4.0.0, 5.0.0) — aligned to the
+  # `~> 4.23` = CocoaPods optimistic operator, [4.23.0, 5.0.0) — floor 4.23.0 because the bridge
+  # calls `Livebuy.retryPendingAction(token:)` / `discardPendingAction(token:)` (iOS v4.23.0+); the
+  # upper bound is aligned to the
   # major boundary introduced by the 2026-07-16 brand-casing rename (commit
   # c140f4bf), same bound the RN bridge podspec pins.
   #
@@ -59,7 +61,7 @@ Flutter plugin for Livebuy live-shopping SDK (iOS & Android).
   # Without one of these, `pod install` stops with "unable to find a
   # specification for LivebuySDK" — the correct, expected plan-B behaviour.
   # ───────────────────────────────────────────────────────────────────────────
-  s.dependency 'LivebuySDK', '~> 4.0'
+  s.dependency 'LivebuySDK', '~> 4.23'
 
   # Flutter.framework does not contain an i386 slice, which is specific to iOS.
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }

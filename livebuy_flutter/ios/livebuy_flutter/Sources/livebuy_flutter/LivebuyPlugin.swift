@@ -424,6 +424,20 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                 }
             }
 
+        // auth-required-pending-action-retry — 登入後明確重試 / 放棄（token 來自 AUTH_REQUIRED 的 retry_token）
+        case "retryPendingAction":
+            guard let token = args?["token"] as? String else {
+                return result(FlutterError(code: "BAD_ARG", message: "retryPendingAction requires token", details: nil))
+            }
+            result(Livebuy.retryPendingAction(token: token))
+
+        case "discardPendingAction":
+            guard let token = args?["token"] as? String else {
+                return result(FlutterError(code: "BAD_ARG", message: "discardPendingAction requires token", details: nil))
+            }
+            Livebuy.discardPendingAction(token: token)
+            result(nil)
+
         // MARK: - goods tracking (goods-await-notice-endpoints-core)
 
         case "setAwaitGoods":

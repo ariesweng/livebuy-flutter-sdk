@@ -6,6 +6,28 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.6.0 - 2026-09-29
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> 內容變動只在 `livebuy_flutter`；`livebuy_flutter_ui` 與 `livebuy_flutter_reference_ui` 本輪無內容
+> 變更、僅隨版號。新增 public API、無符號移除、無簽章破壞，故為 minor。
+
+### Added
+
+- **登入後明確重試（對齊 iOS / Android）**（`flutter-auth-required-pending-action-retry-core`）：
+  `LivebuySDK.retryPendingAction(String token): Future<bool>` 與
+  `LivebuySDK.discardPendingAction(String token): Future<void>`。`token` 取自 `AUTH_REQUIRED`
+  事件 `params['retry_token']`（由 SDK 內部產生並隨事件 params 透傳）；不橋接
+  `registerPendingRetry`（吃 closure）。
+
+> ⚠️ **相容性說明**：
+> - **Android**：橋接相依 pin 由 `tv.livebuy:livebuy:4.23.0` 升為 `4.24.0`（新 API 僅存在於 4.24.0
+>   之後）。
+> - **iOS**：相依下限由 `~> 4.0`（podspec）/ `from: "4.0.0"`（Package.swift）升為 `~> 4.23` /
+>   `from: "4.23.0"`（`Livebuy.retryPendingAction(token:)` 僅存在於 iOS SDK 4.23.0 之後）。已解析到
+>   `LivebuySDK` < 4.23 的 host 升級本版時，需一併升到 4.23 以上（`pod update LivebuySDK` /
+>   SwiftPM 更新），否則版本解析會失敗。
+
 ## 2.5.4 - 2026-09-25
 
 > **三套件版號 lockstep bump。** 自 `2.5.3` 以來累積 4 個內容項目（1 個新增能力橫跨 core +

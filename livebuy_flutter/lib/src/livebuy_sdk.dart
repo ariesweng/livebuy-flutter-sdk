@@ -474,6 +474,25 @@ class LivebuySDK {
     });
   }
 
+  // MARK: - pending retry (flutter-auth-required-pending-action-retry-core)
+
+  /// Re-run the action the SDK parked under [token] (the `retry_token` param of
+  /// an `AUTH_REQUIRED` event) — call after the user has logged in. One-shot;
+  /// returns `false` for an unknown / already-consumed / discarded token.
+  /// `registerPendingRetry` is intentionally not bridged (it takes a closure).
+  static Future<bool> retryPendingAction(String token) async {
+    final ok = await _channel.invokeMethod<bool>('retryPendingAction', {
+      'token': token,
+    });
+    return ok ?? false;
+  }
+
+  /// Drop the action parked under [token] without running it (user gave up
+  /// logging in). Unknown token is a safe no-op.
+  static Future<void> discardPendingAction(String token) {
+    return _channel.invokeMethod('discardPendingAction', {'token': token});
+  }
+
   // MARK: - goods tracking (goods-await-notice-endpoints-core)
 
   /// Toggle restock-arrival tracking for a product (goods-await-notice §5.2,

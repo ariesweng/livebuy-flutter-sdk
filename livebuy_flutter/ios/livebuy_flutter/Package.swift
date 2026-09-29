@@ -27,7 +27,7 @@ let livebuySDKDependency: Package.Dependency = {
     return .package(
         name: "LivebuySDK",
         url: "https://github.com/ariesweng/livebuy-ios-sdk.git",
-        from: "4.0.0"
+        from: "4.23.0"
     )
 }()
 

@@ -562,6 +562,20 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                 }
             }
 
+            // auth-required-pending-action-retry — 登入後明確重試 / 放棄（token 來自 AUTH_REQUIRED 的 retry_token）
+            "retryPendingAction" -> {
+                val token: String = call.argument("token")
+                    ?: return result.error("BAD_ARG", "token required", null)
+                result.success(LivebuySDK.retryPendingAction(token))
+            }
+
+            "discardPendingAction" -> {
+                val token: String = call.argument("token")
+                    ?: return result.error("BAD_ARG", "token required", null)
+                LivebuySDK.discardPendingAction(token)
+                result.success(null)
+            }
+
             "setAwaitGoods" -> {
                 val goodsGpn: String = call.argument("goodsGpn")
                     ?: return result.error("BAD_ARG", "goodsGpn required", null)
