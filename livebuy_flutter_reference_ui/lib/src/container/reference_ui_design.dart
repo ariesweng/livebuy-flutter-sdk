@@ -275,6 +275,11 @@ class PlayerOverlayContext {
   /// gesture can gate on it. Default `false`.
   final bool productSheetsPresented;
 
+  /// 商品面板 cart 登入閘「目前正在呈現」notifier（rb-flutter-cart-login-gate-gap-authgate-mutual-exclusion）：
+  /// 由 `ProductSheetsOverlayView` 上報、同時轉傳給 `GapSurfacesOverlayView`，讓 gap 的 authGate
+  /// modal 讓位。`null`（預設）→ 不互斥，行為與先前相同；既有 `PlayerOverlayContext(...)` 呼叫點不受影響。
+  final ValueNotifier<bool>? cartLoginGatePresented;
+
   /// Reports the aggregate product-sheet-presented state from `ProductSheetsOverlayView` up to
   /// the container (which mirrors it into [productSheetsPresented]). null → no report (demo /
   /// golden / a custom `ReferenceUIDesign` not wiring it) — `PlayerShellView`'s swipe gesture
@@ -441,6 +446,7 @@ class PlayerOverlayContext {
     this.productListPresented = false,
     this.onDismissProductList,
     this.productSheetsPresented = false,
+    this.cartLoginGatePresented,
     this.onProductSheetsPresentedChange,
     required this.onMinimize,
     required this.onToggleMute,
@@ -798,6 +804,7 @@ class MinimalDesign extends ReferenceUIDesign {
             // 加購「需登入」gate's 前往登入 → host login flow (`config.onLogin`), the SAME host hook the
             // comment login-gate uses (cart-needs-login-gate). reference-ui NEVER logs in itself.
             onRequestLogin: c.onLogin,
+            cartLoginGatePresentedNotifier: c.cartLoginGatePresented,
             // 商品明細「更多商品」推薦卡播放圖示 → 換片 (rb-flutter-product-detail-recommendations §4).
             onSwitchRecommendationVideo: c.onSwitchRecommendationVideo,
             // 任一商品 sheet/modal 開合 → 回報容器（rb-flutter-block-swipe-nav-when-sheet-open），
@@ -845,6 +852,7 @@ class MinimalDesign extends ReferenceUIDesign {
           // 「請先登入」modal 由容器本地呈現（rb-flutter-live-comment-login-gate）：controller 驅動可見性；
           // 前往登入經 onLogin（host config.onLogin）。
           loginController: c.loginController,
+          cartLoginGatePresented: c.cartLoginGatePresented,
           onLogin: c.onLogin,
           onDismiss: c.onDismiss,
           onSubmitName: c.onSubmitName,

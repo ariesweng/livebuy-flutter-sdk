@@ -68,6 +68,37 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 // No Flutter-framework dependency here — pure reads + plain-literal demo seeds, so
 // it stays unit-testable (see `docs/unit-test-discipline.md`).
 
+/// 「請先登入」互斥判斷（rb-flutter-cart-login-gate-gap-authgate-mutual-exclusion）：
+/// drop-in 商品面板 cart 登入閘**目前正在呈現**時，gap-surface 的 template authGate modal 讓位，
+/// 避免同一次加購疊出兩個相同文案的「請先登入」。
+///
+/// 只有 `authGate.triggerAction == cartAdd` **且** [cartLoginGatePresented] 為 true 才讓位。
+/// [cartLoginGatePresented] 由 `ProductSheetsOverlayView` 上報，定義為
+/// `addToCartNeedsLogin && !_cartGateDismissed`——也就是使用者眼前真的看得到 cart 閘
+/// （該 modal 不依賴詳情，詳情關閉後只要沒被關掉仍在畫面上）。因此：
+///   * 使用者按「稍後再說」後 cart 閘不在畫面上 → 不讓位，cartAdd authGate 到達時 gap modal
+///     照常顯示（使用者一定有提示，不會兩個都沒有）；
+///   * 外部 widget / headless 訪客沒有商品面板閘 → 恆為 false，gap modal 是唯一提示；
+///   * 旗標殘值（例如已按「稍後再說」後詳情又關閉）→ 為 false，不壓 gap modal。
+/// 其他 trigger 與商品 cart 閘無關，照舊顯示。純函式、無副作用，可單測。
+bool cartLoginGateOwnsAuthGate({
+  required LBAuthGateState? authGate,
+  required bool cartLoginGatePresented,
+}) =>
+    authGate != null &&
+    authGate.triggerAction == LBAuthTriggerAction.cartAdd &&
+    cartLoginGatePresented;
+
+/// 讓位成立時「消耗」template 的 cartAdd authGate（[cartLoginGateOwnsAuthGate] 為真時才清），
+/// 避免 cart 閘被使用者關閉後，殘留的 cartAdd authGate 讓 gap modal 補位冒出。只清 `cartAdd`，
+/// 其他 trigger（commentSend / couponClaim …）絕不動。純函式。
+bool shouldClearCartAddAuthGateAfterAdd({
+  required LBAuthGateState? authGate,
+  required bool cartLoginGatePresented,
+}) =>
+    cartLoginGateOwnsAuthGate(
+        authGate: authGate, cartLoginGatePresented: cartLoginGatePresented);
+
 /// Read-only snapshot bridge for the family-6 gap-surface modals. Wraps a live
 /// [DefaultPlayerTemplate]; every accessor reads the template's public getter each
 /// call (no stored mirror). For demos / previews / golden tests, construct with

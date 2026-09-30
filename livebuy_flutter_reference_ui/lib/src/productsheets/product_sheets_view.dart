@@ -10,6 +10,8 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
         LBAuthGateState,
         LBAuthTriggerAction;
 import '../gapsurfaces/auth_gate_modal.dart';
+import '../gapsurfaces/gap_surfaces_model.dart'
+    show shouldClearCartAddAuthGateAfterAdd;
 
 import '../reference_ui_theme.dart';
 import 'bottom_sheet_presenter.dart';
@@ -337,6 +339,12 @@ class ProductSheetsOverlayView extends StatefulWidget {
   /// standalone instances unaffected).
   final ValueChanged<bool>? onPresentationChange;
 
+  /// 上報「cart 登入閘目前正在呈現」（`addToCartNeedsLogin && !本地已關閉`，與畫面上 cart 閘的顯示條件同源）的
+  /// notifier，由容器持有並轉傳給 `GapSurfacesOverlayView`，讓 gap 的 authGate modal 據以讓位
+  /// （rb-flutter-cart-login-gate-gap-authgate-mutual-exclusion）。值於 frame 之後（post-frame）
+  /// 才寫入，不在 `build()` 內同步寫。`null`（預設）→ 不上報（demo / golden / standalone 不受影響）。
+  final ValueNotifier<bool>? cartLoginGatePresentedNotifier;
+
   const ProductSheetsOverlayView({
     super.key,
     this.template,
@@ -353,6 +361,7 @@ class ProductSheetsOverlayView extends StatefulWidget {
     this.onRequestLogin,
     this.onSwitchRecommendationVideo,
     this.onPresentationChange,
+    this.cartLoginGatePresentedNotifier,
   });
 
   @override
@@ -478,11 +487,43 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     });
   }
 
+  bool _lastReportedCartGatePresented = false;
+
+  /// cart 登入閘此刻是否真的畫在畫面上——與 build 內 `Positioned.fill(AuthGateModalView)` 的顯示條件
+  /// **逐字同源**（`addToCartNeedsLogin && !_cartGateDismissed`）。刻意不再加「詳情開啟」：該 modal
+  /// 自帶全幅 scrim、不依賴詳情，詳情關閉後只要沒被使用者關掉它仍在畫面上，讓位判斷必須和實際畫面一致
+  /// （否則會出現兩個 modal 或零個 modal）。
+  bool _cartGatePresentedNow() => _model.addToCartNeedsLogin && !_cartGateDismissed;
+
+  /// Post-frame 上報 [_cartGatePresentedNow]（diff-then-report），理由同 [_reportSheetsPresentedIfChanged]。
+  void _reportCartGatePresentedIfChanged(bool presented) {
+    if (presented == _lastReportedCartGatePresented) return;
+    _lastReportedCartGatePresented = presented;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.cartLoginGatePresentedNotifier?.value = presented;
+    });
+  }
+
+  /// 讓位成立時消耗 template 的 cartAdd authGate（只在 cart 閘正在呈現時清；
+  /// 見 [shouldClearCartAddAuthGateAfterAdd]）。於 authGate 通知與加購結果回來後各呼叫一次。
+  void _consumeCartAddAuthGateIfOwned() {
+    final t = widget.template;
+    if (t == null) return;
+    if (shouldClearCartAddAuthGateAfterAdd(
+      authGate: t.authGate.current,
+      cartLoginGatePresented: _cartGatePresentedNow(),
+    )) {
+      t.clearAuthGate();
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _lastCartCount = _model.cartCount;
     widget.template?.cartCTA.addListener(_onCartCTAChanged);
+    widget.template?.authGate.addListener(_consumeCartAddAuthGateIfOwned);
   }
 
   /// Re-read `cartCount` off the model and flash the toast on a STRICT rise past the seeded
@@ -504,6 +545,7 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.template != widget.template) {
       oldWidget.template?.cartCTA.removeListener(_onCartCTAChanged);
+      oldWidget.template?.authGate.removeListener(_consumeCartAddAuthGateIfOwned);
       _model = ProductSheetsModel(
         template: widget.template,
         // Same Map instance across a template swap — cache contents (from prior
@@ -513,6 +555,7 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
       );
       _lastCartCount = _model.cartCount; // re-seed so the new template's count does not flash.
       widget.template?.cartCTA.addListener(_onCartCTAChanged);
+      widget.template?.authGate.addListener(_consumeCartAddAuthGateIfOwned);
     }
   }
 
@@ -521,6 +564,7 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     _cartToastTimer?.cancel();
     _cartLoadingTimer?.cancel();
     widget.template?.cartCTA.removeListener(_onCartCTAChanged);
+    widget.template?.authGate.removeListener(_consumeCartAddAuthGateIfOwned);
     super.dispose();
   }
 
@@ -565,9 +609,11 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
       listPresented: widget.presented,
       detailPresented: detail != null,
       zoomPresented: _zoomedDetail != null,
-      cartLoginGatePresented: m.addToCartNeedsLogin && !_cartGateDismissed,
+      cartLoginGatePresented: _cartGatePresentedNow(),
       variantPromptPresented: m.needsVariantSelection && !_variantPromptDismissed,
     ));
+
+    _reportCartGatePresentedIfChanged(_cartGatePresentedNow());
 
     return Stack(
       children: [
@@ -1014,6 +1060,12 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     await future;
     // 結果回來 → 套 320ms 防閃爍 floor 後解除 loading。
     _settleCartLoading();
+    // 商品面板 cart 登入閘接手後，消耗 template 的 cartAdd authGate，避免 `AUTH_REQUIRED` 事件先到
+    // 時 gap-surface 已畫出的第二個「請先登入」殘留（rb-flutter-cart-login-gate-gap-authgate-mutual-exclusion）。
+    // 只在 cart 閘正在呈現時清、只清 cartAdd；template 的 `authGate` 記錄邏輯本身不動。
+    // （此時旗標已由 await 結果寫入，但本地 setState 尚未重建；`_cartGatePresentedNow` 讀 template 旗標
+    // 與本地 latch，與畫面顯示條件同源。）
+    _consumeCartAddAuthGateIfOwned();
     // Re-read the template's transient flags (failure banner / needs-login gate) after the async
     // result. They are plain fields on the template (no ChangeNotifier of their own), so an
     // explicit rebuild is required for them to surface — parity with the gate's reactive present.

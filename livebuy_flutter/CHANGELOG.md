@@ -6,6 +6,25 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.7.1 - 2026-09-30
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> 內容變動只在 `livebuy_flutter_reference_ui`；`livebuy_flutter` 與 `livebuy_flutter_ui` 本輪無內容變更、
+> 僅隨版號。純 bug fix、無符號移除、無簽章破壞，故為 patch。原生 pin 不動（Android `4.24.0`、iOS `~> 4.23`；
+> 本修復不涉 core）。
+
+### Fixed
+
+- **drop-in 主動加購閘觸發時不再疊出兩個「請先登入」**（`rb-flutter-cart-login-gate-gap-authgate-mutual-
+  exclusion`，`livebuy_flutter_reference_ui`）：開了 `requireLoginForAddToCart`、訪客點加購時，商品面板 cart
+  登入閘與 gap-surface `AuthGateModalView`（經 `AUTH_REQUIRED(cart_add)` 回流的 template `authGate`）原本會同時
+  顯示。現在 gap 層在「商品面板 cart 閘目前正在呈現」時讓位，並以既有 `template.clearAuthGate()` 消耗殘留
+  cartAdd authGate。cart 閘不在畫面上（按「稍後再說」後、外部 widget／headless 訪客）時 gap modal 仍顯示，其他
+  trigger 不受影響。新增皆為**可選**（additive，既有呼叫端不受影響）：`ProductSheetsOverlayView.cartLoginGatePresentedNotifier`、
+  `PlayerOverlayContext.cartLoginGatePresented`、`GapSurfacesOverlayView.cartLoginGatePresented`（預設 `null`＝不讓位），
+  以及純函式 `cartLoginGateOwnsAuthGate` / `shouldClearCartAddAuthGateAfterAdd`。已知取捨：被動 401 時序 gap modal
+  可能閃現約一幀才讓位；未經真機驗證，僅單元／widget 測試與讀碼推演。
+
 ## 2.7.0 - 2026-09-29
 
 > **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。

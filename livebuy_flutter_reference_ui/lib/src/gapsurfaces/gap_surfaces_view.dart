@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
     show DefaultPlayerTemplate, LBAuthGateState;
@@ -47,7 +48,8 @@ export 'guest_name_edit_modal.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 // MODAL PRIORITY (mutually exclusive — at most ONE modal is shown)
 // ─────────────────────────────────────────────────────────────────────────────
-//   1. authGate != null && !isLoggedIn        → AuthGateModalView   (HIGHEST)
+//   1. authGate != null && !isLoggedIn
+//      && !cartLoginGateOwnsAuthGate          → AuthGateModalView   (HIGHEST)
 //   2. else _showNameEdit                      → GuestNameEditModalView
 //   3. else                                    → nothing (`SizedBox.shrink()`)
 //
@@ -208,6 +210,12 @@ class GapSurfacesOverlayView extends StatefulWidget {
   /// (golden-neutral). SEPARATE from the template-driven auth gate.
   final LoginPromptController? loginController;
 
+  /// 商品面板 cart 登入閘「目前正在呈現」旗標（由 `ProductSheetsOverlayView` 上報，容器持有並轉傳；
+  /// rb-flutter-cart-login-gate-gap-authgate-mutual-exclusion）。為 true 且 template authGate 為
+  /// `cartAdd` 時，本層的 authGate modal 讓位。`null`（demo / golden / standalone）→ 不讓位，行為與
+  /// 原先完全相同。
+  final ValueListenable<bool>? cartLoginGatePresented;
+
   const GapSurfacesOverlayView({
     super.key,
     this.template,
@@ -217,6 +225,7 @@ class GapSurfacesOverlayView extends StatefulWidget {
     this.onSubmitName,
     this.nicknameController,
     this.loginController,
+    this.cartLoginGatePresented,
   });
 
   @override
@@ -256,6 +265,7 @@ class _GapSurfacesOverlayViewState extends State<GapSurfacesOverlayView> {
       ],
       if (widget.nicknameController != null) widget.nicknameController!,
       if (widget.loginController != null) widget.loginController!,
+      if (widget.cartLoginGatePresented != null) widget.cartLoginGatePresented!,
     ];
 
     if (mergeable.isEmpty) {
@@ -276,9 +286,18 @@ class _GapSurfacesOverlayViewState extends State<GapSurfacesOverlayView> {
     final authGate = m.authGate;
     final isLoggedIn = m.isLoggedIn;
 
-    if (authGate != null && !isLoggedIn) {
+    if (authGate != null &&
+        !isLoggedIn &&
+        !cartLoginGateOwnsAuthGate(
+          authGate: authGate,
+          cartLoginGatePresented: widget.cartLoginGatePresented?.value ?? false,
+        )) {
       // 1. 「請先登入」gate — HIGHEST priority (blocking). The surface takes a
-      //    non-null gate (the container gates on non-null here).
+      //    non-null gate (the container gates on non-null here). YIELDS (not drawn) when the
+      //    drop-in product-sheet cart login gate owns the same prompt
+      //    (rb-flutter-cart-login-gate-gap-authgate-mutual-exclusion) so only ONE「請先登入」
+      //    modal is on screen; a cartAdd gate WITHOUT the product-sheet flag (external widget /
+      //    headless guest) still draws here.
       return AuthGateModalView(
         theme: theme,
         gate: authGate,

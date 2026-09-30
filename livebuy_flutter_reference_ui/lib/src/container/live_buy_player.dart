@@ -1593,6 +1593,10 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// verbatim from [_cleanMode] / [_moreMenuOpen] above. Default false (off).
   bool _productSheetsPresented = false;
 
+  /// 商品面板 cart 登入閘「正在呈現」（product sheets 上報 → gap-surface authGate modal 讓位）；
+  /// rb-flutter-cart-login-gate-gap-authgate-mutual-exclusion。
+  final ValueNotifier<bool> _cartLoginGatePresented = ValueNotifier<bool>(false);
+
   /// One-shot flag (rb-flutter-player-initial-seek): whether [resolvedInitialSeekStartAt] has
   /// already been resolved+applied once for THIS State instance. [build] flips it to `true`
   /// immediately after reading it for the [LivebuyPlayerCore] construction below — every
@@ -1779,6 +1783,7 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     _composer.dispose();
     _nickname.dispose();
     _login.dispose();
+    _cartLoginGatePresented.dispose();
     super.dispose();
   }
 
@@ -2187,6 +2192,7 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // 商品 sheet 開啟時抑制上下滑動換片（rb-flutter-block-swipe-nav-when-sheet-open）：接線
       // 比照上面既有 _cleanMode / _moreMenuOpen。
       productSheetsPresented: _productSheetsPresented,
+      cartLoginGatePresented: _cartLoginGatePresented,
       onProductSheetsPresentedChange: (v) {
         if (v != _productSheetsPresented)
           setState(() => _productSheetsPresented = v);
