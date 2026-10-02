@@ -31,6 +31,7 @@ import 'notify_restock_sheet.dart';
 import 'product_zoom_overlay.dart';
 import 'cart_toast_view.dart';
 import 'cart_loading_floor.dart';
+import '../safearea/lb_safe_area.dart';
 
 // rb-flutter-show-stock-caption-toggle — the two pure entry points for the
 // `extensions.show_stock` merchant gate live next to the surface that consumes them
@@ -764,7 +765,10 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
           Align(
             alignment: Alignment.bottomCenter,
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 96),
+              // rb-flutter-edge-to-edge-safe-area-audit: bottom-anchored → lifted by the bottom
+              // safe-area inset (zero → the literal 96 it always was).
+              padding: EdgeInsets.only(
+                  bottom: 96 + lbChromeSafeInsets(MediaQuery.of(context)).bottom),
               child: IgnorePointer(child: CartToastView(theme: theme)),
             ),
           ),

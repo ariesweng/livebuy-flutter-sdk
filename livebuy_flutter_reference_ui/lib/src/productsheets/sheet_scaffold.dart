@@ -1,8 +1,10 @@
 import 'package:flutter/widgets.dart';
 
 import '../reference_ui_image_url.dart';
+import '../reference_ui_remote_image.dart';
 import '../sheet_slide_transition.dart';
 import '../testing/lb_test_keys.dart';
+import '../safearea/lb_safe_area.dart';
 
 // sheet_scaffold.dart — shared family-3 bottom-sheet layout + gated product image.
 //
@@ -31,7 +33,7 @@ import '../testing/lb_test_keys.dart';
 //   2. [liveProductImage] — the `live` real-image gate. `live == false` (demo /
 //      golden) draws ONLY the deterministic [placeholder] (so goldens are
 //      byte-stable — no network). `live == true` (host runtime) overlays
-//      `Image.network(url)` on top, falling back to the placeholder on load / error.
+//      the remote image on top, falling back to the placeholder on load / error.
 //
 // RENDERING NOTE: unlike the iOS snapshot path (`ImageRenderer` renders `ScrollView`
 // content BLANK, so iOS goldens use an `uncapped` flag), the Flutter golden path
@@ -389,9 +391,14 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
       WidgetsBinding.instance.addPostFrameCallback(_latchFloorFromMeasurement);
       return;
     }
-    final double screenHeight = MediaQuery.of(context).size.height;
+    final MediaQueryData mq = MediaQuery.of(context);
+    final double screenHeight = mq.size.height;
     if (screenHeight <= 0) return;
-    final double measured = (renderObject.size.height / screenHeight)
+    // rb-flutter-edge-to-edge-safe-area-audit: the rendered box includes the bottom safe-area
+    // spacer (see [build]); the floor is the CONTENT height, so the spacer is taken back out.
+    final double contentHeight =
+        renderObject.size.height - lbChromeSafeInsets(mq).bottom;
+    final double measured = (contentHeight / screenHeight)
         .clamp(0.0, _defaultFraction);
     setState(() => _floorFraction = measured);
   }
@@ -489,7 +496,15 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
 
   @override
   Widget build(BuildContext context) {
-    final double screenHeight = MediaQuery.of(context).size.height;
+    final MediaQueryData mq = MediaQuery.of(context);
+    final double screenHeight = mq.size.height;
+    // rb-flutter-edge-to-edge-safe-area-audit (parity Android `LBSheetScaffold`): the panel
+    // extends to the container's physical bottom edge — the navigation / gesture bar sits over
+    // the sheet's own background — while header / body / footer stay above it. The bottom inset
+    // is ADDED to the cap (and taken back out of the floor measurement), so the content's
+    // usable height and every drag fraction are the same as with no inset. Zero → identical.
+    final EdgeInsets safe = lbChromeSafeInsets(mq);
+    final double safeBottom = safe.bottom;
     final double floor = _activeFloor;
     final SheetDragState state = sheetDragState(
       virtualFraction: _virtualFraction ?? floor,
@@ -505,9 +520,10 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
     // rebuild with different content in the SAME State, e.g. a tab switch). Once the user has
     // dragged (`_virtualFraction != null`), the drag-derived `state.heightFraction` governs —
     // matches iOS `heightFractionOverride ?? capFraction`.
-    final double cap = _virtualFraction == null
-        ? _defaultFraction * screenHeight
-        : state.heightFraction * screenHeight;
+    final double cap = (_virtualFraction == null
+            ? _defaultFraction * screenHeight
+            : state.heightFraction * screenHeight) +
+        safeBottom;
     // Any active drag override (even one that settled back exactly at the floor) switches a
     // content-sized leaf into fill-mode for the rest of this presentation — mirrors iOS
     // `effectiveFillToCap = fillToCap || heightFractionOverride != nil`. Since the floor IS the
@@ -528,7 +544,19 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
       constraints: effectiveFillToCap
           ? BoxConstraints(minHeight: cap, maxHeight: cap)
           : BoxConstraints(maxHeight: cap),
-      child: Column(
+      // Left / right insets (landscape cutout / side navigation bar) keep the content clear;
+      // the panel background (painted by the leaf, outside this scaffold) stays full-width.
+      //
+      // The header / body / footer are CALLER-SUPPLIED widgets, so the amount applied here
+      // (left / right padding + the bottom spacer) is taken out of their `MediaQuery`: a
+      // `SafeArea` inside a footer must not inset the same edge a second time. The TOP inset is
+      // taken out as well — a bottom sheet never reaches the status bar, so there is nothing at
+      // the top for its content to avoid.
+      child: Padding(
+        padding: EdgeInsets.only(left: safe.left, right: safe.right),
+        child: MediaQuery(
+        data: lbConsumeSafeArea(mq, applied: safe),
+        child: Column(
         mainAxisSize: effectiveFillToCap ? MainAxisSize.max : MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -543,7 +571,11 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
                   child: SingleChildScrollView(
                       controller: _bodyScrollController, child: widget.body)),
           widget.footer,
+          // Bottom safe-area spacer — shows the sheet's own background behind the system bar.
+          if (safeBottom > 0) SizedBox(height: safeBottom),
         ],
+        ),
+        ),
       ),
     );
     // Live-drag / residual dismiss offset — a no-op transform (Offset.zero) at rest.
@@ -554,14 +586,15 @@ class _LBSheetScaffoldState extends State<LBSheetScaffold>
 }
 
 /// A gated product image: ALWAYS draws [placeholder]; when [live] is true AND [url]
-/// is a non-empty/parseable http(s) URL, overlays `Image.network(url)` on top
+/// is a non-empty/parseable http(s) URL, overlays the remote image on top
 /// (clipped to [borderRadius] when given), falling back to the placeholder while
 /// loading or on error.
 ///
-/// `live == false` (demo / golden) → ONLY the placeholder renders (no network →
-/// byte-stable goldens). `live == true` (host runtime, real video surface) → the real
-/// product photo loads over the placeholder. Parity with iOS `RemoteStillImageView`
-/// gated by the sheets' `live` flag (rb-ios-product-real-images).
+/// **Decode size** (rb-flutter-remote-image-downsampling): the image is decoded at one of
+/// two tier sizes (see `reference_ui_remote_image.dart`), not at the source's resolution.
+/// The tier follows from the box the image fills (measured from the parent's constraints);
+/// a call site that must be on a specific tier whatever its box (the product-detail main
+/// image and the zoom lightbox, which share one decode) passes [tier].
 ///
 /// **Fade-in on a genuine async decode** (rb-flutter-product-image-loading-polish):
 /// the overlaid image fades in from the placeholder over [kProductImageFadeInDuration]
@@ -576,18 +609,20 @@ Widget liveProductImage({
   // How the loaded image fills the frame. Default `cover` (product-sheet thumbs fill). The widget
   // card cover + product chip pass `contain` so the WHOLE image shows (iOS `.scaleAspectFit`).
   BoxFit fit = BoxFit.cover,
+  ReferenceUiImageTier? tier,
 }) {
   final Uri? uri = _httpUri(url);
   if (!live || uri == null) return placeholder;
+  final String resolvedUrl = uri.toString();
   // TEST SEAM (`docs/unit-test-discipline.md` naming contract) — `null` (default, every
-  // existing call site + host runtime) keeps the exact `Image.network(...)` branch below,
-  // byte-identical to before this seam existed. A widget / golden test that needs to
-  // exercise ACTUAL decoded pixel content (not just the placeholder — `Image.network`
+  // call site + host runtime) takes the real remote-image branch below. A widget / golden
+  // test that needs to exercise ACTUAL decoded pixel content (the real network provider
   // never resolves in a test environment with no network) may set this to a zero-network
-  // synthetic [ImageProvider] for the duration of one test, then reset it to `null`.
+  // synthetic [ImageProvider] for the duration of one test, then reset it to `null`; that
+  // provider is used AS IS (not downsampled).
   // MUST NOT be mutated outside `test/` (`rb-flutter-product-detail-main-image-scale-down-
   // letterbox` verifier fix).
-  final ImageProvider? testProvider = liveProductImageProviderForTesting?.call(uri.toString());
+  final ImageProvider? testProvider = liveProductImageProviderForTesting?.call(resolvedUrl);
   final Widget image = testProvider != null
       ? Image(
           image: testProvider,
@@ -599,22 +634,13 @@ Widget liveProductImage({
           errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
           frameBuilder: _fadeInFrameBuilder,
         )
-      : Image.network(
-          uri.toString(),
+      // Keyed by URL: a URL change mounts a fresh state, so the previous URL's image is
+      // never shown for the new one and its tier is not carried over.
+      : _SizedRemoteImage(
+          key: ValueKey<String>(resolvedUrl),
+          url: resolvedUrl,
           fit: fit,
-          width: double.infinity,
-          height: double.infinity,
-          // While loading, keep the placeholder visible underneath (the Stack below
-          // already draws it); fade in nothing extra — just show the frame when ready.
-          loadingBuilder: (context, child, progress) =>
-              progress == null ? child : const SizedBox.expand(),
-          // On any decode / network error, fall back to the placeholder (draw nothing
-          // over it — the Stack's placeholder stays visible).
-          errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
-          // rb-flutter-product-image-loading-polish: a cache-hit (e.g. warmed by
-          // `PlayerShellView`'s prefetch) renders instantly, unanimated; a genuine
-          // async decode fades in — see `_fadeInFrameBuilder`'s own doc comment.
-          frameBuilder: _fadeInFrameBuilder,
+          tier: tier,
         );
   final Widget overlay = borderRadius == null
       ? image
@@ -628,12 +654,99 @@ Widget liveProductImage({
   );
 }
 
+/// The real remote-image branch of [liveProductImage]
+/// (rb-flutter-remote-image-downsampling): resolves the tier of its box and paints
+/// `referenceUiRemoteImageProviderForTier(context, url, tier)`.
+///
+/// For a given URL the tier only ever goes UP: a thumbnail-tier box that grew into a
+/// large-tier one re-requests the large image while the current one stays on screen
+/// (`gaplessPlayback`); a box that shrank keeps the image it has. While loading or on
+/// error it paints nothing — the placeholder [liveProductImage] stacks underneath shows
+/// through.
+class _SizedRemoteImage extends StatefulWidget {
+  const _SizedRemoteImage({
+    super.key,
+    required this.url,
+    required this.fit,
+    required this.tier,
+  });
+
+  final String url;
+  final BoxFit fit;
+  final ReferenceUiImageTier? tier;
+
+  @override
+  State<_SizedRemoteImage> createState() => _SizedRemoteImageState();
+}
+
+class _SizedRemoteImageState extends State<_SizedRemoteImage> {
+  /// Whether this URL has been requested at the large tier (measured path only).
+  bool _large = false;
+
+  /// Whether a frame of this URL has been painted — once true, a re-request at the large
+  /// tier keeps the current image visible instead of dropping back to the placeholder.
+  bool _shown = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final ReferenceUiImageTier? tier = widget.tier;
+    if (tier != null) return _image(context, tier);
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        _large = _large ||
+            referenceUiImageTierForBox(constraints.biggest) == ReferenceUiImageTier.large;
+        return _image(
+          context,
+          _large ? ReferenceUiImageTier.large : ReferenceUiImageTier.thumbnail,
+        );
+      },
+    );
+  }
+
+  Widget _image(BuildContext context, ReferenceUiImageTier tier) {
+    return Image(
+      image: referenceUiRemoteImageProviderForTier(context, widget.url, tier),
+      fit: widget.fit,
+      width: double.infinity,
+      height: double.infinity,
+      gaplessPlayback: true,
+      // While loading, keep the placeholder visible underneath (the Stack in
+      // `liveProductImage` already draws it).
+      loadingBuilder: (context, child, progress) =>
+          progress == null || _shown ? child : const SizedBox.expand(),
+      // On any decode / network error, fall back to the placeholder (draw nothing over it).
+      errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
+      frameBuilder: _frameBuilder,
+    );
+  }
+
+  /// [_fadeInFrameBuilder] plus one rule: once a frame of this URL has been shown, a
+  /// re-request at the large tier (`frame` back to `null`) keeps the current image fully
+  /// visible.
+  Widget _frameBuilder(
+    BuildContext context,
+    Widget child,
+    int? frame,
+    bool wasSynchronouslyLoaded,
+  ) {
+    if (frame != null) _shown = true;
+    if (wasSynchronouslyLoaded) return child;
+    return AnimatedOpacity(
+      opacity: frame == null && !_shown ? 0.0 : 1.0,
+      duration: kProductImageFadeInDuration,
+      curve: Curves.easeOut,
+      child: child,
+    );
+  }
+}
+
 /// Fade-in duration for [liveProductImage]'s overlaid photo when it decodes
 /// ASYNCHRONOUSLY (cache miss) — see [_fadeInFrameBuilder]. 180ms.
 const Duration kProductImageFadeInDuration = Duration(milliseconds: 180);
 
-/// Shared `Image.frameBuilder` for [liveProductImage]'s two branches (the real
-/// `Image.network` + the [liveProductImageProviderForTesting] test seam) —
+/// `Image.frameBuilder` for [liveProductImage]'s [liveProductImageProviderForTesting]
+/// test-seam branch; the real remote-image branch (`_SizedRemoteImage`) applies the same
+/// rule —
 /// rb-flutter-product-image-loading-polish. `wasSynchronouslyLoaded == true` (the
 /// frame was already available — a cache hit, e.g. one this package's own
 /// `precacheImage` prefetch warmed) returns [child] UNCHANGED, no animation: a warm
@@ -660,7 +773,7 @@ Widget _fadeInFrameBuilder(
 }
 
 /// TEST SEAM — see [liveProductImage]'s doc comment above. `null` by default (host
-/// runtime + every pre-existing call site): the real `Image.network(url)` path.
+/// runtime + every call site): the real remote-image path.
 @visibleForTesting
 ImageProvider Function(String url)? liveProductImageProviderForTesting;
 
@@ -668,7 +781,7 @@ ImageProvider Function(String url)? liveProductImageProviderForTesting;
 /// → placeholder-only). Pure.
 Uri? _httpUri(String? s) {
   // Upgrade a cleartext http:// pic to https:// before parsing — Flutter iOS ATS blocks
-  // cleartext so Image.network would never load it → placeholder. https / non-http unchanged.
+  // cleartext so the image would never load → placeholder. https / non-http unchanged.
   final trimmed = referenceUiHttpsUpgraded(s?.trim());
   if (trimmed.isEmpty) return null;
   final uri = Uri.tryParse(trimmed);

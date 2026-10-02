@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart' show LBProduct;
 
 import '../reference_ui_image_url.dart';
+import '../reference_ui_remote_image.dart';
 
 // product_image_prefetch.dart — rb-flutter-product-image-loading-polish.
 //
@@ -14,12 +15,19 @@ import '../reference_ui_image_url.dart';
 // URLs are worth warming into Flutter's own `ImageCache` via `precacheImage`, well
 // ahead of the moment `liveProductImage` (`sheet_scaffold.dart`) would otherwise start
 // loading them for the first time.
+//
+// rb-flutter-remote-image-downsampling: the prefetch warms each image at the THUMBNAIL
+// tier ([productImagePrefetchProvider]) — the same cache entry every small box resolves —
+// instead of decoding the whole source image. Large-tier surfaces (product-detail main
+// image, zoom lightbox, covers) load their own decode on first show.
 
 /// Resolve the de-duplicated, valid http(s) image URL for every product in
 /// [products] — `photos.first ?? pic` (mirrors the SAME source resolution
 /// `_buildNowIntroducing` already uses to build an `LBMiniCartPeek.pic`), upgraded
 /// http → https (`referenceUiHttpsUpgraded`, the same upgrade `liveProductImage`'s own
-/// gate applies) and filtered to a parseable `http`/`https` scheme. Preserves
+/// gate applies) and filtered to a parseable `http`/`https` scheme. Each URL is returned
+/// in the SAME normalized form `liveProductImage` hands its provider (`Uri.toString()`),
+/// so the prefetch and the display agree on the cache key. Preserves
 /// [products]' own order; a later duplicate URL is dropped (first occurrence wins).
 /// Pure — no Flutter runtime / IO — independently unit-testable.
 List<String> productImageUrlsToPrefetch(List<LBProduct> products) {
@@ -45,7 +53,7 @@ String? _validHttpUrl(String raw) {
   final uri = Uri.tryParse(upgraded);
   if (uri == null) return null;
   if (uri.scheme != 'http' && uri.scheme != 'https') return null;
-  return upgraded;
+  return uri.toString();
 }
 
 /// Optional override hook for testing (`docs/unit-test-discipline.md` §3 "Dual-use
@@ -53,8 +61,7 @@ String? _validHttpUrl(String raw) {
 /// `_precacheProductImage` call site, so this deliberately carries no
 /// `@visibleForTesting` annotation; that annotation would flag the cross-file
 /// production read as `invalid_use_of_visible_for_testing_member`). `null` (production
-/// default) → [defaultProductImagePrecache] (the real
-/// `precacheImage(NetworkImage(url), context)`). A widget test overrides this to
+/// default) → [defaultProductImagePrecache] (the real `precacheImage`). A widget test overrides this to
 /// capture WHICH urls were requested without a real network fetch / image decode, then
 /// MUST reset it to `null` afterward.
 Future<void> Function(String url, BuildContext context)?
@@ -65,4 +72,10 @@ Future<void> Function(String url, BuildContext context)?
 /// (a failed prefetch just means `liveProductImage` falls back to its normal
 /// load-on-build path later — never a crash / unhandled rejection).
 Future<void> defaultProductImagePrecache(String url, BuildContext context) =>
-    precacheImage(NetworkImage(url), context).catchError((_) {});
+    precacheImage(productImagePrefetchProvider(context, url), context).catchError((_) {});
+
+/// The provider the prefetch warms for [url]: the thumbnail tier — equal (same cache key)
+/// to the provider every thumbnail-tier `liveProductImage` (the now-introducing card, list
+/// rows, thumbnail strips, …) resolves under the same `MediaQuery`.
+ImageProvider productImagePrefetchProvider(BuildContext context, String url) =>
+    referenceUiRemoteImageProviderForTier(context, url, ReferenceUiImageTier.thumbnail);

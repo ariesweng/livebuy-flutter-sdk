@@ -6,6 +6,7 @@ import '../productsheets/sheet_scaffold.dart' show liveProductImage;
 import '../productsheets/cart_fill_glyph.dart' show CartFillGlyph;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import '../safearea/lb_safe_area.dart';
 
 // EndScreenView — family-4 moments surface 2 (full-screen END moment, LIVE-only).
 //
@@ -329,10 +330,11 @@ class EndScreenView extends StatelessWidget {
           // whole `Stack`, so the variant's own 取消 / 立即觀看 / 查看購物車
           // `GestureDetector`s (the OTHER Stack child, built below) are unaffected.
           IgnorePointer(child: Container(color: _scrim)),
-          if (_showCountdown)
-            _buildCountdownVariant()
-          else
-            _buildEmptyVariant(),
+          // rb-flutter-edge-to-edge-safe-area-audit: the scrim above stays full-bleed; the
+          // variant's content lays out inside the safe rect.
+          LBSafeAreaPadding(
+            child: _showCountdown ? _buildCountdownVariant() : _buildEmptyVariant(),
+          ),
         ],
       ),
     );

@@ -6,6 +6,43 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.8.0 - 2026-10-02
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> `livebuy_flutter`：只有 Android 原生 pin 變更（Dart 與 bridge 原始碼零變更）；`livebuy_flutter_ui`：無內容
+> 變更、僅隨版號；`livebuy_flutter_reference_ui`：safe-area 與遠端圖片（含行為變更）。無符號移除、無簽章破壞，
+> 新增皆為選用參數，故為 minor。原生 pin：Android `4.24.0` → `4.26.1`；iOS `~> 4.23` 不變。
+
+### Fixed
+
+- **Android release build（預設開縮碼）不必再自行補 keep 規則**（`flutter-android-bridge-core-pin-4-26-1`，
+  `livebuy_flutter`）：Android bridge 的 core pin `tv.livebuy:livebuy` 升到 `4.26.1`，其 AAR 自帶 Gson 反射
+  目標、`-dontwarn okhttp3.** / okio.**` 與 WorkManager／Room 建構子的 consumer 規則。以本套件 example
+  （host 沒有 `proguard-rules.pro`）對已發佈的遠端 AAR 實測：pin `4.24.0` 時 R8 以 `Missing class okhttp3.*`
+  建置失敗；`4.26.0` 時啟動即崩潰 `NoSuchMethodException: androidx.work.impl.WorkDatabase_Impl.<init>`；
+  `4.26.1` 時建置、啟動、事件上傳與播放皆正常。已自行補規則的 host 不受影響，規則可在以 release build 實機
+  確認後移除。
+
+### Changed
+
+- **drop-in 容器自行處理系統邊距**（`rb-flutter-edge-to-edge-safe-area-audit`，`livebuy_flutter_reference_ui`）：
+  `LivebuyPlayer` / `CollapsibleLivebuyPlayer` / `LivebuyLiveEntry` 的 chrome 避開狀態列／導覽或手勢列／
+  cutout／鍵盤，影片與背景維持滿版；host 已把容器推離螢幕邊緣的距離會從邊距扣掉，不重複套用。浮窗卡片與
+  浮動入口的靜止位置、拖曳邊界改以安全區為準。sheet 面板延伸到底緣、內容避開；留言輸入列與設定暱稱 modal
+  待在鍵盤上方。不改 host 的系統列外觀。
+- **遠端靜態圖分兩層降採樣解碼**（`rb-flutter-remote-image-downsampling`，`livebuy_flutter_reference_ui`）：
+  縮圖層（兩邊皆不超過 128 邏輯像素的框與背景預取）與大圖層（其餘；上限 4096 px），同層共用同一筆快取、
+  不放大來源；商品詳情主圖與放大燈箱共用同一筆解碼。`liveProductImage` 新增選用參數 `tier`。
+  ⚠️ **行為變更**：背景預取改為縮圖層，大圖層表面首次顯示會看到一次淡入；同一 URL 至多下載兩次（縮圖層、
+  大圖層各一次，先前一次）——本套件沒有圖片磁碟快取。
+- **僅供測試的時間來源注入點**（`rb-flutter-load-sensitive-tests-fix`，`livebuy_flutter_reference_ui`）：
+  `PlaybackProgressBarView.nowProviderForTesting`、`PlayerShellView.nowProviderForTesting`、
+  `LiveEntryCloseGate.nowProviderForTesting`（皆 `@visibleForTesting`、選用，未注入時為真實時鐘，門檻與判定
+  不變）。
+
+> 驗證範圍：Android API 35 模擬器以 release APK 對真實後端實跑（列表、圖片、播放器、商品列表 sheet）。
+> **未經真機驗證**；iOS 側本輪未在裝置或模擬器上跑過 Flutter 版面（iOS 原生 `4.26.0` 已另行在模擬器驗過）。
+
 ## 2.7.1 - 2026-09-30
 
 > **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。

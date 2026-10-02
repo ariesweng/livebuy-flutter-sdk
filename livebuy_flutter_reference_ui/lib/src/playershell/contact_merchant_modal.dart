@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import '../safearea/lb_safe_area.dart';
 
 // ContactMerchantModalView — family-1「聯絡商家」confirm modal (LBPAlertModal).
 //
@@ -70,11 +71,14 @@ class ContactMerchantModalView extends StatelessWidget {
       onTap: onCancel,
       child: ColoredBox(
         color: Colors.black.withValues(alpha: 0.55),
-        child: Center(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {}, // absorb taps on the card (do NOT dismiss)
-            child: _card(),
+        // rb-flutter-edge-to-edge-safe-area-audit: scrim full-bleed, card centered in the safe rect.
+        child: LBSafeAreaPadding(
+          child: Center(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {}, // absorb taps on the card (do NOT dismiss)
+              child: _card(),
+            ),
           ),
         ),
       ),

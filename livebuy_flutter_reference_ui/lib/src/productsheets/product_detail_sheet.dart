@@ -8,6 +8,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
         LBQtyState;
 
 import '../reference_ui_image_url.dart';
+import '../reference_ui_remote_image.dart';
 import '../reference_ui_theme.dart';
 import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
@@ -160,7 +161,7 @@ enum ProductSheetPresentation { detail, addToCart, restock }
 // RENDERING GOTCHAS (inherited from iOS / Android / family-1/2 lessons): plain
 // Column / Row / Wrap / Stack + the scaffold's single `SingleChildScrollView` body.
 // The photo is a deterministic gradient placeholder; at runtime (`live == true`) a
-// gated `Image.network` overlays it (rb-product-real-images) — `live == false` (golden /
+// gated remote image (`liveProductImage`) overlays it (rb-product-real-images) — `live == false` (golden /
 // demo) keeps ONLY the placeholder (byte-stable, no network). Glyphs are `Icons.*`. No
 // animation / no randomness so the golden is byte-stable.
 
@@ -452,7 +453,7 @@ class ProductDetailSheet extends StatelessWidget {
 
   /// `false` (snapshot / demo) → the photo draws the deterministic gradient placeholder
   /// ONLY (goldens unchanged). `true` (host runtime) → load `detail.photos[0]` over it
-  /// via a gated `Image.network` (rb-product-real-images). Read-only.
+  /// via the gated `liveProductImage` (rb-product-real-images). Read-only.
   final bool live;
 
   /// LIVE/VOD flag (`ProductSheetsModel.isLive` / `header.isLive`, `liveStatus == 1`).
@@ -1112,7 +1113,7 @@ class ProductDetailSheet extends StatelessWidget {
   //
   // `photos` are remote URLs. `live == false` (golden / demo) draws ONLY the 4:3
   // gradient placeholder chip with a monogram (deterministic — no network); `live ==
-  // true` (host runtime) overlays the real photo via a gated `Image.network` that falls
+  // true` (host runtime) overlays the real photo via the gated `liveProductImage` that falls
   // back to the placeholder on load / error (rb-product-real-images). Mirrors the design's
   // rounded media.
   //
@@ -1881,15 +1882,15 @@ ScaleDownLetterboxSize computeScaleDownLetterboxSize({
   );
 }
 
-/// TEST SEAM (`docs/unit-test-discipline.md` naming contract) — how
+/// TEST SEAM (`docs/unit-test-discipline.md` naming contract) — overrides how
 /// [_ScaleDownLetterboxFrame] obtains an [ImageProvider] to resolve a URL's NATURAL
-/// pixel size. Defaults to the real [NetworkImage] (host runtime). Widget / golden
-/// tests override this to a zero-network, deterministic in-memory provider of a KNOWN
-/// pixel size so the scale-down + letterbox math can be exercised without a real
-/// network fetch. MUST NOT be mutated outside `test/`.
+/// pixel size. `null` (default, host runtime): the frame resolves the SAME large-tier
+/// provider its `liveProductImage` paints. Widget / golden tests override this to a
+/// zero-network, deterministic in-memory provider of a KNOWN pixel size so the scale-down
+/// + letterbox math can be exercised without a real network fetch. MUST NOT be mutated
+/// outside `test/`.
 @visibleForTesting
-ImageProvider Function(String url) scaleDownLetterboxImageProviderForTesting =
-    (String url) => NetworkImage(url);
+ImageProvider Function(String url)? scaleDownLetterboxImageProviderForTesting;
 
 /// TEST SEAM — identifies the WHITE letterbox placeholder [_ScaleDownLetterboxFrame]'s
 /// resolved branch passes into `liveProductImage()` (verifier fix for the FAIL this
@@ -1933,10 +1934,15 @@ Uri? _resolvableImageUri(String? s) {
 ///   so `scaleDown` and `contain` paint identically here.
 ///
 /// Natural size comes from resolving a SEPARATE [ImageStream] (design.md D1, route A) —
-/// `liveProductImage`'s own internal `Image.network` exposes no natural-size callback.
-/// Both streams resolve the same URL, so Flutter's [ImageCache] de-dupes the fetch (no
-/// extra network round trip). Listener lifecycle is torn down on [dispose] / URL change
-/// (`mounted` guard avoids `setState` after dispose — design.md Risks).
+/// `liveProductImage`'s own internal `Image` exposes no natural-size callback. Both
+/// streams resolve the SAME provider — the URL at the large tier
+/// (rb-flutter-remote-image-downsampling) — so Flutter's [ImageCache] de-dupes them (one
+/// fetch, one decode), and the size that drives the layout is always the size of the
+/// large-tier decode, never the thumbnail-tier decode of the same URL. That decode is at
+/// least the container wide (or the source's own size when the source is smaller), aspect
+/// ratio preserved, so [computeScaleDownLetterboxSize] yields the same frame as it would
+/// for the source's full resolution. Listener lifecycle is torn down on [dispose] / URL
+/// change (`mounted` guard avoids `setState` after dispose).
 class _ScaleDownLetterboxFrame extends StatefulWidget {
   const _ScaleDownLetterboxFrame({
     required this.live,
@@ -1967,20 +1973,11 @@ class _ScaleDownLetterboxFrameState extends State<_ScaleDownLetterboxFrame> {
   ImageStreamListener? _listener;
   Size? _naturalSize;
 
-  @override
-  void initState() {
-    super.initState();
-    _resolve();
-  }
-
-  @override
-  void didUpdateWidget(covariant _ScaleDownLetterboxFrame oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url || oldWidget.live != widget.live) {
-      _naturalSize = null;
-      _resolve();
-    }
-  }
+  /// What [_stream] is currently resolving: the URL, and the request it was resolved for
+  /// (the sized provider itself; just the URL when the test seam supplies the provider —
+  /// a test provider need not implement `==`).
+  Object? _resolvedRequest;
+  String? _resolvedUrl;
 
   @override
   void dispose() {
@@ -1998,55 +1995,80 @@ class _ScaleDownLetterboxFrameState extends State<_ScaleDownLetterboxFrame> {
     _listener = null;
   }
 
-  void _resolve() {
+  /// Points the natural-size stream at [url] as requested by [request] (see
+  /// [_resolvedRequest]). No-op when it already is. A different URL forgets the previous natural size; the same URL at a different
+  /// request size keeps it until the new decode arrives (same image, same aspect ratio).
+  /// Called from `build`, so a synchronous (cache-hit) callback assigns directly instead
+  /// of `setState`.
+  void _ensureResolved(String url, Object request, ImageProvider provider) {
+    if (request == _resolvedRequest) return;
     _detach();
-    if (!widget.live) return;
-    final uri = _resolvableImageUri(widget.url);
-    if (uri == null) return;
-    final provider = scaleDownLetterboxImageProviderForTesting(uri.toString());
+    if (url != _resolvedUrl) _naturalSize = null;
+    _resolvedRequest = request;
+    _resolvedUrl = url;
     final stream = provider.resolve(const ImageConfiguration());
     final listener = ImageStreamListener(
       (ImageInfo info, bool synchronousCall) {
-        if (!mounted) return;
-        setState(() {
-          _naturalSize = Size(
-            info.image.width.toDouble(),
-            info.image.height.toDouble(),
-          );
-        });
+        final size = Size(info.image.width.toDouble(), info.image.height.toDouble());
+        if (synchronousCall) {
+          _naturalSize = size;
+        } else if (mounted) {
+          setState(() => _naturalSize = size);
+        }
       },
-      // Decode / network failure: leave `_naturalSize` null — the transitional branch
-      // stays active, and `liveProductImage`'s own errorBuilder already keeps its
+      // Decode / network failure: leave `_naturalSize` as is — with none, the transitional
+      // branch stays active, and `liveProductImage`'s own errorBuilder already keeps its
       // placeholder visible underneath. No rethrow (matches `liveProductImage`'s
       // existing swallow-on-error behavior).
       onError: (Object exception, StackTrace? stackTrace) {},
     );
-    stream.addListener(listener);
     _stream = stream;
     _listener = listener;
+    stream.addListener(listener);
+  }
+
+  void _forgetResolution() {
+    _detach();
+    _naturalSize = null;
+    _resolvedRequest = null;
+    _resolvedUrl = null;
+  }
+
+  Widget _transitional() {
+    return SizedBox(
+      height: widget.transitionalHeight,
+      width: double.infinity,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: liveProductImage(
+              live: widget.live,
+              url: widget.url,
+              placeholder: widget.placeholder,
+              tier: ReferenceUiImageTier.large,
+            ),
+          ),
+          widget.badge,
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final natural = _naturalSize;
-    if (!widget.live || natural == null) {
-      return SizedBox(
-        height: widget.transitionalHeight,
-        width: double.infinity,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: liveProductImage(
-                live: widget.live,
-                url: widget.url,
-                placeholder: widget.placeholder,
-              ),
-            ),
-            widget.badge,
-          ],
-        ),
-      );
+    final Uri? uri = widget.live ? _resolvableImageUri(widget.url) : null;
+    if (uri == null) {
+      // `live == false` (golden / demo) or no usable URL: placeholder only, no provider.
+      _forgetResolution();
+      return _transitional();
     }
+    final String url = uri.toString();
+    final ImageProvider? testProvider = scaleDownLetterboxImageProviderForTesting?.call(url);
+    final ImageProvider provider = testProvider ??
+        referenceUiRemoteImageProviderForTier(context, url, ReferenceUiImageTier.large);
+    _ensureResolved(url, testProvider == null ? provider : url, provider);
+    final natural = _naturalSize;
+    if (natural == null) return _transitional();
     return LayoutBuilder(
       builder: (context, constraints) {
         final size = computeScaleDownLetterboxSize(
@@ -2078,6 +2100,7 @@ class _ScaleDownLetterboxFrameState extends State<_ScaleDownLetterboxFrame> {
                       color: Colors.white,
                     ),
                     fit: BoxFit.scaleDown,
+                    tier: ReferenceUiImageTier.large,
                   ),
                 ),
                 widget.badge,

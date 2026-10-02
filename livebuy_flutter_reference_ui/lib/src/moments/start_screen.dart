@@ -9,6 +9,7 @@ import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'chevron_forward_glyph.dart';
 import 'loading_mark_animation_view.dart';
+import '../safearea/lb_safe_area.dart';
 
 // StartScreenView — family-4 moments surface 1 (start-lifecycle).
 //
@@ -378,18 +379,21 @@ class StartScreenView extends StatelessWidget {
   /// (rb-flutter-intro-progress-bar-interactive) bound to [introPosition] / [introDuration] /
   /// [introIsPlaying] — see [_cleanModeProgressBar].
   Widget _splashScreen(BuildContext context) {
-    final double safeAreaBottom = MediaQuery.of(context).padding.bottom;
+    // rb-flutter-edge-to-edge-safe-area-audit: read through `lbChromeSafeInsets` (bottom does not
+    // collapse while the keyboard is up) and also clear the left / right insets.
+    final EdgeInsets safe = lbChromeSafeInsets(MediaQuery.of(context));
+    final double safeAreaBottom = safe.bottom;
     return Stack(
       key: LbTestKeys.momentStart,
       fit: StackFit.expand,
       children: [
         if (!cleanMode)
           Positioned(
-            right: 12,
+            right: 12 + safe.right,
             bottom: 16 + safeAreaBottom,
             child: _skipPill(),
           ),
-        if (cleanMode) _cleanModeProgressBar(safeAreaBottom),
+        if (cleanMode) _cleanModeProgressBar(safe),
       ],
     );
   }
@@ -410,11 +414,11 @@ class StartScreenView extends StatelessWidget {
   /// readout meaningful here; the drag itself still tracks the finger correctly via the leaf's own
   /// internal `_dragRatio`, independent of `isScrubbing`). NOT wrapped in `IgnorePointer` — every
   /// one of `PlaybackProgressBarView`'s own gesture handlers IS reachable now.
-  Widget _cleanModeProgressBar(double safeAreaBottom) {
+  Widget _cleanModeProgressBar(EdgeInsets safe) {
     return Positioned(
-      left: 0,
-      right: 0,
-      bottom: splashProgressBarBottomInset(safeAreaBottom,
+      left: safe.left,
+      right: safe.right,
+      bottom: splashProgressBarBottomInset(safe.bottom,
           isAndroid: defaultTargetPlatform == TargetPlatform.android),
       child: PlaybackProgressBarView(
         theme: theme,

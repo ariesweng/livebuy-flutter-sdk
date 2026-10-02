@@ -262,6 +262,16 @@ class PlaybackProgressBarView extends StatefulWidget {
   /// Touch-up (or cancel) — the parent starts its 2.8s collapse timer from here.
   final VoidCallback? onScrubEnd;
 
+  /// Test-only time source (`docs/unit-test-discipline.md` `*ForTesting` naming convention) the
+  /// two drag throttles read (the [onSeek] throttle and the Android-only visual throttle).
+  /// `null` (production default) → the real wall clock (`DateTime.now`). Production code never
+  /// supplies a source of its own: the only production call site (`PlayerShellView`) forwards
+  /// its own test-only `nowProviderForTesting`, which is `null` outside tests. A widget test
+  /// injects a source it advances itself, so a throttle window opens and closes without real
+  /// time passing.
+  @visibleForTesting
+  final DateTime Function()? nowProviderForTesting;
+
   const PlaybackProgressBarView({
     super.key,
     required this.theme,
@@ -274,6 +284,7 @@ class PlaybackProgressBarView extends StatefulWidget {
     this.onSeek,
     this.onScrubStart,
     this.onScrubEnd,
+    this.nowProviderForTesting,
   });
 
   @override
@@ -310,6 +321,10 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
   /// reference-ui). `null` when idle.
   double? _latestRawRatio;
 
+  /// "Now" in epoch milliseconds from [PlaybackProgressBarView.nowProviderForTesting] (the real wall
+  /// clock unless a test supplied one).
+  int _nowMs() => (widget.nowProviderForTesting ?? DateTime.now)().millisecondsSinceEpoch;
+
   void _handleDrag(double localDx, double inset, double trackWidth,
       {required bool isStart}) {
     final ratio = trackWidth <= 0
@@ -330,7 +345,7 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
   /// applies immediately, same contract as [_emitSeek].
   void _updateDragVisual(double ratio, {required bool force}) {
     if (defaultTargetPlatform == TargetPlatform.android) {
-      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final nowMs = _nowMs();
       if (!shouldEmitDragSeek(_lastVisualUpdateMs, nowMs,
           force: force, minIntervalMs: _dragVisualThrottleMs)) {
         return;
@@ -343,7 +358,7 @@ class _PlaybackProgressBarViewState extends State<PlaybackProgressBarView> {
   /// Gates the actual [PlaybackProgressBarView.onSeek] call through [shouldEmitDragSeek]. [force]
   /// bypasses the throttle entirely (touch-down / release / cancel).
   void _emitSeek(double ratio, {required bool force}) {
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final nowMs = _nowMs();
     if (!shouldEmitDragSeek(_lastSeekEmitMs, nowMs, force: force)) return;
     _lastSeekEmitMs = nowMs;
     widget.onSeek?.call(ratio * widget.duration);

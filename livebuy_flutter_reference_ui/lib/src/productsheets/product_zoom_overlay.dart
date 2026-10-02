@@ -3,10 +3,12 @@ import 'package:livebuy_flutter/livebuy_flutter.dart' show LBSpec;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
     show LBProductDetailState;
 
+import '../reference_ui_remote_image.dart' show ReferenceUiImageTier;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'resolved_product_photo.dart';
 import 'sheet_scaffold.dart' show liveProductImage;
+import '../safearea/lb_safe_area.dart';
 
 // ProductImageZoomOverlay — family-3 product-image lightbox (rb-flutter-product-image-zoom-lightbox).
 //
@@ -148,6 +150,9 @@ class _ProductImageZoomOverlayState extends State<ProductImageZoomOverlay> {
     final photoUrl = (override != null && override.trim().isNotEmpty)
         ? override
         : resolveProductPhoto(detail: detail, selectedSpec: widget.selectedSpec).primaryPhoto;
+    // rb-flutter-edge-to-edge-safe-area-audit: the backdrop and the caption's gradient stay
+    // full-bleed; the close button and the caption TEXT clear the system insets.
+    final EdgeInsets safe = lbChromeSafeInsets(MediaQuery.of(context));
     // E2E key (INERT — KeyedSubtree paints nothing) on the overlay backdrop/root.
     return KeyedSubtree(
       key: LbTestKeys.zoomOverlay,
@@ -190,6 +195,9 @@ class _ProductImageZoomOverlayState extends State<ProductImageZoomOverlay> {
                         child: liveProductImage(
                           live: widget.live,
                           url: photoUrl,
+                          // Large tier — the SAME decode the product-detail main
+                          // image uses, sized to stay sharp at the max zoom.
+                          tier: ReferenceUiImageTier.large,
                           placeholder: DecoratedBox(
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
@@ -221,8 +229,8 @@ class _ProductImageZoomOverlayState extends State<ProductImageZoomOverlay> {
 
         // Top-right circular close button (self-drawn ✕).
         Positioned(
-          top: 14,
-          right: 14,
+          top: 14 + safe.top,
+          right: 14 + safe.right,
           child: GestureDetector(
             key: LbTestKeys.zoomClose,
             onTap: widget.onClose,
@@ -253,7 +261,8 @@ class _ProductImageZoomOverlayState extends State<ProductImageZoomOverlay> {
           bottom: 0,
           child: IgnorePointer(
             child: Container(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 22),
+              padding: EdgeInsets.fromLTRB(
+                  20 + safe.left, 18, 20 + safe.right, 22 + safe.bottom),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
                   colors: [Color(0x00000000), Color(0x99000000)], // transparent → black @ 0.6

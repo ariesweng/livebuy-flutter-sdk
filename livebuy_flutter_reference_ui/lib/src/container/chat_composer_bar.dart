@@ -5,6 +5,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'arrow_up_circle_fill_glyph.dart';
+import '../safearea/lb_safe_area.dart';
 
 // MARK: - ChatComposerBar — the on-demand chat composer (SheetKit-of-Flutter; new pixel)
 //
@@ -255,8 +256,14 @@ class _ChatComposerBarState extends State<ChatComposerBar> {
         // through the composer (parity iOS rb-ios-chat-composer-opaque); the old translucent
         // theme.background (white) let it bleed and clashed on a dark video.
         color: _barFill,
-        child: SafeArea(
+        // rb-flutter-edge-to-edge-safe-area-audit: the bar's fill (the `Material` above) reaches
+        // the physical bottom edge; the field + send button sit above whichever is TALLER — the
+        // navigation / gesture bar or the keyboard (not their sum). An edge-to-edge host does not
+        // resize for the keyboard, so the previous `SafeArea(top: false)` (whose bottom inset
+        // collapses to zero once the keyboard is up) left the bar underneath it.
+        child: LBSafeAreaPadding(
           top: false,
+          includeKeyboard: true,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
             child: Row(

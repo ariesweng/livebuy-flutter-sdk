@@ -171,6 +171,15 @@ class LiveOverlayChromeView extends StatelessWidget {
   /// existing call site / golden baseline is byte-identical.
   final double bottomInset;
 
+  /// System safe-area insets this surface still has to avoid (rb-flutter-edge-to-edge-safe-area-
+  /// audit, parity Android `LiveOverlayChrome`'s `lbSafeAreaPadding()` layers): the centered host
+  /// caption and gesture hints center inside the safe rect (all four edges), and the bottom row
+  /// (announce banner / pinned card) clears the LEFT / RIGHT insets. The bottom row's vertical
+  /// position is NOT derived from this — it stays driven by [bottomInset], into which the caller
+  /// already folds the bottom inset. Default `EdgeInsets.zero` → every existing call site /
+  /// golden baseline is byte-identical.
+  final EdgeInsets safeAreaInsets;
+
   const LiveOverlayChromeView({
     super.key,
     required this.theme,
@@ -185,6 +194,7 @@ class LiveOverlayChromeView extends StatelessWidget {
     this.isLive = true,
     this.autoFadeGestureHints = false,
     this.bottomInset = 0,
+    this.safeAreaInsets = EdgeInsets.zero,
   });
 
   @override
@@ -200,7 +210,7 @@ class LiveOverlayChromeView extends StatelessWidget {
         if (hostCaption.isNotEmpty)
           IgnorePointer(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12) + safeAreaInsets,
               child: Align(
                 alignment: const Alignment(0, -0.08), // ~46% height, centered
                 child: _hostCaptionOverlay(),
@@ -214,10 +224,15 @@ class LiveOverlayChromeView extends StatelessWidget {
         // two/three-row split baked into `_gestureHints()` itself.
         if (showGestureHints)
           IgnorePointer(
-            child: Center(
-              child: _FadingGestureHints(
-                autoFade: autoFadeGestureHints,
-                child: _gestureHints(),
+            // `Padding` is always present (zero by default) so the stateful fade below keeps
+            // its element when the insets change (e.g. on rotation).
+            child: Padding(
+              padding: safeAreaInsets,
+              child: Center(
+                child: _FadingGestureHints(
+                  autoFade: autoFadeGestureHints,
+                  child: _gestureHints(),
+                ),
               ),
             ),
           ),
@@ -235,7 +250,10 @@ class LiveOverlayChromeView extends StatelessWidget {
           child: Padding(
             // bottom: 64 base + bottomInset (rb-flutter-scrub-expanded-chrome-lift; default 0 →
             // byte-identical to the prior `const` padding).
-            padding: EdgeInsets.only(left: 8, right: 10, bottom: 64 + bottomInset),
+            padding: EdgeInsets.only(
+                left: 8 + safeAreaInsets.left,
+                right: 10 + safeAreaInsets.right,
+                bottom: 64 + bottomInset),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [

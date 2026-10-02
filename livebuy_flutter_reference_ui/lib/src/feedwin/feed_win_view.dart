@@ -11,6 +11,7 @@ import 'chat_feed_view.dart';
 import 'feed_win_model.dart';
 import 'win_claim_sheet_view.dart';
 import 'win_entry_view.dart';
+import '../safearea/lb_safe_area.dart';
 
 // rb-flutter-live-announce-chat-clearance (問題4) — the merged chat feed and the bottom-left
 // LBLiveAnnounce 公告橫幅 share the LIVE overlay's bottom space. The base anchor already clears
@@ -517,6 +518,10 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
   Widget _buildContent(BuildContext context) {
     final theme = widget.theme;
     final m = _model;
+    // rb-flutter-edge-to-edge-safe-area-audit：左／上／右讀 ambient MediaQuery；底部沿用容器轉發
+    // 的 widget.safeAreaBottom（同一條既有管線），兩者不重複。
+    final safeInsets = lbChromeSafeInsets(MediaQuery.of(context))
+        .copyWith(bottom: widget.safeAreaBottom);
 
     // The chat feed is live-chrome-family-only (真直播 OR 已結束直播回放,
     // rb-flutter-replay-live-chrome-parity — was LIVE-only, parity rb-ios-hide-chat-feed-in-vod
@@ -607,12 +612,14 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
               // left: 10 — 對齊 LIVE 底部 bar 購物袋鈕左側邊距（LiveBottomBarView._barHPadding = 10，
               // rb-flutter-live-chat-card-edge-align，parity iOS rb-ios-live-chat-card-edge-align；
               // 舊值 12 為既有平台間分歧，本次一併收斂）。
+              // rb-flutter-edge-to-edge-safe-area-audit：左右再加上系統左／右邊距（橫向 cutout／
+              // 側邊導覽列）。底部維持由 widget.safeAreaBottom 驅動。
               padding: EdgeInsets.only(
-                  left: 10,
+                  left: 10 + safeInsets.left,
                   bottom: liveChatBottomInset(m.hasAnnounce,
                       scrubHoldLifted: widget.scrubHoldLifted,
                       safeAreaBottom: widget.safeAreaBottom),
-                  right: widget.chatTrailingInset),
+                  right: widget.chatTrailingInset + safeInsets.right),
               // ActivityToastView (rb-flutter-activity-toast) sits ABOVE the chat stream,
               // both anchored together (Column, mainAxisSize.min) so they grow upward as a
               // unit — mirrors design `LBLiveChatStream`'s child order.
@@ -662,7 +669,14 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
         // entries are NOT mutually exclusive (design.md D2, carried over from
         // `rb-flutter-live-activity-sheet`) — either, both, or neither may be
         // showing at once; only which one gets the fixed primary anchor swapped.
+        //
+        // rb-flutter-edge-to-edge-safe-area-audit：兩顆入口所在的圖層內縮到 safe rect——`top: 25%`
+        // 以 safe rect 的高度計、`right: 12` 以 safe rect 的右緣計。邊距為零時與原本相同。
         Positioned.fill(
+          left: safeInsets.left,
+          top: safeInsets.top,
+          right: safeInsets.right,
+          bottom: safeInsets.bottom,
           child: LayoutBuilder(
             builder: (context, constraints) {
               final activityEntryVisible = m.hasActiveEvent;

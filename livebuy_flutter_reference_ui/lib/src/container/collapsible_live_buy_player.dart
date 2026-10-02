@@ -6,6 +6,7 @@ import 'package:livebuy_flutter/livebuy_flutter.dart'
     show LBSdkTheme, LBVideoItem, LivebuySDK;
 
 import '../reference_ui_theme.dart';
+import '../safearea/lb_safe_area.dart';
 import '../widget/live_buy_widget_visibility.dart';
 import 'live_buy_player.dart';
 import 'live_entry_close_gate.dart' show LiveEntryCloseGate;
@@ -442,9 +443,17 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
     final v = widget.video;
     if (v == null) return const SizedBox.shrink();
 
-    return LayoutBuilder(
+    // rb-flutter-edge-to-edge-safe-area-audit — the scope wraps the WHOLE presenter so the
+    // floating card below reads the insets this container still has to avoid itself. The
+    // keep-alive full-screen `LivebuyPlayer` carries its own (nested) scope.
+    return LBSafeAreaScope(
+      child: LayoutBuilder(
       builder: (context, constraints) {
         final containerSize = Size(constraints.maxWidth, constraints.maxHeight);
+        // The floating card rests in — and can only be dragged within — the safe rect: the
+        // container minus status bar / navigation-or-gesture bar / cutout. Zero insets → every
+        // value below is identical to before this read existed.
+        final EdgeInsets safe = lbChromeSafeInsets(MediaQuery.of(context));
         // Resting corner + current drag offset → `Positioned` edge insets
         // (rb-flutter-collapsible-player-floating-position-inset). Resting AND mid-drag share the
         // SAME geometry (`lbLiveEntryEdgeInset`, `offset: Offset.zero` when not dragging), matching
@@ -453,7 +462,8 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
         // is the only consumer).
         final LiveEntryEdgeInset edge = lbLiveEntryEdgeInset(
           position: _position,
-          inset: _resolvedInset,
+          inset: lbFloatingRestingInset(_resolvedInset, safe,
+              anchorsLeft: _position == LBFloatingEntryPosition.leftBottom),
           offset: _committedOffset + _dragTranslation,
         );
         // rb-flutter-player-material-ancestor-fix — this `Stack` has TWO sibling branches
@@ -503,7 +513,10 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
                         committed: _committedOffset,
                         translation: _dragTranslation,
                         cardSize: _cardSize,
-                        containerSize: containerSize,
+                        // Safe rect as the drag container — `clampFloatingOffset`'s own
+                        // contract (one `inset` defines both resting gap and drag bound) is
+                        // unchanged.
+                        containerSize: lbFloatingDragContainerSize(containerSize, safe),
                         inset: _resolvedInset,
                         position: _position,
                       );
@@ -514,7 +527,13 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
                       // The floating preview card is composed by the resolved design
                       // (granularity A). Default MinimalDesign = the verbatim
                       // `FloatingWidgetView`; a host injects its own via `config.design`.
-                      child: widget.config.design.floatingPlayerCard(
+                      //
+                      // The card is DESIGN-INJECTED content placed wholly inside the safe rect,
+                      // so the insets applied to its position are taken out of its `MediaQuery`
+                      // (a `SafeArea` inside a host card must not inset a second time).
+                      child: MediaQuery(
+                        data: lbConsumeSafeArea(MediaQuery.of(context), applied: safe),
+                        child: widget.config.design.floatingPlayerCard(
                         FloatingCardContext(
                           theme: _resolvedTheme,
                           // The SWITCHED video (rb-flutter-collapsible-player-track-switch): an
@@ -528,6 +547,7 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
                           onClose: _close,
                         ),
                       ),
+                      ),
                     ),
                   ),
                 ),
@@ -535,6 +555,7 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
           ),
         );
       },
+      ),
     );
   }
 }

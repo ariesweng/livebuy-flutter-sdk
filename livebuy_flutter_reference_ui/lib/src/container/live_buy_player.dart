@@ -14,6 +14,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart';
 
 import '../playershell/playback_progress_bar_view.dart' show formatPlaybackTimestamp;
 import '../reference_ui_theme.dart';
+import '../safearea/lb_safe_area.dart';
 import 'channel_chrome.dart';
 import 'chat_composer_bar.dart';
 import 'live_now_poll_controller.dart';
@@ -1453,6 +1454,20 @@ class LivebuyPlayer extends StatefulWidget {
 
 class _LivebuyPlayerState extends State<LivebuyPlayer>
     with WidgetsBindingObserver {
+  /// The safe-area-resolved `MediaQueryData` the overlay is built under
+  /// (rb-flutter-edge-to-edge-safe-area-audit) — written by [_buildOverlayUnder] right before
+  /// `_overlayContext` reads it. `null` only before the overlay's first build.
+  MediaQueryData? _safeArea;
+
+  /// Builds the overlay under the scope-resolved `MediaQuery`. The overlay is the ONLY part of
+  /// this container that depends on it, so when the scope's resolved insets change (host
+  /// transition, rotation) only this subtree rebuilds — not this State, the backdrop, or
+  /// `LivebuyPlayerCore`.
+  Widget _buildOverlayUnder(MediaQueryData resolved, Widget Function() build) {
+    _safeArea = resolved;
+    return build();
+  }
+
   late final LivebuyPlayerController _controller;
   late final ChatComposerController _composer;
 
@@ -1954,7 +1969,16 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     // (yellow double underline) because `DefaultTextStyle` (normally supplied by `Material`)
     // is missing. `MaterialType.transparency` paints no background/shadow of its own — it only
     // supplies the ancestor context — so this MUST NOT change any existing pixel output.
-    return Material(
+    //
+    // rb-flutter-edge-to-edge-safe-area-audit — `LBSafeAreaScope` is the Tier B safe-area
+    // measurement point. It applies NO padding (the backdrop + `LivebuyPlayerCore` video below
+    // stay full-bleed); it only hands its subtree a `MediaQuery` from which the part of the
+    // system insets the host has ALREADY handled — by consuming it (`SafeArea` / `Scaffold`) or
+    // by merely pushing this container away from the view edge with a plain `Padding` — is
+    // removed. A change of the resolved value rebuilds only `MediaQuery` dependents below the
+    // scope (the overlay `Builder`), not this State.
+    return LBSafeAreaScope(
+      child: Material(
       type: MaterialType.transparency,
       child: Stack(
         fit: StackFit.expand,
@@ -2067,8 +2091,15 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
           // chrome in the first place, so hiding it there would only regress a user still
           // browsing the rest of the host app.
           if (overlayChromeVisibleInPip(_isInPiP, defaultTargetPlatform))
-            widget.config.design.playerOverlay(_overlayContext(theme)),
+            Builder(
+              builder: (overlayContext) => _buildOverlayUnder(
+                MediaQuery.of(overlayContext),
+                () =>
+                    widget.config.design.playerOverlay(_overlayContext(theme)),
+              ),
+            ),
         ],
+      ),
       ),
     );
   }
@@ -2178,10 +2209,11 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       onScrubBarExpandedChange: (v) {
         if (v != _scrubBarExpanded) setState(() => _scrubBarExpanded = v);
       },
-      // 系統底部安全區（fix-flutter-player-shell-bottom-safearea-gaps）：鏡像 PlayerShellView 已讀取
-      // 的 MediaQuery.of(context).padding.bottom，轉發給合流聊天 feed（容器組出的 sibling surface，
-      // 拿不到 PlayerShellView 自己那份 MediaQuery 讀取）。
-      safeAreaBottom: MediaQuery.of(context).padding.bottom,
+      // 系統底部安全區（fix-flutter-player-shell-bottom-safearea-gaps）：與 PlayerShellView 讀同一個
+      // 值，轉發給合流聊天 feed。rb-flutter-edge-to-edge-safe-area-audit 起讀的是 `LBSafeAreaScope`
+      // 解析後的 `_safeArea`（host 已處理的部分已扣除），並改用 `lbChromeSafeInsets`——鍵盤升起時
+      // 不歸零。
+      safeAreaBottom: lbChromeSafeInsets(_safeArea ?? MediaQuery.of(context)).bottom,
       // Container-owned product LIST drawer open state (default closed; GOODS rail/bag tap opens
       // it via _routeRailItem; scrim/close dismisses) — parity iOS, no auto-present.
       productListPresented: _productListPresented,

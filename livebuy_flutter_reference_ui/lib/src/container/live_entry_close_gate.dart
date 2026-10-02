@@ -24,6 +24,8 @@
 // unit-testable. Only [LiveEntryCloseGate] touches a real clock, and it is a thin, intentionally
 // under-tested impure singleton (design instruction: "薄薄的一層 impure glue,不強求完整測試覆蓋").
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 /// The fixed close-grace window (rb-flutter-live-entry-close-grace-period): **2 seconds**,
 /// merchant-config-independent — NOT sourced from `extensions.floating_setting`, NOT a new wire
 /// field, NOT host-configurable. Consumed as [liveEntryCloseGraceRemainingMs]'s default `graceMs`.
@@ -66,20 +68,33 @@ class LiveEntryCloseGate {
 
   int? _lastClosedAtMs;
 
+  /// Test-only time source. `null` (production default) → the real wall clock
+  /// (`DateTime.now`). Production code never sets this. It lives on the singleton (not on a
+  /// widget) because the close timestamp is written by one container and read by another,
+  /// fully independent one — both must read the SAME clock. Cleared by [resetForTesting].
+  @visibleForTesting
+  DateTime Function()? nowProviderForTesting;
+
+  /// "Now" in epoch milliseconds — the one clock both [recordClose] and the reader
+  /// (`LivebuyLiveEntry`'s close-grace computation) use.
+  int nowMs() => (nowProviderForTesting ?? DateTime.now)().millisecondsSinceEpoch;
+
   /// Records "now" (real wall clock) as the last-close timestamp. Called by
   /// `CollapsibleLivebuyPlayer._close()` / its `onDismiss()` config seam — the two confirmed
   /// genuine user-close paths — and by no other call site.
   void recordClose() {
-    _lastClosedAtMs = DateTime.now().millisecondsSinceEpoch;
+    _lastClosedAtMs = nowMs();
   }
 
   /// The last recorded close timestamp (epoch ms), or `null` if the player has never been closed
   /// this process. Feed straight into [msSinceLastPlayerClose]'s `lastClosedAtMs`.
   int? get lastClosedAtMs => _lastClosedAtMs;
 
-  /// Test-only: clears the recorded timestamp so tests don't leak state across runs (this is a
-  /// process-wide singleton, not scoped to a widget's lifecycle).
+  /// Test-only: clears the recorded timestamp (and any injected time source) so tests don't
+  /// leak state across runs (this is a process-wide singleton, not scoped to a widget's
+  /// lifecycle).
   void resetForTesting() {
     _lastClosedAtMs = null;
+    nowProviderForTesting = null;
   }
 }

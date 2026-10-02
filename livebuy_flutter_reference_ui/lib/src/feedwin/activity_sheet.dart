@@ -4,6 +4,7 @@ import 'package:livebuy_flutter/livebuy_flutter.dart' show LBActiveEvent;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'win_glyph.dart';
+import '../safearea/lb_safe_area.dart';
 
 // ActivitySheetView — family-2 feed-win surface (直播抽獎「進行中活動」彈窗, Flutter).
 //
@@ -330,23 +331,28 @@ class _ActivitySheetViewState extends State<ActivitySheetView> {
           // Centered card (含浮出卡頂外的徽章). Outer Stack does NOT clip so the
           // badge can float above the card's top edge; the card itself clips its
           // own content via ClipRRect.
+          //
+          // rb-flutter-edge-to-edge-safe-area-audit: the scrim above stays full-bleed; the card
+          // layer is inset to the safe rect (centering + the 84% width are measured inside it).
           Positioned.fill(
-            child: Center(
-              child: FractionallySizedBox(
-                widthFactor: 0.84,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 320),
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      _card(),
-                      Positioned(
-                        top: -30,
-                        left: 0,
-                        right: 0,
-                        child: Center(child: _badge()),
-                      ),
-                    ],
+            child: LBSafeAreaPadding(
+              child: Center(
+                child: FractionallySizedBox(
+                  widthFactor: 0.84,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 320),
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        _card(),
+                        Positioned(
+                          top: -30,
+                          left: 0,
+                          right: 0,
+                          child: Center(child: _badge()),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),

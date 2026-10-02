@@ -67,12 +67,14 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart'
     show Material, MaterialPageRoute, MaterialType;
+import 'package:flutter/rendering.dart' show RenderStack;
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart'
     show LBVideoItem, LivebuySDK, SDKConfig;
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show LBUIOptions;
 
 import '../reference_ui_theme.dart';
+import '../safearea/lb_safe_area.dart';
 import '../widget/external_live.dart' show externalLiveAwareTap;
 import '../widget/floating_widget.dart';
 import 'collapsible_live_buy_player.dart' show clampFloatingOffset;
@@ -344,7 +346,14 @@ class LivebuyLiveEntry extends StatefulWidget {
 // profile 直接拋 “multiple tickers were created”。`immediate` 仍然**一個 Ticker 都不建**
 // （`_setUpEntrance` 對非 `delay` early-return），本 mixin 只是允許「一生中先後建立多個」。
 class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, LBSafeAreaPlacementTracking<LivebuyLiveEntry> {
+  /// rb-flutter-edge-to-edge-safe-area-audit — this container returns a bare `Positioned` (it
+  /// MUST be a direct child of the host's `Stack`), so it cannot wrap itself in an
+  /// `LBSafeAreaScope`. The frame it is positioned against is that `Stack`, so that is the box
+  /// whose placement decides how much of the system insets the host already handled.
+  @override
+  RenderBox? lbSafeAreaTargetBox() => context.findAncestorRenderObjectOfType<RenderStack>();
+
   LiveEntryState _state = initialLiveEntryState;
   late ReferenceUITheme _theme;
   StreamSubscription<void>? _liveEndedSub;
@@ -481,7 +490,7 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
   int _closeGraceRemainingMs() => liveEntryCloseGraceRemainingMs(
         msSinceClose: msSinceLastPlayerClose(
           lastClosedAtMs: LiveEntryCloseGate.instance.lastClosedAtMs,
-          nowMs: DateTime.now().millisecondsSinceEpoch,
+          nowMs: LiveEntryCloseGate.instance.nowMs(),
         ),
       );
 
@@ -657,6 +666,14 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
     // `_reconcileAppearance`'s non-delay early-return. So that path is byte-identical to before.
     // NOTE: do NOT restate this as "nothing rewrites the gate on the immediate path" — a
     // `delay -> immediate` hot swap DOES write it, and must (see the spec's warning on this).
+    //
+    // rb-flutter-edge-to-edge-safe-area-audit — resolved BEFORE the early return on purpose: the
+    // placement measurement runs from here, so it keeps tracking the host `Stack` while the entry
+    // is hidden and the entry's FIRST visible frame already has the position-corrected insets
+    // (no one-frame double inset each time it reappears). `safe` is what the host has NOT already
+    // handled (consumed via `SafeArea` / `Scaffold`, or pushed the host `Stack` away from the
+    // view edge). Zero → `inset` and the drag container below are identical to before.
+    final EdgeInsets safe = lbChromeSafeInsets(lbResolveSafeArea(context).resolved);
     final live = _state.live;
     if (_state.dismissed || live == null || !_appeared) return const SizedBox.shrink();
 
@@ -716,7 +733,10 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
     // as the outermost node while still giving every `Text` beneath it a `Material` ancestor.
     final materialShown = Material(type: MaterialType.transparency, child: shown);
 
-    final inset = widget.config.inset;
+    // rb-flutter-edge-to-edge-safe-area-audit — the entry rests in, and is dragged within, the
+    // safe rect (`safe` is resolved at the top of this method).
+    final inset = lbFloatingRestingInset(widget.config.inset, safe,
+        anchorsLeft: _position == LBFloatingEntryPosition.leftBottom);
 
     if (!widget.config.draggable) {
       // 這個分支在 `position` 落地前**就已經**是一個帶顯式 `right` + `bottom` 的 `Positioned`
@@ -751,8 +771,8 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
             committed: _committed,
             translation: _drag,
             cardSize: _cardSize,
-            containerSize: MediaQuery.sizeOf(context),
-            inset: inset,
+            containerSize: lbFloatingDragContainerSize(MediaQuery.sizeOf(context), safe),
+            inset: widget.config.inset,
             position: _position, // clamp 的可拖曳方向必須跟著錨點換邊
           );
           _drag = Offset.zero;

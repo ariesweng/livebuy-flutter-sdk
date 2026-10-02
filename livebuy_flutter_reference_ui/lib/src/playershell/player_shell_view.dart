@@ -14,6 +14,7 @@ import '../sheet_slide_transition.dart';
 import '../testing/lb_test_keys.dart';
 import 'now_introducing_carousel.dart';
 import '../reference_ui_theme.dart';
+import '../safearea/lb_safe_area.dart';
 import 'caption_overlay_view.dart';
 import 'contact_glyph.dart';
 import 'contact_merchant_modal.dart';
@@ -894,6 +895,15 @@ class PlayerShellView extends StatefulWidget {
   @visibleForTesting
   final bool cleanModeForTesting;
 
+  /// Test-only time source (`docs/unit-test-discipline.md` `*ForTesting` naming convention) for
+  /// the seekable branch's double-tap-seek window ([kDoubleTapSeekWindowMs]) and, forwarded
+  /// as-is, for the progress bar's drag throttles (`PlaybackProgressBarView.nowProviderForTesting`).
+  /// `null` (production default) → the real wall clock (`DateTime.now`), unchanged behavior. A
+  /// widget test injects a source it advances itself, so "two taps inside / outside the window"
+  /// does not depend on how much real time the test happened to take.
+  @visibleForTesting
+  final DateTime Function()? nowProviderForTesting;
+
   const PlayerShellView({
     super.key,
     this.template,
@@ -932,6 +942,7 @@ class PlayerShellView extends StatefulWidget {
     this.onSeek,
     this.subtitleVttFetcherForTesting,
     this.cleanModeForTesting = false,
+    this.nowProviderForTesting,
   });
 
   @override
@@ -1060,7 +1071,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// commits a seek via [_commitSeek]; a miss (re)schedules the deferred toggle and remembers
   /// this tap's time/zone as the new pairing candidate.
   void _handleSeekableTap(TapZone zone) {
-    final now = DateTime.now();
+    final now = (widget.nowProviderForTesting ?? DateTime.now)();
     final lastAt = _lastSeekTapAt;
     final elapsedMs = lastAt == null ? null : now.difference(lastAt).inMilliseconds;
     if (isDoubleTapSeekHit(elapsedMs: elapsedMs, sameZone: zone == _lastSeekTapZone)) {
@@ -1595,7 +1606,15 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     // `PlaybackProgressBarView` slot (`rb-flutter-player-shell-bottom-safearea`) keeps its OWN
     // separate inline `MediaQuery.of(context).padding.bottom` read further below — deliberately
     // not unified with this local, see design.md Decision 4.
-    final safeAreaBottom = MediaQuery.of(context).padding.bottom;
+    //
+    // rb-flutter-edge-to-edge-safe-area-audit: the read goes through `lbChromeSafeInsets` — the
+    // bottom no longer collapses to zero while the keyboard is up (chrome MUST NOT move with the
+    // keyboard), and the left / right insets (landscape cutout / side navigation bar) are now
+    // read too. `safeAreaBottom` keeps feeding every existing bottom-inset function unchanged.
+    final safeInsets = lbChromeSafeInsets(MediaQuery.of(context));
+    final safeAreaBottom = safeInsets.bottom;
+    final safeLeft = safeInsets.left;
+    final safeRight = safeInsets.right;
 
     // UPCOMING (直播預告 awaitingLive) wears the design's LIVE chrome instead of the
     // LIVE / VOD chrome. Priority upcoming > live > vod — early-return so the
@@ -1605,7 +1624,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     // already hidden since isLive == false) + the SLIM LIVE bottom bar. NO VOD side
     // rail / floating bag / mini-cart / LiveOverlayChrome / info panel. Flutter
     // parity of iOS PlayerShellView's upcoming branch / Android UpcomingScaffold.
-    if (m.isUpcoming) return _buildUpcoming(theme, m, safeAreaBottom);
+    if (m.isUpcoming) return _buildUpcoming(theme, m, safeInsets);
 
     // rb-flutter-vod-playback-progress-bar display gate — `isMain` reuses the SAME expression
     // that already gates the VOD side rail / floating bag / now-introducing carousel (not
@@ -1795,6 +1814,10 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               // safearea-gaps，補齊系統底部安全區——比照 liveBottomBarBottomInset 等既有慣例）。
               bottomInset: safeAreaBottom +
                   ((_scrubBarExpanded && !_isScrubbing) ? _scrubChromeLift : 0.0),
+              // rb-flutter-edge-to-edge-safe-area-audit: the centered host caption / gesture
+              // hints center inside the safe rect, and the bottom row clears the side insets.
+              // The bottom edge of the bottom row stays driven by `bottomInset` above.
+              safeAreaInsets: safeInsets,
             ),
           )
         else if (!m.introPlaying)
@@ -1802,7 +1825,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
           // ALL products whose [beginTime,endTime) window contains the playhead
           // (`m.vodActiveProducts`), minus locally dismissed. Anchored bottom-leading; trailing
           // inset clears the bottom-anchored side rail (rb-flutter-now-introducing，問題 9/10/1).
-          ..._buildNowIntroducing(m, theme, safeAreaBottom),
+          ..._buildNowIntroducing(m, theme, safeInsets),
 
         // VOD closed-caption line (rb-flutter-subtitle-vtt-caption-display). Independent Stack
         // sibling of the now-introducing carousel above, bottom-centered, lifted the same
@@ -1835,7 +1858,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // so the vertical `bottom` position can correctly clear `LiveBottomBarView` in the
         // `isFinishedLiveReplay` branch — same local this `_buildContent` scope already computes
         // and feeds to every other bottom-pinned chrome element's own inset function.
-        ..._buildSubtitleCaption(m, theme, m.isLive, safeAreaBottom),
+        ..._buildSubtitleCaption(m, theme, m.isLive, safeInsets),
 
         // Surfaces 1 + 2 — top bar pinned top, side rail pinned trailing.
         Column(
@@ -1925,7 +1948,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                   // transport bar.
                   Padding(
                     padding: EdgeInsets.only(
-                        right: 12,
+                        right: 12 + safeRight,
                         // rb-flutter-player-shell-bottom-chrome-safearea: clears the system
                         // bottom safe area on top of the existing `_scrubBarExpanded` lift.
                         bottom: vodSideRailBottomInset(safeAreaBottom,
@@ -1963,7 +1986,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
             alignment: Alignment.bottomRight,
             child: Padding(
               padding: EdgeInsets.only(
-                  right: 12,
+                  right: 12 + safeRight,
                   // rb-flutter-player-shell-bottom-chrome-safearea: clears the system bottom
                   // safe area on top of the existing `_scrubBarExpanded` lift.
                   bottom: floatingBagButtonBottomInset(safeAreaBottom,
@@ -1991,7 +2014,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // 切到 `false`，同時與視訊區域單擊退出共用同一個會正確通知容器的出口）。
         if (_cleanMode)
           Positioned(
-            left: 14,
+            left: 14 + safeLeft,
             bottom: cleanModeExitButtonBottomInset(safeAreaBottom, isLive: m.isLive),
             child: _CleanModeExitButton(onTap: _toggleCleanMode),
           ),
@@ -2029,6 +2052,8 @@ class _PlayerShellViewState extends State<PlayerShellView> {
               // rb-flutter-player-shell-bottom-chrome-safearea: clears the system bottom safe
               // area on top of the existing `_scrubBarExpanded` lift.
               padding: EdgeInsets.only(
+                  left: safeLeft,
+                  right: safeRight,
                   bottom: liveBottomBarBottomInset(safeAreaBottom,
                       lift: _scrubBarExpanded ? _scrubChromeLift : 0.0)),
               child: LiveBottomBarView(
@@ -2089,10 +2114,12 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // 時愛心 burst 浮在已隱藏的底部 bar 上方、失去錨點）；位置維持 `bottom: 64` 不加
         // `_scrubChromeLift`——burst 本身是瞬時動畫（觸發後自行淡出），與其餘常駐 chrome 的
         // 「放開後停留提升」語意不同，不需要跟著底部 bar 一起上移。
+        // rb-flutter-edge-to-edge-safe-area-audit: the anchor follows the bottom bar's heart
+        // button, which itself sits above the system bottom / inside the right inset.
         if (usesLiveChrome && !_cleanMode && !_isScrubbing)
           Positioned(
-            right: 18,
-            bottom: 64,
+            right: 18 + safeRight,
+            bottom: 64 + safeAreaBottom,
             child: HeartBurst(theme: theme, tick: _liveHeartTick),
           ),
 
@@ -2127,8 +2154,8 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         if (showsProgressBar)
           Positioned(
             key: const ValueKey('lb-playback-progress-bar-slot'),
-            left: 0,
-            right: 0,
+            left: safeLeft,
+            right: safeRight,
             // rb-flutter-player-shell-bottom-safearea: EXPANDED state lifts the slot clear of
             // the system bottom safe area (home indicator / Android gesture bar); IDLE state
             // stays flush to the physical bottom edge (`0`) regardless of the ambient safe area
@@ -2138,12 +2165,13 @@ class _PlayerShellViewState extends State<PlayerShellView> {
             // parameter — MediaQuery is already an ancestor by the time this executes, no nested
             // `Builder` needed.
             bottom: progressBarBottomSafeAreaInset(
-              MediaQuery.of(context).padding.bottom,
+              lbChromeSafeInsets(MediaQuery.of(context)).bottom,
               expanded: progressBarExpanded,
               isAndroid: defaultTargetPlatform == TargetPlatform.android,
             ),
             child: PlaybackProgressBarView(
               theme: theme,
+              nowProviderForTesting: widget.nowProviderForTesting,
               position: m.playbackPosition,
               duration: m.playbackDuration,
               isPlaying: m.isPlaybackPlaying,
@@ -2173,10 +2201,14 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         if (showsLiveNowPillNow)
           Align(
             alignment: Alignment.centerRight,
-            child: LiveNowPillView(
-              theme: theme,
-              live: widget.live,
-              onTap: widget.onGoLive,
+            // rb-flutter-edge-to-edge-safe-area-audit: pinned to the safe rect's right edge.
+            child: Padding(
+              padding: EdgeInsets.only(right: safeRight),
+              child: LiveNowPillView(
+                theme: theme,
+                live: widget.live,
+                onTap: widget.onGoLive,
+              ),
             ),
           ),
 
@@ -2325,8 +2357,13 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// (`design/templates/minimal/sdk-components.jsx:908` `LBPMiniCart`'s `bottom: 12 + safeBottom`)
   /// — MUST feed the SAME `MediaQuery.of(context).padding.bottom` value `_buildContent` already
   /// reads for every other bottom-pinned chrome in this file.
+  ///
+  /// rb-flutter-edge-to-edge-safe-area-audit: takes the whole [safeInsets] — `bottom` is the SAME
+  /// value described above; `left` / `right` are added to the horizontal padding so the card
+  /// clears a landscape cutout / side navigation bar.
   List<Widget> _buildNowIntroducing(
-      PlayerShellModel m, ReferenceUITheme theme, double safeAreaBottom) {
+      PlayerShellModel m, ReferenceUITheme theme, EdgeInsets safeInsets) {
+    final safeAreaBottom = safeInsets.bottom;
     // 乾淨模式（rb-flutter-gesture-clean-mode-rewrite）：與拖曳進度條同一個「不畫」出口。
     if (_isScrubbing || _cleanMode) return const [];
     final introducing = m.vodActiveProducts
@@ -2352,7 +2389,9 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         bottom: 0,
         child: Padding(
           padding: EdgeInsets.only(
-              left: 8, right: railShown ? 60 : 8, bottom: safeAreaBottom + 12 + lift),
+              left: 8 + safeInsets.left,
+              right: (railShown ? 60 : 8) + safeInsets.right,
+              bottom: safeAreaBottom + 12 + lift),
           child: NowIntroducingCarousel(
             theme: theme,
             peeks: [
@@ -2426,8 +2465,12 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// `_scrubChromeLift` lift-on-release behavior is preserved unchanged (still applied via [lift],
   /// now folded into [captionOverlayBottomInset] instead of being added inline here) — this
   /// requirement predates and is orthogonal to the vertical-position fix itself.
+  ///
+  /// rb-flutter-edge-to-edge-safe-area-audit: takes the whole [safeInsets] — `bottom` is the
+  /// [safeAreaBottom] described above; `left` / `right` shift the centering box into the safe rect.
   List<Widget> _buildSubtitleCaption(
-      PlayerShellModel m, ReferenceUITheme theme, bool isLive, double safeAreaBottom) {
+      PlayerShellModel m, ReferenceUITheme theme, bool isLive, EdgeInsets safeInsets) {
+    final safeAreaBottom = safeInsets.bottom;
     final effectiveCaption =
         VTTSubtitleParser.activeCue(_subtitleCues, m.playbackPosition)?.text ?? '';
     final shows = shouldShowSubtitleCaption(
@@ -2446,8 +2489,8 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         isFinishedLiveReplay: m.isFinishedLiveReplay, lift: lift);
     return [
       Positioned(
-        left: 8,
-        right: rightInset,
+        left: 8 + safeInsets.left,
+        right: rightInset + safeInsets.right,
         bottom: bottomInset,
         child: Align(
           alignment: Alignment.center,
@@ -2479,8 +2522,13 @@ class _PlayerShellViewState extends State<PlayerShellView> {
   /// `MediaQuery.of(context).padding.bottom` read, threaded in as a plain `double` — this method
   /// has no `BuildContext` of its own (see design.md Decision 3). Feeds the SLIM
   /// [LiveBottomBarView] call site's outer `Padding` via [liveBottomBarBottomInset].
+  ///
+  /// rb-flutter-edge-to-edge-safe-area-audit: takes the whole [safeInsets] (`bottom` is the
+  /// [safeAreaBottom] described above) so the slim bottom bar and the heart-burst anchor also
+  /// clear the left / right insets.
   Widget _buildUpcoming(
-      ReferenceUITheme theme, PlayerShellModel m, double safeAreaBottom) {
+      ReferenceUITheme theme, PlayerShellModel m, EdgeInsets safeInsets) {
+    final safeAreaBottom = safeInsets.bottom;
     // fix-flutter-endscreen-close-button-blocked: same override as `_buildContent`'s
     // main branch (this method has no closure over that local, so it is recomputed
     // here verbatim) — logically unlikely to coexist with an upcoming (直播預告)
@@ -2583,6 +2631,8 @@ class _PlayerShellViewState extends State<PlayerShellView> {
           alignment: Alignment.bottomCenter,
           child: Padding(
             padding: EdgeInsets.only(
+                left: safeInsets.left,
+                right: safeInsets.right,
                 bottom: liveBottomBarBottomInset(safeAreaBottom, lift: 0.0)),
             child: LiveBottomBarView(
               theme: theme,
@@ -2605,8 +2655,8 @@ class _PlayerShellViewState extends State<PlayerShellView> {
 
         // 愛心 burst 錨於 slim 底部 bar 愛心上方（靜止態不畫 → golden 中立）。
         Positioned(
-          right: 18,
-          bottom: 64,
+          right: 18 + safeInsets.right,
+          bottom: 64 + safeAreaBottom,
           child: HeartBurst(theme: theme, tick: _liveHeartTick),
         ),
       ],

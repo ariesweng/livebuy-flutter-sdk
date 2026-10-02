@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import '../safearea/lb_safe_area.dart';
 
 // MARK: - GuestNameEditModalView — family-6 gap-surface 2 (guest nickname-edit modal)
 //
@@ -254,10 +255,17 @@ class _GuestNameEditModalViewState extends State<GuestNameEditModalView> {
         // Centered card (LBPAlertModal — card + floating logo 徽章). The 徽章 floats
         // above the card's top edge, so the centered area reserves its overhang via a
         // top padding equal to half the 徽章 height (see `_card`).
-        Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 28),
-            child: _card(theme),
+        //
+        // rb-flutter-edge-to-edge-safe-area-audit: the scrim above stays full-bleed; the card
+        // centers inside the safe rect MINUS the keyboard, so the name field is not covered when
+        // the host window does not resize for the keyboard.
+        LBSafeAreaPadding(
+          includeKeyboard: true,
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 28),
+              child: _card(theme),
+            ),
           ),
         ),
       ],

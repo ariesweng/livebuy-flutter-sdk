@@ -5,6 +5,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'lock_glyph.dart';
+import '../safearea/lb_safe_area.dart';
 
 // AuthGateModalView — family-6 gap-surfaces surface 1 (「請先登入」auth-gate modal).
 //
@@ -177,21 +178,24 @@ class AuthGateModalView extends StatelessWidget {
       onTap: onDismiss,
       child: ColoredBox(
         color: Colors.black.withValues(alpha: 0.55),
-        child: Center(
-          // The card+badge sit in a Stack so the badge can overhang the card top
-          // (design `top: -30`) while the GestureDetector below blocks the tap from
-          // dismissing when the user taps INSIDE the card.
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {}, // absorb taps on the card (do NOT dismiss)
-            child: Stack(
-              clipBehavior: Clip.none,
-              alignment: Alignment.topCenter,
-              children: [
-                _card(bodyCopy),
-                // Accent lock badge overhangs the card top (design `top: -30`).
-                Positioned(top: -30, child: _lockBadge()),
-              ],
+        // rb-flutter-edge-to-edge-safe-area-audit: scrim full-bleed, card centered in the safe rect.
+        child: LBSafeAreaPadding(
+          child: Center(
+            // The card+badge sit in a Stack so the badge can overhang the card top
+            // (design `top: -30`) while the GestureDetector below blocks the tap from
+            // dismissing when the user taps INSIDE the card.
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {}, // absorb taps on the card (do NOT dismiss)
+              child: Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.topCenter,
+                children: [
+                  _card(bodyCopy),
+                  // Accent lock badge overhangs the card top (design `top: -30`).
+                  Positioned(top: -30, child: _lockBadge()),
+                ],
+              ),
             ),
           ),
         ),

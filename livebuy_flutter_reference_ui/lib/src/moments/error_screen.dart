@@ -7,6 +7,7 @@ import '../testing/lb_test_keys.dart';
 import 'arrow_clockwise_glyph.dart';
 import 'arrow_up_circle_glyph.dart';
 import 'wifi_slash_glyph.dart';
+import '../safearea/lb_safe_area.dart';
 
 // ErrorScreenView — family-4 player moment surface 3 (full-screen terminal error).
 //
@@ -153,21 +154,25 @@ class ErrorScreenView extends StatelessWidget {
     return ColoredBox(
       key: LbTestKeys.momentError,
       color: _scrim,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 320),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 36),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                _iconBadge(copy.icon, copy.accentTinted),
-                const SizedBox(height: 16),
-                _messageBlock(copy),
-                const SizedBox(height: 22),
-                _actions(copy),
-              ],
+      // rb-flutter-edge-to-edge-safe-area-audit: scrim full-bleed, content centered in the safe
+      // rect.
+      child: LBSafeAreaPadding(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 320),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 36),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  _iconBadge(copy.icon, copy.accentTinted),
+                  const SizedBox(height: 16),
+                  _messageBlock(copy),
+                  const SizedBox(height: 22),
+                  _actions(copy),
+                ],
+              ),
             ),
           ),
         ),

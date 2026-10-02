@@ -239,11 +239,12 @@ class PlayerOverlayContext {
   /// site (which never sets this) is unaffected.
   final bool scrubHoldLifted;
 
-  /// The system bottom safe area (home indicator / Android gesture bar), mirrored from
-  /// `LivebuyPlayer`'s own `MediaQuery.of(context).padding.bottom` read (fix-flutter-player-shell-
-  /// bottom-safearea-gaps) — bubbled through the SAME container pipeline as [scrubHoldLifted],
-  /// since the chat feed is a container-composed sibling surface that cannot read
-  /// `PlayerShellView`'s own `MediaQuery` lookup directly. Default `0` → every existing
+  /// The system bottom safe area (home indicator / Android gesture bar) the container still has
+  /// to avoid itself (fix-flutter-player-shell-bottom-safearea-gaps) — bubbled through the SAME
+  /// container pipeline as [scrubHoldLifted] to the chat feed. `LivebuyPlayer` feeds the bottom
+  /// of its safe-area-resolved `MediaQuery` (rb-flutter-edge-to-edge-safe-area-audit: what the
+  /// host already handled is taken out, and it does not collapse while the keyboard is up) — the
+  /// same value `PlayerShellView` reads for its own bottom chrome. Default `0` → every existing
   /// `PlayerOverlayContext(...)` call site (which never sets this) is unaffected.
   final double safeAreaBottom;
 

@@ -14,6 +14,7 @@ import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'gift_glyph.dart';
 import 'win_glyph.dart';
+import '../safearea/lb_safe_area.dart';
 
 // WinClaimSheetView — family-2 feed-win surface 3 (四階段領獎 modal，含 email 輸入，Flutter).
 //
@@ -555,7 +556,13 @@ class _WinClaimSheetViewState extends State<WinClaimSheetView> {
   @override
   Widget build(BuildContext context) {
     final stage = _stage;
-    final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+    final mq = MediaQuery.of(context);
+    // rb-flutter-edge-to-edge-safe-area-audit: the card layer is inset to the safe rect (the
+    // scrim stays full-bleed), so the keyboard overlap is measured from the safe rect's bottom
+    // edge — the part of the keyboard that the bottom inset already covers is not counted twice.
+    final safeInsets = lbChromeSafeInsets(mq);
+    final keyboardHeight =
+        (mq.viewInsets.bottom - safeInsets.bottom).clamp(0.0, double.infinity).toDouble();
     if (keyboardHeight > 0) _scheduleCardMeasure();
 
     return GestureDetector(
@@ -583,6 +590,10 @@ class _WinClaimSheetViewState extends State<WinClaimSheetView> {
 
           // 底卡（含浮出卡頂外的徽章）。鍵盤彈出時整體上移，位移由純函式決定。
           Positioned.fill(
+            left: safeInsets.left,
+            top: safeInsets.top,
+            right: safeInsets.right,
+            bottom: safeInsets.bottom,
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final shift = winClaimKeyboardShift(
