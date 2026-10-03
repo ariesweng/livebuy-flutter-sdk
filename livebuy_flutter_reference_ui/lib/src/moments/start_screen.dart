@@ -159,10 +159,12 @@ String? resolveLoadingCoverUrl({required bool live, required String? urlString})
 /// would only ever affect the visual bottom offset of one non-interactive bar — low blast radius —
 /// and any future divergence is easy to catch by diffing the two doc comments. Unit-testable
 /// without a widget.
-double splashProgressBarBottomInset(double safeAreaBottom, {required bool isAndroid}) {
-  final adjusted = safeAreaBottom - (isAndroid ? 8.0 : 0.0);
-  return adjusted < 0 ? 0 : adjusted;
-}
+///
+/// rb-flutter-progress-bar-full-bottom-inset (2026-10-03): kept in step with `progressBarBottomSafeAreaInset` — the full
+/// system bottom safe area on every platform (Android native parity); [isAndroid] no longer
+/// changes the result.
+double splashProgressBarBottomInset(double safeAreaBottom, {required bool isAndroid}) =>
+    safeAreaBottom < 0 ? 0 : safeAreaBottom;
 
 /// The family-4 start-lifecycle surface. Dispatches by [phase]: a full-screen brand
 /// loader (`loading`), nothing (`buffering`), a lightweight bottom-right skip pill over
@@ -218,6 +220,13 @@ class StartScreenView extends StatelessWidget {
   /// staying at their old static defaults.
   final bool cleanMode;
 
+  /// rb-flutter-skip-intro-under-product-sheets — `true` while any product sheet (list / detail /
+  /// …) is presented. The design layers the sheets ABOVE the skip pill (`LBPBottomSheet` zBase 30 vs
+  /// `LBPSkipIntroButton` zIndex 23), so the pill is covered; this container paints moments above
+  /// the sheets, so it hides the pill instead (same visual result). Default `false` keeps every
+  /// existing call site byte-identical.
+  final bool sheetsPresented;
+
   /// The opening MP4 preroll's OWN current playback position, in seconds — NOT the main video's
   /// position. Only read while [cleanMode] is `true`; ignored (and the progress bar not composed
   /// at all) otherwise. Default `0` (inert for any call site that doesn't also pass
@@ -266,6 +275,7 @@ class StartScreenView extends StatelessWidget {
     this.coverUrl = '',
     this.live = false,
     this.cleanMode = false,
+    this.sheetsPresented = false,
     this.introPosition = 0,
     this.introDuration = 0,
     this.introIsPlaying = true,
@@ -387,7 +397,7 @@ class StartScreenView extends StatelessWidget {
       key: LbTestKeys.momentStart,
       fit: StackFit.expand,
       children: [
-        if (!cleanMode)
+        if (!cleanMode && !sheetsPresented)
           Positioned(
             right: 12 + safe.right,
             bottom: 16 + safeAreaBottom,

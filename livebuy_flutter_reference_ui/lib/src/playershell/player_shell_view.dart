@@ -383,14 +383,19 @@ bool showsPlaybackProgressBar({
 /// player-shell chrome (clean-mode exit button, floating bag, VOD side rail, LIVE bottom bar) is
 /// unaffected and out of scope for this function (see design.md Non-Goals). Unit-testable without
 /// a widget.
+///
+/// **rb-flutter-progress-bar-full-bottom-inset (2026-10-03, supersedes the Android `- 8` term above):** the slot now clears
+/// the FULL system bottom safe area on every platform, matching Android native
+/// (`PlayerShellView.kt` wraps the bar in `lbSafeAreaPadding()`), iOS (SwiftUI automatic safe-area
+/// avoidance) and RN (`bottom: safeArea.bottom`). The design's Android `- 8` let the bar dip 8dp
+/// into the gesture-bar area; the user chose Android native as the cross-platform reference.
+/// [expanded] / [isAndroid] are kept for call-site and test parity and no longer change the result.
 double progressBarBottomSafeAreaInset(
   double safeAreaBottom, {
   required bool expanded,
   required bool isAndroid,
-}) {
-  final adjusted = safeAreaBottom - (isAndroid ? 8.0 : 0.0);
-  return adjusted < 0 ? 0 : adjusted;
-}
+}) =>
+    safeAreaBottom < 0 ? 0 : safeAreaBottom;
 
 /// PURE: the「退出乾淨模式」小圓鈕的完整 `bottom` offset (rb-flutter-player-shell-bottom-chrome-
 /// safearea), closing the first of the 4 bottom-pinned chrome gaps `rb-flutter-player-shell-bottom-

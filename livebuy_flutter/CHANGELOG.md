@@ -6,6 +6,28 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.9.0 - 2026-10-03
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> `livebuy_flutter`、`livebuy_flutter_ui`：無內容變更、僅隨版號；`livebuy_flutter_reference_ui`：兩個修正。
+> `StartScreenView`／`MomentsOverlayView` 新增帶預設值的 `sheetsPresented` 參數（向後相容的公開 API 新增），故為
+> minor、無 BREAKING。原生 pin 不變（Android `4.26.1`、iOS `~> 4.23`）。
+
+### Added
+
+- `StartScreenView`／`MomentsOverlayView` 新增 `sheetsPresented`（預設 `false`，`livebuy_flutter_reference_ui`）：為
+  `true` 時不畫「略過介紹」鈕。
+
+### Fixed
+
+- **開場影片播放中打開商品面板，「略過介紹」鈕仍顯示在面板上方**（`rb-flutter-skip-intro-under-product-sheets`）：
+  依設計稿層級（商品面板高於略過鈕），任一商品面板開著時隱藏略過鈕，關閉後恢復。
+- **Android 上進度條壓到系統手勢列**（`rb-flutter-progress-bar-full-bottom-inset`）：播放器進度條與開場影片乾淨
+  模式的進度條原本只抬「系統底部邊距 − 8」，改為抬整段系統底部邊距，與 iOS／Android 原生／RN 一致。iOS 不受影響。
+
+> **驗證範圍**：`flutter test` 三套件全過；Android API 35 模擬器前後截圖確認進度條上移、離開手勢列。**略過鈕未用
+> 有開場影片的頻道實測**；未經真機驗證、未跑 iOS。
+
 ## 2.8.1 - 2026-10-03
 
 > **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。

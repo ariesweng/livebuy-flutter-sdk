@@ -221,6 +221,10 @@ class MomentsOverlayView extends StatefulWidget {
   /// its `0`/`0` defaults for both, same as every platform's parallel same-batch sibling.
   final bool cleanMode;
 
+  /// rb-flutter-skip-intro-under-product-sheets — forwarded to [StartScreenView.sheetsPresented]
+  /// (the container mirrors `ProductSheetsOverlayView.onPresentationChange`). Default `false`.
+  final bool sheetsPresented;
+
   // Host-wired interaction callbacks. The container owns NO core action — each is
   // forwarded to the host (which wires it to the core player exit). All optional;
   // a null callback means an inert CTA. The Model carries NO forwarder for these
@@ -300,6 +304,7 @@ class MomentsOverlayView extends StatefulWidget {
     required this.theme,
     this.live = false,
     this.cleanMode = false,
+    this.sheetsPresented = false,
     this.onSkip,
     this.onWatchNext,
     this.onPickHot,
@@ -445,6 +450,7 @@ class _MomentsOverlayViewState extends State<MomentsOverlayView> {
         // rb-flutter-clean-mode-upcoming-intro-coverage — straight pass-through, see
         // [MomentsOverlayView.cleanMode]'s own doc comment.
         cleanMode: widget.cleanMode,
+        sheetsPresented: widget.sheetsPresented,
         // rb-flutter-intro-progress-bar-interactive: real intro playback snapshot (supersedes
         // the old always-`0`/`0` defaults) + the host-wired play/pause / seek control plane —
         // see [MomentsModel.introPosition] / [onTogglePlayPause] / [onSeek]'s own doc comments.

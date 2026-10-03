@@ -825,6 +825,9 @@ class MinimalDesign extends ReferenceUIDesign {
           // reaches `StartScreenView`'s splash branch (skip-pill vs progress-bar), see
           // `MomentsOverlayView.cleanMode`'s own doc comment.
           cleanMode: c.cleanMode,
+          // rb-flutter-skip-intro-under-product-sheets: the design layers the sheets above the skip
+          // pill, so the pill hides while any product sheet is presented.
+          sheetsPresented: c.productSheetsPresented,
           onSkip: c.onSkip,
           onWatchNext: c.onWatchNext,
           onPickHot: c.onPickHot,
