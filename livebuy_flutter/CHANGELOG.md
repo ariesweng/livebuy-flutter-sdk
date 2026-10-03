@@ -6,6 +6,34 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.8.1 - 2026-10-03
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> `livebuy_flutter`：無內容變更、僅隨版號；`livebuy_flutter_ui`：靜態分析清理（零行為變更）；
+> `livebuy_flutter_reference_ui`：兩個缺陷修正。無公開符號新增／移除／改簽章，故為 patch。原生 pin 不變
+> （Android `4.26.1`、iOS `~> 4.23`）。
+
+### Fixed
+
+- **drop-in 播放器載入失敗時顯示錯誤畫面**（`rb-flutter-dropin-player-error-wiring`，`livebuy_flutter_reference_ui`）：
+  `LivebuyPlayer` 原本沒有把播放錯誤交給 template，影片不存在或播放失敗時只剩黑畫面。**`2.8.0` 及更早版本都有此
+  問題。** 載入階段的終局錯誤（影片不存在、SDK 版本不支援、受限、簽章無效）立即顯示；其餘錯誤在播放器進入 `error`
+  狀態時顯示。聊天限流、暱稱重複、需登入才能留言、尚未開播、重複加購這類非播放錯誤**不會**觸發錯誤畫面。
+  ⚠️ 先前自行在播放器上方疊錯誤 UI 的 host，升級後會同時看到 SDK 的錯誤畫面。
+- **錯誤畫面「找不到這部影片」的圖示改為設計稿的放大鏡加驚嘆號**（`rb-flutter-error-notfound-glyph-parity`，
+  `livebuy_flutter_reference_ui`）：原為 Material `search_off`。
+
+### Changed
+
+- **分享改用 `SharePlus.instance.share(ShareParams(...))`**（`rb-flutter-reference-ui-analyze-clean`，
+  `livebuy_flutter_reference_ui`）：即已棄用的 `Share.share` 內部轉呼叫的形式，行為不變；`share_plus` 約束
+  （`^12.0.2`）不變。若 host 以 `dependency_overrides` 把 `share_plus` 壓到 12 以下，會編譯失敗——請移除該覆寫。
+- `livebuy_flutter_ui`：`flutter analyze` 歸零（`flutter-ui-analyze-clean`；pubspec 加 `publish_to: none`）。
+
+> **驗證範圍**：Android API 35 模擬器以 example debug build 對真實後端實跑——不存在的影片 ID 顯示「找不到這部影片」，
+> 正常影片照常播放；`flutter test` 三套件全過、`flutter analyze` 三套件零問題。**未經真機驗證**、未跑 iOS；
+> 直播路徑與播放中途斷線的錯誤畫面未驗。
+
 ## 2.8.0 - 2026-10-02
 
 > **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。

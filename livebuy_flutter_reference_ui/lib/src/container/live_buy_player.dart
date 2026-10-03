@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart'
     show debugPrint, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
-import 'package:share_plus/share_plus.dart' show Share;
+import 'package:share_plus/share_plus.dart' show ShareParams, SharePlus;
 import 'package:url_launcher/url_launcher.dart';
 // HIDE the deprecated `LivebuyPlayer` alias the core package still exports (→ `LivebuyPlayerCore`,
 // removed at v2.0): this reference-ui package defines the GOLDEN-NAME `LivebuyPlayer` (the
@@ -18,6 +18,7 @@ import '../safearea/lb_safe_area.dart';
 import 'channel_chrome.dart';
 import 'chat_composer_bar.dart';
 import 'live_now_poll_controller.dart';
+import 'player_error_feed.dart';
 import 'reference_ui_design.dart';
 
 // MARK: - LivebuyPlayer — turnkey drop-in player container (Flutter)
@@ -157,7 +158,12 @@ typedef ShareOpener = Future<void> Function(String url,
 
 /// PRODUCTION DEFAULT [ShareOpener]: the real `share_plus` system-share call.
 Future<void> _defaultShareOpener(String url, {Rect? sharePositionOrigin}) async {
-  await Share.share(url, sharePositionOrigin: sharePositionOrigin);
+  // `SharePlus.instance.share(ShareParams(...))` is what the deprecated static `Share.share(text,
+  // sharePositionOrigin:)` forwards to in share_plus 12 (same `text` / `sharePositionOrigin`, default
+  // `downloadFallbackEnabled`) — the call is unchanged, only the deprecated wrapper is gone.
+  await SharePlus.instance.share(
+    ShareParams(text: url, sharePositionOrigin: sharePositionOrigin),
+  );
 }
 
 // MARK: - flutter-share-failure-visibility-reference-ui — DEFAULT share popover anchor
@@ -1528,6 +1534,10 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// 訂閱（`player-channel-chrome-wiring-reference-ui-flutter`）在轉發給 `forwardChannelChangeToTemplate`
   /// 之外，額外把每次 tick 的 `info.serviceLink` 存這裡，供未設 `config.onServiceLink` 時的容器預設
   /// （開瀏覽器）讀取。`''` 表示尚未收到任何 `onChannelChange`、或該頻道 shop 無 serviceLink。
+  // rb-flutter-dropin-player-error-wiring — playback errors → template error state (see
+  // [PlayerErrorFeed]). Null-safe like every other `LivebuyUI.playerTemplate?.` call site.
+  final PlayerErrorFeed _errorFeed =
+      PlayerErrorFeed((e) => LivebuyUI.playerTemplate?.handleError(e));
   String _lastServiceLink = '';
 
   /// Latest channel `liveStatus == 1`（fix-flutter-vod-ended-gate-live-endscreen）：mirrored from
@@ -2013,6 +2023,11 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
               isPlaying: p.isPlaying,
               isReplay: p.isReplay,
             ),
+            // rb-flutter-dropin-player-error-wiring — was never wired, so a video that could not
+            // load (e.g. not found) left a black screen instead of the error screen. Filtered by
+            // [PlayerErrorFeed]: chat / cart business errors never raise it.
+            onError: _errorFeed.onError,
+            onStateChange: _errorFeed.onStateChange,
             // rb-flutter-subtitle-vtt-caption-display — per-channel VTT subtitle DATA plane. Was
             // never wired before this change (`rb-flutter-subtitle-template-wiring` built
             // `handleSubtitleChannelInfo` but nothing called it), so `template.subtitle.url` was

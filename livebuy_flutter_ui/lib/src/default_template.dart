@@ -1147,7 +1147,7 @@ class DefaultPlayerTemplate {
       // this message's own streamer name) was already in hand but never
       // forwarded; the row now carries it so downstream is NOT forced to fall
       // back to the channel-level shared `hostName` (shop name).
-      feed.onEventJoin(eid: eid!, keyword: ek ?? '', text: text, userName: userName);
+      feed.onEventJoin(eid: eid, keyword: ek ?? '', text: text, userName: userName);
       return;
     }
     if (kind != null && kind.isNotEmpty) {

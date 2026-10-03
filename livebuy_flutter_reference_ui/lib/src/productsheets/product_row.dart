@@ -1005,25 +1005,21 @@ class _NumberBadge extends StatelessWidget {
 
 /// An outline-accent 30-wide circular icon button (detail affordance).
 ///
-/// [glyph] (text-character fallback rendering) has no remaining call site as of
-/// `rb-flutter-icon-parity-product-detail-button` — the last user (明細鈕) now passes
-/// [child] (`DetailGlyph`), matching the sibling 分享 icon's existing `child:
-/// ShareGlyph(...)` call. Kept on the constructor (not removed) as source-compat for
-/// any future text-glyph call site; MUST NOT be re-adopted for a new icon position
-/// without first checking whether a self-drawn glyph already exists (see
-/// `docs/reference-ui/drop-in-roadmap.md` / prior `rb-flutter-icon-parity-*` batches).
+/// [child] is the self-drawn vector glyph (`DetailGlyph` / `ShareGlyph`). The former
+/// text-character fallback (`glyph`) had no call site left after
+/// `rb-flutter-icon-parity-product-detail-button` and was removed
+/// (rb-flutter-reference-ui-analyze-clean); a new icon position MUST use a self-drawn
+/// glyph, not a text character.
 class _RowOutlineIcon extends StatelessWidget {
   final ReferenceUITheme theme;
-  final String? glyph;
   final void Function()? onTap;
-  final Widget? child;
+  final Widget child;
   final Key? buttonKey;
 
   const _RowOutlineIcon({
     required this.theme,
-    this.glyph,
     required this.onTap,
-    this.child,
+    required this.child,
     this.buttonKey,
   });
 
@@ -1041,14 +1037,7 @@ class _RowOutlineIcon extends StatelessWidget {
           border: Border.all(color: theme.accent, width: 1),
         ),
         alignment: Alignment.center,
-        child: child ??
-            Text(
-              glyph!,
-              style: TextStyle(
-                color: theme.accent,
-                fontSize: 14 * theme.fontScale,
-              ),
-            ),
+        child: child,
       ),
     );
   }

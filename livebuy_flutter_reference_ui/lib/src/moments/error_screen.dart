@@ -6,6 +6,7 @@ import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'arrow_clockwise_glyph.dart';
 import 'arrow_up_circle_glyph.dart';
+import 'search_alert_glyph.dart';
 import 'wifi_slash_glyph.dart';
 import '../safearea/lb_safe_area.dart';
 
@@ -65,9 +66,9 @@ import '../safearea/lb_safe_area.dart';
 // icon badge is self-drawn `WifiSlashGlyph`, its retry CTA is self-drawn
 // `ArrowClockwiseGlyph`, and `.outdated`'s icon badge is self-drawn
 // `ArrowUpCircleGlyph` — none of the three are Material `Icons.*` any more.
-// `.notFound`'s icon badge remains Material `Icons.search_off_rounded` (untouched,
-// out of scope for that change). No animation / no randomness so the golden is
-// byte-stable.
+// `.notFound`'s icon badge is self-drawn `SearchAlertGlyph` (design lens + "!",
+// rb-flutter-error-notfound-glyph-parity). No animation / no randomness so the golden
+// is byte-stable.
 
 // MARK: - Decorative design tokens (literal hex — lifted verbatim from LBPErrorScreen)
 //
@@ -386,14 +387,13 @@ class ErrorScreenView extends StatelessWidget {
           accentTinted: false,
         );
       case LBPlayerErrorKind.notFound:
-        // Untouched by `rb-flutter-icon-parity-error-retry-batch` — still the
-        // Material glyph, just re-wrapped in the same builder shape as the other
-        // two kinds so `_ErrorCopy.icon`'s type stays uniform across all branches.
+        // Self-drawn design glyph (rb-flutter-error-notfound-glyph-parity), same builder
+        // shape as the other two kinds.
         return _ErrorCopy(
           title: _notFoundTitle,
           body: _notFoundBody,
           icon: (color) =>
-              Icon(Icons.search_off_rounded, size: 28, color: color),
+              SearchAlertGlyph(color: color, size: 28),
           primaryLabel: null,
           primaryIcon: null,
           accentTinted: false,
