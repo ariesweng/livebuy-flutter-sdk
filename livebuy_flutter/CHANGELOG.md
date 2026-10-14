@@ -6,6 +6,55 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.10.0 - 2026-10-14
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> `livebuy_flutter`：新增 `vodEndBehavior` 並把原生依賴升到 `4.28.0`；`livebuy_flutter_ui`：無內容變更、僅隨版號；
+> `livebuy_flutter_reference_ui`：drop-in 播完自動關閉條件改依 `vodEndBehavior`。**host 須三套件一起升到 `2.10.0`，
+> 原生依賴為 iOS `LivebuySDK` `4.28.0`（`~> 4.28`）／Android `tv.livebuy:livebuy` `4.28.0`。** VOD／回放播完預設改為
+> 重播，見 [`docs/release-notes/v4.28.0.md`](../docs/release-notes/v4.28.0.md)。新增公開 API 為主，故為 minor；
+> 含 1 項僅影響直接使用 `VodEndedCloseGate` 的 ⚠️ 源碼相容性破壞（見下方專節）。
+
+### Added
+
+- `LBVodEndBehavior { loop, advance }` 與 `LBConfigOptions.vodEndBehavior`（預設 `loop`，`vod-end-loop-flutter-core`）：
+  決定 VOD／回放（非直播中）影片自然播完時的行為。`loop`＝重播當前影片（有無下一支皆然）；`advance`＝舊行為
+  （有下一支接續、無下一支停在 ended）。直播結束不受影響。值經 bridge 轉發到原生 `configure(vodEndBehavior:)`，
+  播完分流由原生 core 執行。
+- `LivebuySDK.vodEndBehavior`：同步讀回最近一次 `configure` 傳入的值（configure 前為 `loop`）。
+- `livebuy_flutter_reference_ui`：新增對外可見的 `VodEndedCloseFeed`／`VodEndBehaviorProvider`（容器內部用，經套件
+  入口整檔匯出 `live_buy_player.dart` 而可見；一般 host 不需使用）。
+
+### Changed
+
+- ⚠️ **預設行為改變**：VOD／回放播完，有下一支時由「接下一支」改為「重播當前影片」。要維持舊行為請傳
+  `LBConfigOptions(..., vodEndBehavior: LBVodEndBehavior.advance)`。API 為新增（既有呼叫照常編譯）。
+- 原生依賴下限升到 `4.28.0`（bridge 用到 `4.28.0` 才有的符號）：Android `tv.livebuy:livebuy` `4.26.1` → `4.28.0`；
+  iOS `livebuy_flutter.podspec` `LivebuySDK ~> 4.23` → `~> 4.28`、`Package.swift` `from: "4.23.0"` → `from: "4.28.0"`。
+  先前 iOS（範圍約束、可解析到 `4.28.0`）與 Android（精確 pin `4.26.1`）播完行為不一致的情形隨之消除。
+- ⚠️ **以 CocoaPods 消費的 host**，Podfile 中 `LivebuySDK` 的 podspec URL **必須**改指 `v4.28.0`（或更新）的 release——
+  仍指向舊 release 的 podspec 時，`pod install` 會因不滿足 `~> 4.28` 而失敗。
+- **drop-in 播完自動關閉條件**（`rb-flutter-vod-ended-no-next-close`，`livebuy_flutter_reference_ui`）：
+  `LivebuyPlayer` 只在 host 選 `advance`、影片非 LIVE、且沒有下一支時，於進入 `ended` 約 400ms 後關閉播放器
+  （含已結束直播的回放）；`loop`、LIVE、有下一支都不關。parity iOS／Android reference-ui。
+
+### Fixed
+
+- **drop-in 在 `loop` 重播時可能被誤關**（`rb-flutter-vod-ended-no-next-close`）：原本只要 `ended` 持續 400ms 且非
+  LIVE 就關閉，`loop` 重播時若 seek 卡住超過 400ms 會把正在重播的播放器關掉。現改為進入 `ended` 時一次判定並鎖存，
+  任何非 `ended` 狀態即作廢；容器 dispose 時一併取消待關閉。
+
+### ⚠️ BREAKING
+
+- **`VodEndedCloseGate.handleStateChange` 簽章變更**（`livebuy_flutter_reference_ui`，`rb-flutter-vod-ended-no-next-close`，
+  **僅影響直接使用此類別的 host**）——由 `handleStateChange(state, {required bool isLive})` 改為另需必填具名參數
+  `hasChannel`／`hasNext`／`behavior`。此類別是 drop-in 容器內部用的延遲關閉物件，因套件入口整檔匯出
+  `live_buy_player.dart` 而對外可見；直接呼叫它的 host 升級後會編譯失敗，需補上這三個參數（`behavior` 可取
+  `LivebuySDK.vodEndBehavior`）。只使用 `LivebuyPlayer` 的 host 不受影響。
+
+> **驗證範圍**：`flutter test`／`flutter analyze` 三套件（見發版準備 change）；Flutter Android bridge 單元測試、iOS plugin
+> 以 `xcodebuild` 對 `4.28.0` 編譯。**未經模擬器或真機實測播完行為**。
+
 ## 2.9.0 - 2026-10-03
 
 > **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。

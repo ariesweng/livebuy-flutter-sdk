@@ -14,7 +14,317 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-（目前無待發項目——`2.5.1` 已於下方發布，三套件共用版號 lockstep。）
+（目前無待發項目——`2.10.0` 已於下方發布，三套件共用版號 lockstep。）
+
+## 2.10.0 - 2026-10-14
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> `livebuy_flutter`：新增 `vodEndBehavior` 並把原生依賴升到 `4.28.0`；`livebuy_flutter_ui`：無內容變更、僅隨版號；
+> `livebuy_flutter_reference_ui`：drop-in 播完自動關閉條件改依 `vodEndBehavior`。**host 須三套件一起升到 `2.10.0`，
+> 原生依賴為 iOS `LivebuySDK` `4.28.0`（`~> 4.28`）／Android `tv.livebuy:livebuy` `4.28.0`。** VOD／回放播完預設改為
+> 重播，見 iOS／Android `v4.28.0` release notes（[livebuy-ios-sdk](https://github.com/ariesweng/livebuy-ios-sdk/releases/tag/v4.28.0)）。新增公開 API 為主，故為 minor；
+> 含 1 項僅影響直接使用 `VodEndedCloseGate` 的 ⚠️ 源碼相容性破壞（見下方專節）。
+
+### Added
+
+- `LBVodEndBehavior { loop, advance }` 與 `LBConfigOptions.vodEndBehavior`（預設 `loop`，`vod-end-loop-flutter-core`）：
+  決定 VOD／回放（非直播中）影片自然播完時的行為。`loop`＝重播當前影片（有無下一支皆然）；`advance`＝舊行為
+  （有下一支接續、無下一支停在 ended）。直播結束不受影響。值經 bridge 轉發到原生 `configure(vodEndBehavior:)`，
+  播完分流由原生 core 執行。
+- `LivebuySDK.vodEndBehavior`：同步讀回最近一次 `configure` 傳入的值（configure 前為 `loop`）。
+- `livebuy_flutter_reference_ui`：新增對外可見的 `VodEndedCloseFeed`／`VodEndBehaviorProvider`（容器內部用，經套件
+  入口整檔匯出 `live_buy_player.dart` 而可見；一般 host 不需使用）。
+
+### Changed
+
+- ⚠️ **預設行為改變**：VOD／回放播完，有下一支時由「接下一支」改為「重播當前影片」。要維持舊行為請傳
+  `LBConfigOptions(..., vodEndBehavior: LBVodEndBehavior.advance)`。API 為新增（既有呼叫照常編譯）。
+- 原生依賴下限升到 `4.28.0`（bridge 用到 `4.28.0` 才有的符號）：Android `tv.livebuy:livebuy` `4.26.1` → `4.28.0`；
+  iOS `livebuy_flutter.podspec` `LivebuySDK ~> 4.23` → `~> 4.28`、`Package.swift` `from: "4.23.0"` → `from: "4.28.0"`。
+  先前 iOS（範圍約束、可解析到 `4.28.0`）與 Android（精確 pin `4.26.1`）播完行為不一致的情形隨之消除。
+- ⚠️ **以 CocoaPods 消費的 host**，Podfile 中 `LivebuySDK` 的 podspec URL **必須**改指 `v4.28.0`（或更新）的 release——
+  仍指向舊 release 的 podspec 時，`pod install` 會因不滿足 `~> 4.28` 而失敗。
+- **drop-in 播完自動關閉條件**（`rb-flutter-vod-ended-no-next-close`，`livebuy_flutter_reference_ui`）：
+  `LivebuyPlayer` 只在 host 選 `advance`、影片非 LIVE、且沒有下一支時，於進入 `ended` 約 400ms 後關閉播放器
+  （含已結束直播的回放）；`loop`、LIVE、有下一支都不關。parity iOS／Android reference-ui。
+
+### Fixed
+
+- **drop-in 在 `loop` 重播時可能被誤關**（`rb-flutter-vod-ended-no-next-close`）：原本只要 `ended` 持續 400ms 且非
+  LIVE 就關閉，`loop` 重播時若 seek 卡住超過 400ms 會把正在重播的播放器關掉。現改為進入 `ended` 時一次判定並鎖存，
+  任何非 `ended` 狀態即作廢；容器 dispose 時一併取消待關閉。
+
+### ⚠️ BREAKING
+
+- **`VodEndedCloseGate.handleStateChange` 簽章變更**（`livebuy_flutter_reference_ui`，`rb-flutter-vod-ended-no-next-close`，
+  **僅影響直接使用此類別的 host**）——由 `handleStateChange(state, {required bool isLive})` 改為另需必填具名參數
+  `hasChannel`／`hasNext`／`behavior`。此類別是 drop-in 容器內部用的延遲關閉物件，因套件入口整檔匯出
+  `live_buy_player.dart` 而對外可見；直接呼叫它的 host 升級後會編譯失敗，需補上這三個參數（`behavior` 可取
+  `LivebuySDK.vodEndBehavior`）。只使用 `LivebuyPlayer` 的 host 不受影響。
+
+> **驗證範圍**：`flutter test`／`flutter analyze` 三套件（見發版準備 change）；Flutter Android bridge 單元測試、iOS plugin
+> 以 `xcodebuild` 對 `4.28.0` 編譯。**未經模擬器或真機實測播完行為**。
+
+## 2.9.0 - 2026-10-03
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> `livebuy_flutter`、`livebuy_flutter_ui`：無內容變更、僅隨版號；`livebuy_flutter_reference_ui`：兩個修正。
+> `StartScreenView`／`MomentsOverlayView` 新增帶預設值的 `sheetsPresented` 參數（向後相容的公開 API 新增），故為
+> minor、無 BREAKING。原生 pin 不變（Android `4.26.1`、iOS `~> 4.23`）。
+
+### Added
+
+- `StartScreenView`／`MomentsOverlayView` 新增 `sheetsPresented`（預設 `false`，`livebuy_flutter_reference_ui`）：為
+  `true` 時不畫「略過介紹」鈕。
+
+### Fixed
+
+- **開場影片播放中打開商品面板，「略過介紹」鈕仍顯示在面板上方**（`rb-flutter-skip-intro-under-product-sheets`）：
+  依設計稿層級（商品面板高於略過鈕），任一商品面板開著時隱藏略過鈕，關閉後恢復。
+- **Android 上進度條壓到系統手勢列**（`rb-flutter-progress-bar-full-bottom-inset`）：播放器進度條與開場影片乾淨
+  模式的進度條原本只抬「系統底部邊距 − 8」，改為抬整段系統底部邊距，與 iOS／Android 原生／RN 一致。iOS 不受影響。
+
+> **驗證範圍**：`flutter test` 三套件全過；Android API 35 模擬器前後截圖確認進度條上移、離開手勢列。**略過鈕未用
+> 有開場影片的頻道實測**；未經真機驗證、未跑 iOS。
+
+## 2.8.1 - 2026-10-03
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> `livebuy_flutter`：無內容變更、僅隨版號；`livebuy_flutter_ui`：靜態分析清理（零行為變更）；
+> `livebuy_flutter_reference_ui`：兩個缺陷修正。無公開符號新增／移除／改簽章，故為 patch。原生 pin 不變
+> （Android `4.26.1`、iOS `~> 4.23`）。
+
+### Fixed
+
+- **drop-in 播放器載入失敗時顯示錯誤畫面**（`rb-flutter-dropin-player-error-wiring`，`livebuy_flutter_reference_ui`）：
+  `LivebuyPlayer` 原本沒有把播放錯誤交給 template，影片不存在或播放失敗時只剩黑畫面。**`2.8.0` 及更早版本都有此
+  問題。** 載入階段的終局錯誤（影片不存在、SDK 版本不支援、受限、簽章無效）立即顯示；其餘錯誤在播放器進入 `error`
+  狀態時顯示。聊天限流、暱稱重複、需登入才能留言、尚未開播、重複加購這類非播放錯誤**不會**觸發錯誤畫面。
+  ⚠️ 先前自行在播放器上方疊錯誤 UI 的 host，升級後會同時看到 SDK 的錯誤畫面。
+- **錯誤畫面「找不到這部影片」的圖示改為設計稿的放大鏡加驚嘆號**（`rb-flutter-error-notfound-glyph-parity`，
+  `livebuy_flutter_reference_ui`）：原為 Material `search_off`。
+
+### Changed
+
+- **分享改用 `SharePlus.instance.share(ShareParams(...))`**（`rb-flutter-reference-ui-analyze-clean`，
+  `livebuy_flutter_reference_ui`）：即已棄用的 `Share.share` 內部轉呼叫的形式，行為不變；`share_plus` 約束
+  （`^12.0.2`）不變。若 host 以 `dependency_overrides` 把 `share_plus` 壓到 12 以下，會編譯失敗——請移除該覆寫。
+- `livebuy_flutter_ui`：`flutter analyze` 歸零（`flutter-ui-analyze-clean`；pubspec 加 `publish_to: none`）。
+
+> **驗證範圍**：Android API 35 模擬器以 example debug build 對真實後端實跑——不存在的影片 ID 顯示「找不到這部影片」，
+> 正常影片照常播放；`flutter test` 三套件全過、`flutter analyze` 三套件零問題。**未經真機驗證**、未跑 iOS；
+> 直播路徑與播放中途斷線的錯誤畫面未驗。
+
+## 2.8.0 - 2026-10-02
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> `livebuy_flutter`：只有 Android 原生 pin 變更（Dart 與 bridge 原始碼零變更）；`livebuy_flutter_ui`：無內容
+> 變更、僅隨版號；`livebuy_flutter_reference_ui`：safe-area 與遠端圖片（含行為變更）。無符號移除、無簽章破壞，
+> 新增皆為選用參數，故為 minor。原生 pin：Android `4.24.0` → `4.26.1`；iOS `~> 4.23` 不變。
+
+### Fixed
+
+- **Android release build（預設開縮碼）不必再自行補 keep 規則**（`flutter-android-bridge-core-pin-4-26-1`，
+  `livebuy_flutter`）：Android bridge 的 core pin `tv.livebuy:livebuy` 升到 `4.26.1`，其 AAR 自帶 Gson 反射
+  目標、`-dontwarn okhttp3.** / okio.**` 與 WorkManager／Room 建構子的 consumer 規則。以本套件 example
+  （host 沒有 `proguard-rules.pro`）對已發佈的遠端 AAR 實測：pin `4.24.0` 時 R8 以 `Missing class okhttp3.*`
+  建置失敗；`4.26.0` 時啟動即崩潰 `NoSuchMethodException: androidx.work.impl.WorkDatabase_Impl.<init>`；
+  `4.26.1` 時建置、啟動、事件上傳與播放皆正常。已自行補規則的 host 不受影響，規則可在以 release build 實機
+  確認後移除。
+
+### Changed
+
+- **drop-in 容器自行處理系統邊距**（`rb-flutter-edge-to-edge-safe-area-audit`，`livebuy_flutter_reference_ui`）：
+  `LivebuyPlayer` / `CollapsibleLivebuyPlayer` / `LivebuyLiveEntry` 的 chrome 避開狀態列／導覽或手勢列／
+  cutout／鍵盤，影片與背景維持滿版；host 已把容器推離螢幕邊緣的距離會從邊距扣掉，不重複套用。浮窗卡片與
+  浮動入口的靜止位置、拖曳邊界改以安全區為準。sheet 面板延伸到底緣、內容避開；留言輸入列與設定暱稱 modal
+  待在鍵盤上方。不改 host 的系統列外觀。
+- **遠端靜態圖分兩層降採樣解碼**（`rb-flutter-remote-image-downsampling`，`livebuy_flutter_reference_ui`）：
+  縮圖層（兩邊皆不超過 128 邏輯像素的框與背景預取）與大圖層（其餘；上限 4096 px），同層共用同一筆快取、
+  不放大來源；商品詳情主圖與放大燈箱共用同一筆解碼。`liveProductImage` 新增選用參數 `tier`。
+  ⚠️ **行為變更**：背景預取改為縮圖層，大圖層表面首次顯示會看到一次淡入；同一 URL 至多下載兩次（縮圖層、
+  大圖層各一次，先前一次）——本套件沒有圖片磁碟快取。
+- **僅供測試的時間來源注入點**（`rb-flutter-load-sensitive-tests-fix`，`livebuy_flutter_reference_ui`）：
+  `PlaybackProgressBarView.nowProviderForTesting`、`PlayerShellView.nowProviderForTesting`、
+  `LiveEntryCloseGate.nowProviderForTesting`（皆 `@visibleForTesting`、選用，未注入時為真實時鐘，門檻與判定
+  不變）。
+
+> 驗證範圍：Android API 35 模擬器以 release APK 對真實後端實跑（列表、圖片、播放器、商品列表 sheet）。
+> **未經真機驗證**；iOS 側本輪未在裝置或模擬器上跑過 Flutter 版面（iOS 原生 `4.26.0` 已另行在模擬器驗過）。
+
+## 2.7.1 - 2026-09-30
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> 內容變動只在 `livebuy_flutter_reference_ui`；`livebuy_flutter` 與 `livebuy_flutter_ui` 本輪無內容變更、
+> 僅隨版號。純 bug fix、無符號移除、無簽章破壞，故為 patch。原生 pin 不動（Android `4.24.0`、iOS `~> 4.23`；
+> 本修復不涉 core）。
+
+### Fixed
+
+- **drop-in 主動加購閘觸發時不再疊出兩個「請先登入」**（`rb-flutter-cart-login-gate-gap-authgate-mutual-
+  exclusion`，`livebuy_flutter_reference_ui`）：開了 `requireLoginForAddToCart`、訪客點加購時，商品面板 cart
+  登入閘與 gap-surface `AuthGateModalView`（經 `AUTH_REQUIRED(cart_add)` 回流的 template `authGate`）原本會同時
+  顯示。現在 gap 層在「商品面板 cart 閘目前正在呈現」時讓位，並以既有 `template.clearAuthGate()` 消耗殘留
+  cartAdd authGate。cart 閘不在畫面上（按「稍後再說」後、外部 widget／headless 訪客）時 gap modal 仍顯示，其他
+  trigger 不受影響。新增皆為**可選**（additive，既有呼叫端不受影響）：`ProductSheetsOverlayView.cartLoginGatePresentedNotifier`、
+  `PlayerOverlayContext.cartLoginGatePresented`、`GapSurfacesOverlayView.cartLoginGatePresented`（預設 `null`＝不讓位），
+  以及純函式 `cartLoginGateOwnsAuthGate` / `shouldClearCartAddAuthGateAfterAdd`。已知取捨：被動 401 時序 gap modal
+  可能閃現約一幀才讓位；未經真機驗證，僅單元／widget 測試與讀碼推演。
+
+## 2.7.0 - 2026-09-29
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> 內容變動在 `livebuy_flutter` 與 `livebuy_flutter_ui`；`livebuy_flutter_reference_ui` 本輪無內容
+> 變更、僅隨版號。新增 public API、無符號移除、無簽章破壞，故為 minor。
+
+### Added
+
+- **`LivebuySDK.dispatchAuthRequired(...)` 與 Dart 端 pending-retry 註冊表**
+  （`flutter-dispatch-auth-required-dart-pending-retry-core`）：`dispatchAuthRequired(triggerAction,
+  {videoId, productId, retryToken, position}): Future<bool>` 經原生事件管線派發 `AUTH_REQUIRED`；
+  `registerPendingRetry(void Function())` 回傳 `dart-` 前綴 token，`retryPendingAction` /
+  `discardPendingAction` 命中時由 Dart 一次性處理（不呼叫原生），未命中落回原生；`clearUser()`
+  同時清空註冊表。原生 token 仍不可由 Dart 註冊。
+
+### Changed
+
+- **drop-in 主動加購登入閘改為派發 `AUTH_REQUIRED(cart_add)`**
+  （`flutter-cart-add-proactive-gate-retry-token-template`，`livebuy_flutter_ui`）：`requireLoginForAddToCart`
+  啟用且訪客點加購時，drop-in 原本只設本地旗標、不派發事件（host listener 收不到）；現在會註冊 retry 並經
+  `dispatchAuthRequired` 派發 `AUTH_REQUIRED`（`trigger_action = cart_add`），`params['retry_token']` 可交給
+  `retryPendingAction` / `discardPendingAction`。**行為變更**：既有 host listener 此後會收到這次攔截事件。
+  相依本版 `livebuy_flutter` 新增的 `dispatchAuthRequired` / `registerPendingRetry`（三套件 lockstep 同版即可）。
+
+## 2.6.0 - 2026-09-29
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> 內容變動只在 `livebuy_flutter`；`livebuy_flutter_ui` 與 `livebuy_flutter_reference_ui` 本輪無內容
+> 變更、僅隨版號。新增 public API、無符號移除、無簽章破壞，故為 minor。
+
+### Added
+
+- **登入後明確重試（對齊 iOS / Android）**（`flutter-auth-required-pending-action-retry-core`）：
+  `LivebuySDK.retryPendingAction(String token): Future<bool>` 與
+  `LivebuySDK.discardPendingAction(String token): Future<void>`。`token` 取自 `AUTH_REQUIRED`
+  事件 `params['retry_token']`（由 SDK 內部產生並隨事件 params 透傳）；不橋接
+  `registerPendingRetry`（吃 closure）。
+
+> ⚠️ **相容性說明**：
+> - **Android**：橋接相依 pin 由 `tv.livebuy:livebuy:4.23.0` 升為 `4.24.0`（新 API 僅存在於 4.24.0
+>   之後）。
+> - **iOS**：相依下限由 `~> 4.0`（podspec）/ `from: "4.0.0"`（Package.swift）升為 `~> 4.23` /
+>   `from: "4.23.0"`（`Livebuy.retryPendingAction(token:)` 僅存在於 iOS SDK 4.23.0 之後）。已解析到
+>   `LivebuySDK` < 4.23 的 host 升級本版時，需一併升到 4.23 以上（`pod update LivebuySDK` /
+>   SwiftPM 更新），否則版本解析會失敗。
+
+## 2.5.4 - 2026-09-25
+
+> **三套件版號 lockstep bump。** 自 `2.5.3` 以來累積 4 個內容項目（1 個新增能力橫跨 core +
+> reference-ui 兩層 + 1 個純文件 parity 查證 + 1 個 reference-ui 技術債清理），**零 BREAKING**。
+
+### Added
+
+- **播放器初始 seek（四端最後一塊 parity 缺口補齊）**
+  （`flutter-player-load-initial-seek-core` + `rb-flutter-player-initial-seek`）：`load()` /
+  `LivebuyPlayerController.load()` 新增可選 `startAt: double?`、`LivebuyPlayerCore` widget 新增
+  `startAt` 欄位，讓 host 從商品頁直接打開指定影片並跳到指定時間點；drop-in 容器 `LivebuyPlayer`
+  的 `LivebuyPlayerConfig` 同步新增對應欄位 `initialSeekSeconds`，只在容器首次建立套用，換片路徑
+  （`_switchVideo` / `_onSwipeVideoLoad` / `onRetry`）不套用，不外洩到之後任何使用者手勢換片。業務
+  語意（intro-aware、直播靜默丟棄、一次性套用、換片覆蓋殘留值）全部由既有原生 iOS/Android core 端
+  消化，本輪只是把參數沿橋接一路送達。
+
+### Fixed
+
+- **`flutter-reference-ui` 清理既有 `flutter analyze` 死碼技術債**
+  （`flutter-reference-ui-analyze-debt-cleanup`）：刪除未被引用的 `_StatusPill` class、兩個測試檔
+  的未用 show-import 符號與一條未用 import，`flutter analyze` 從 9 issue 降到 4。**尚未清零**——
+  剩餘 3 條 `Share`/`SharePlus` deprecation info（需要實機驗證分享功能，另案處理）+ 1 條刻意保留的
+  `_RowOutlineIcon.glyph` 具名參數（既有設計決策，不貿然砍簽章），見
+  `docs/reference-ui/parity-debt-ledger.md` #45。
+
+### Parity Notes
+
+- `event-progress-timestamp`（帶 `video_id`-shaped key 的通知事件 additive 附上播放進度
+  `position`）在 Flutter 端查證為 **no-op**——`LBSdkEvent.params` 全程整包泛型透傳、無 per-event
+  typed params class 需要補欄位，`position` 已自動可用，無任何 `.dart` / bridge 程式碼需要改動。
+  詳見 `docs/parity/event-progress-timestamp-flutter-noop.md`（`flutter-event-progress-timestamp-
+  noop-parity-doc`）。
+
+> ⚠️ **已知殘留風險，本輪未修**：`flutter/android/build.gradle` 目前 pin 的 Android core
+> `4.22.0`（tag `android-v4.22.0`，2026-09-23 cut）早於新增 `load(videoId, startAt)` 的 Android
+> commit（`63ecf6fbf`，屬於尚未 tag-publish 的 Android `4.23.0`）。在這個 pin 追新之前，真正拉取
+> 已發布 remote Maven（而非本機 `mavenLocal`）的 Android host 對上面的初始 seek 能力有編譯期落差
+> 風險——與 `v2.5.0 → v2.5.1`、`2.5.1 → 2.5.2`、`2.5.2 → 2.5.3` 三次先例同一種失效模式。這次
+> **尚未能修**（Android `4.23.0` 還沒有真正 tag-publish，沒有目標版本號可以追新），留給下一輪
+> Flutter release-prep（Android `4.23.0` 正式發布後）處理；在那之前不建議對這個 `2.5.4` 執行真正
+> 對外發版。
+
+## 2.5.3 - 2026-09-23
+
+> **三套件版號 lockstep bump。** 存底自 iOS/Android `v4.22.0`（2026-09-23）相關批次，自 `2.5.2`
+> 以來累積 7 個內容項目（2 個新增能力 + 5 個修復，含本次追新的 Android bridge core pin），
+> **零 BREAKING**。
+
+### Added
+
+- 開場影片乾淨模式展開進度條改為完全可互動（可暫停/播放/拖曳 seek）並隱藏略過鈕
+  （`rb-flutter-clean-mode-upcoming-intro-coverage`、`rb-flutter-intro-progress-bar-
+  interactive`）。
+- 直播結束畫面顯示真實直播時長（`rb-flutter-endscreen-live-duration`，含原生 bridge 三處
+  補傳 `liveDurationSeconds`；`flutter-ui` template 層仍未透傳，見
+  `docs/reference-ui/parity-debt-ledger.md` #44，reference-ui 改用容器直通繞過）。
+
+### Fixed
+
+- 直播預告單擊訂正為完全不觸發乾淨模式（`rb-flutter-clean-mode-upcoming-not-triggered`）。
+- 直播結束時 `VodEndedCloseGate` 誤判為「VOD 播完無 next」而自動關閉整個播放器，補上 `isLive`
+  判斷（`fix-flutter-vod-ended-gate-live-endscreen`）。
+- 開場影片乾淨模式展開進度條播放/暫停按鈕熱區加大（`rb-flutter-intro-progress-bar-touch-
+  target`；拖動失去同步問題在 Flutter 原生實作不存在，未修）。
+- Android bridge：背景化 / PiP 關閉（X）補轉發暫停（`flutter-android-pause-on-background-
+  core`）。
+- **`flutter/android/build.gradle` core dependency pin 追新 `4.21.2` → `4.22.0`**
+  （`flutter-android-bridge-core-pin-4-22-0`）：現行 pin `4.21.2` 對本檔上面已記錄的
+  `直播結束畫面顯示真實直播時長`（`rb-flutter-endscreen-live-duration`）其實已經編譯不過——該
+  change 的 bridge Kotlin 原始碼已直接讀取 `LBPlayerMomentState.liveDurationSeconds`，這個
+  欄位只存在於 Android core `4.22.0`（`endscreen-live-duration-android-core`），`4.21.2`
+  不含，對真實已發布 remote artifact 編譯會失敗（monorepo CI 因 mavenLocal 一律從 HEAD 源碼
+  建置而測不出）。同批 `4.22.0` 也修好了本檔上面
+  `開場影片乾淨模式展開進度條改為完全可互動` 的原生行為缺口
+  （`togglePlayPause()`/`seek()`/`seekBy()` intro 播放期路由，`android-intro-player-seek-
+  progress-core`）——若不追新這個 pin，這兩個已經 apply 完成的 Flutter 側能力對真實已發布 core
+  artifact 會是死碼 / 編譯失敗風險。無 Dart 或 bridge Kotlin 行為改動，純 pin coordinate 提升。
+
+## 2.5.2 - 2026-09-21
+
+> **三套件版號 lockstep bump。** 自 `2.5.1` 以來累積 3 個內容項目（1 個 Android bridge core pin
+> 追新 + 1 個既有 auto-enter PiP 修復 + 1 個新增 reference-ui 行為），**零 BREAKING**。
+
+### Fixed
+
+- **Android bridge：播放器 dispose 時解除 API 31+ 系統 auto-enter PiP**
+  （`android-bridge-auto-pip-disarm-on-dispose-core`）：`installAutoPip` 掛載時對 host Activity
+  寫的 `setAutoEnterEnabled(true)` 此前從未在 `dispose()` 撤回，auto-enter 是 Activity 的屬性、
+  比 view 長壽，關閉播放器後按 Home 會把 app 當下畫面（例如商店首頁）塞進 PiP 小窗（下游 Flutter
+  host + Pixel 7 API 34 實測）。現在只撤回 bridge 自己成功 arm 過的（arm 寫入改包 `runCatching`，
+  失敗不 crash、不偽報成功），host 自設的 PiP params 不受影響；決策抽成純函式
+  `AutoPipPolicy.shouldDisarmOnDispose` 並補 JVM 測試。host 零改動。
+- **`flutter/android/build.gradle` core dependency pin 追新 `4.21.0` → `4.21.2`**
+  （`fix-android-view-mode-pip-state-change-core` 的 consumer 端追新）：Android core `4.21.2`
+  補齊了 `LivebuyPlayerView.notifyPictureInPictureModeChanged`（View-mode，本 bridge 走的正是
+  這條路徑）原本完全不 emit 統一事件 `PIP_STATE_CHANGE` 的既有缺口——這個 pin 若不追新，下面
+  新增的 `flutter-android-pip-hide-chrome-reference-ui` 訂閱的事件實際上永遠不會抵達，是一段
+  看似正確、實際死碼的功能（同一種 regression 模式見 `2.5.1` 那筆——core symbol 已被 bridge/
+  reference-ui 引用但 pin 沒追新）。無 Dart 或 bridge Kotlin 行為改動，純 pin coordinate 提升。
+
+### Added
+
+- **Android PiP 進行中隱藏 overlay chrome**（`flutter-android-pip-hide-chrome-reference-ui`，
+  reference-ui 層，僅 Android）：`livebuy_flutter_reference_ui` 的 drop-in 容器 `LivebuyPlayer`
+  在 Android OS Picture-in-Picture 進行中只保留底層影片，隱藏整層 overlay chrome（header /
+  操作列 / 商品卡 / 字幕 / 合流聊天 / composer / 活動通知），退出 PiP 立即復原，對齊 Android 原生
+  `:livebuy-reference-ui` 既有行為。iOS 完全不受影響（`AVPictureInPictureController` 天生
+  video-layer-based，chrome 本來就進不去 PiP 視窗）。
 
 ## 2.5.1 - 2026-09-20
 

@@ -204,6 +204,9 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                 val environment: LBEnvironment =
                     if (call.argument<String?>("environment") == "develop") LBEnvironment.DEVELOP
                     else LBEnvironment.PRODUCTION
+                // vod-end-loop-flutter-core: wire string "advance" → ADVANCE; anything else /
+                // missing → LOOP (core 4.28.0 default). Native core does the end-of-playback branching.
+                val vodEndBehavior = VodEndBehaviorBridge.fromWire(call.argument<String?>("vodEndBehavior"))
                 val user = if (displayName != null || avatarUrl != null || externalUserId != null)
                     LBUser(displayName = displayName ?: "", avatarUrl = avatarUrl, externalUserId = externalUserId)
                 else null
@@ -223,6 +226,7 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                             enablePowerProfileAdaptation = enablePowerProfileAdaptation,
                             enableStatReporting = enableStatReporting,
                             environment = environment,
+                            vodEndBehavior = vodEndBehavior,
                         )
                         mainHandler.post { result.success(null) }
                     } catch (e: LBError.NotConfigured) {

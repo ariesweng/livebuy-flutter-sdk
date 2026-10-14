@@ -555,11 +555,15 @@ class ForegroundResumeController {
 }
 
 // MARK: - VodEndedCloseGate — debounced "VOD/回放 ended, no next" auto-close
-// (rb-flutter-endscreen-live-empty-state)
+// (rb-flutter-endscreen-live-empty-state; isLive gate fix-flutter-vod-ended-gate-live-endscreen;
+// advance / next / episode latch rb-flutter-vod-ended-no-next-close)
 //
-// Spec: `component-contracts/spec.md` "EndScreen 元件契約"; design
-// `design/templates/minimal/moments.jsx` `LBPEndScreen` (R41 — EndScreen is now
-// LIVE-only). Depends on core `vod-replay-direct-next` (`shouldAutoAdvanceOnEnd`).
+// Spec: `component-contracts/spec.md` "EndScreen 元件契約"; `reference-ui-rendering/spec.md`
+// "（Flutter）VodEndedCloseGate 僅在 advance 且無下一支時關閉播放器". Parity iOS
+// `ios/Sources/LivebuyReferenceUI/Container/VodEndedCloseGate.swift` / Android
+// `android/livebuy-reference-ui/.../container/VodEndedCloseGate.kt` (rb-ios- /
+// rb-android-vod-ended-no-next-close). Depends on core `vod-end-loop-flutter-core`
+// (`LivebuySDK.vodEndBehavior`).
 
 /// Testable seam for [VodEndedCloseGate]'s debounce delay. Production default is a
 /// real `Timer`; a unit test injects a `Capturing*` fake that records `(delay,
@@ -575,35 +579,33 @@ void _defaultVodEndedCloseScheduler(Duration delay, VoidCallback callback) {
   Timer(delay, callback);
 }
 
-/// Debounced "a VOD / 回放 settled in `LBPlayerState.ended` with no `next` to
-/// auto-advance to" close decision, fed every player state change via
-/// [handleStateChange]. A plain object with an injected [onClose] + [scheduler] —
-/// NO Flutter widget / `BuildContext` dependency — so it is directly unit-testable
-/// (the surrounding `LivebuyPlayer` container cannot be constructed in the test env:
-/// `LivebuyPlayerController` goes through a real `MethodChannel` with no platform
-/// view — R5, same limitation [ForegroundResumeController] / `performDefaultShare`
-/// work around the same way).
+/// Debounced "a VOD / 回放 settled in `LBPlayerState.ended`, the host chose
+/// [LBVodEndBehavior.advance], and there is no `next` to advance to" close decision,
+/// fed every player state change via [handleStateChange]. A plain object with an
+/// injected [onClose] + [scheduler] — NO Flutter widget / `BuildContext` dependency —
+/// so it is directly unit-testable (the surrounding `LivebuyPlayer` container cannot be
+/// constructed in the test env: `LivebuyPlayerController` goes through a real
+/// `MethodChannel` with no platform view — R5).
 ///
-/// **Why a debounce.** `vod-replay-direct-next-core` makes the NATIVE core surface a
-/// transient `playerState = .ended` (dispatched over the bridge) BEFORE it
-/// synchronously calls `load()` to auto-advance when a `next` item exists — the raw
-/// `ended` state reaches Dart either way, so a single event cannot tell "terminal, no
-/// next" from "about to auto-advance". Waiting [debounce] lets the auto-advance
-/// path's very next state (typically `loading`) arrive first and cancel the pending
-/// close (ANY state other than `ended` invalidates it, via [_pending]'s token); a
-/// genuinely dead-end video is STILL the same `ended` call when the scheduled
-/// callback runs.
+/// **Arm condition** ([shouldArmClose], parity iOS / Android): `ended && hasChannel &&
+/// !isLive && !hasNext && behavior == advance`.
+///   - `behavior == loop` (the core default since 4.28.0): the core surfaces a transient
+///     `ended` and then seeks 0 + plays; a slow real-device seek can keep `ended` up past
+///     the debounce, so `loop` MUST NOT arm at all.
+///   - `hasNext`: with `advance` the core loads `next` itself (state → `loading`); the
+///     explicit check no longer relies on that follow-up state arriving inside 400ms.
+///   - `isLive` (fix-flutter-vod-ended-gate-live-endscreen): the engine-detected live-end
+///     path can surface a bare `ended`; a LIVE end is the core's `endScreenShown` job.
+///     A finished-live 回放 (`liveStatus != 1`) is NOT live and closes like any VOD.
+///   - `hasChannel == false`: the container's own `unload()` (`_closePlayer` / swipe
+///     close-on-empty) surfaces `ended` after the channel is gone — a teardown, not a
+///     natural end.
 ///
-/// **`isLive` check (fix-flutter-vod-ended-gate-live-endscreen).** The original design here
-/// assumed LIVE ending NEVER surfaces `LBPlayerState.ended` at all. Real-device / real-stream
-/// testing disproved that: the native core's ENGINE-detected live-end path (e.g. IVS detecting
-/// the stream terminate) can surface a bare `.ended` BEFORE (or independent of) the poll-detected
-/// `live_end==1` path that promotes to `endScreenShown` — so `state == ended` is NOT, by
-/// construction, always the VOD/回放 path. `handleStateChange` now takes the CURRENT `isLive`
-/// value (captured into the debounce closure at the moment `.ended` arrives, per D2 in this
-/// change's design.md) and skips scheduling entirely when it is `true` — the core's
-/// `endScreenShown` promotion is responsible for showing the end screen for a LIVE video; this
-/// gate MUST NOT race it closed.
+/// **Ended episode latch** (rb-flutter-vod-ended-no-next-close — was "every `ended`
+/// re-schedules" before). The FIRST `ended` after any non-`ended` state opens an episode
+/// and the arm decision is made ONCE from that instant's inputs. Further `ended` feeds in
+/// the same episode are no-ops (no re-arm, no cancel, no debounce extension). ANY
+/// non-`ended` state ends the episode and invalidates a pending close.
 class VodEndedCloseGate {
   VodEndedCloseGate({
     required this.onClose,
@@ -611,50 +613,138 @@ class VodEndedCloseGate {
     this.scheduler = _defaultVodEndedCloseScheduler,
   });
 
-  /// Called once the debounce elapses with the state STILL `ended` (no
-  /// intervening different state arrived). Fired via [scheduler] — for the
-  /// production default, asynchronously off a real `Timer`.
+  /// Called once the debounce elapses with the episode still open (no
+  /// intervening different state arrived). Fired via [scheduler].
   final VoidCallback onClose;
 
-  /// How long to wait after `state == ended` before deciding it is terminal.
-  /// Long enough for the auto-advance path's follow-up state to arrive and
-  /// cancel the pending close; short enough that a genuinely dead-end video
-  /// does not sit frozen for long.
+  /// How long to wait after the episode opens before deciding it is terminal.
   final Duration debounce;
 
   /// The injected delay seam (see [VodEndedCloseScheduler]'s doc).
   final VodEndedCloseScheduler scheduler;
 
-  /// Identity token for the CURRENTLY pending check, or `null` when none is
-  /// pending. Every call replaces it (or clears it), so a stale scheduled
-  /// callback's [identical] check fails and it becomes a silent no-op — no
-  /// explicit `Timer.cancel()` bookkeeping needed.
+  /// Identity token for the CURRENTLY pending close, or `null` when none. Cleared on
+  /// every invalidation, so a stale scheduled callback's [identical] check fails and it
+  /// becomes a silent no-op — no explicit `Timer.cancel()` bookkeeping needed.
   Object? _pending;
 
-  /// Feed one player state change. `state != ended` invalidates ANY pending
-  /// check (covers both "auto-advance under way" and "simply still
-  /// playing/loading/etc"); `state == ended` schedules a NEW check — UNLESS
-  /// [isLive] is `true` (fix-flutter-vod-ended-gate-live-endscreen), in which case this
-  /// `.ended` MUST NOT trigger an auto-close: it belongs to a LIVE video whose end screen
-  /// is the core's `endScreenShown` promotion to show, not this gate's job to close.
-  /// [isLive] is read at the moment THIS `.ended` arrives — the same instant the debounce
-  /// decision is made — so there is no later window in which a channel refresh could flip
-  /// it and invalidate an already-made decision (see design.md D2).
-  void handleStateChange(LBPlayerState state, {required bool isLive}) {
+  /// `true` while inside an ended episode (decision already latched).
+  bool _inEndedEpisode = false;
+
+  /// Pure arm decision for the moment an ended episode opens (parity iOS
+  /// `VodEndedCloseGate.shouldArmClose` / Android `shouldArmVodEndedClose`).
+  static bool shouldArmClose({
+    required LBPlayerState state,
+    required bool hasChannel,
+    required bool isLive,
+    required bool hasNext,
+    required LBVodEndBehavior behavior,
+  }) =>
+      state == LBPlayerState.ended &&
+      hasChannel &&
+      !isLive &&
+      !hasNext &&
+      behavior == LBVodEndBehavior.advance;
+
+  /// Feed one player state change (see the class doc for the episode-latch rules).
+  void handleStateChange(
+    LBPlayerState state, {
+    required bool hasChannel,
+    required bool isLive,
+    required bool hasNext,
+    required LBVodEndBehavior behavior,
+  }) {
     if (state != LBPlayerState.ended) {
+      _inEndedEpisode = false;
       _pending = null;
       return;
     }
-    if (isLive) {
-      _pending = null;
+    if (_inEndedEpisode) return; // same episode: decision already latched
+    _inEndedEpisode = true;
+    if (!shouldArmClose(
+        state: state,
+        hasChannel: hasChannel,
+        isLive: isLive,
+        hasNext: hasNext,
+        behavior: behavior)) {
       return;
     }
     final token = Object();
     _pending = token;
     scheduler(debounce, () {
-      if (identical(_pending, token)) onClose();
+      if (!identical(_pending, token)) return;
+      _pending = null;
+      onClose();
     });
   }
+
+  /// Invalidate any pending close (container teardown). Idempotent.
+  void cancel() {
+    _pending = null;
+    _inEndedEpisode = false;
+  }
+
+  /// Test-only read window (`*ForTesting` naming per docs/unit-test-discipline.md).
+  @visibleForTesting
+  bool get hasPendingCloseForTesting => _pending != null;
+}
+
+/// Injectable read of the host's [LBVodEndBehavior] (production: the Dart-side cache
+/// [LivebuySDK.vodEndBehavior] written by `LivebuySDK.configure`, `vod-end-loop-flutter-core`).
+typedef VodEndBehaviorProvider = LBVodEndBehavior Function();
+
+LBVodEndBehavior _defaultVodEndBehaviorProvider() => LivebuySDK.vodEndBehavior;
+
+/// Container-side input tracker for [VodEndedCloseGate] (rb-flutter-vod-ended-no-next-close).
+/// Flutter's core bridges no `LBChannel` to Dart, so the gate's inputs are mirrored from
+/// what the drop-in container already receives — no extra API call:
+///   - `isLive`     ← `onChannelChange` (`LBPlayerChannelInfo.liveStatus == 1`);
+///   - `hasNext`    ← `VIDEO_OPEN` `next_video_id` (native `channel.next.first?.id`, key
+///                    OMITTED when `channel.next` is empty — video-open-adjacent-nav-bridge);
+///   - `hasChannel` ← `true` on `VIDEO_OPEN` / `onChannelChange`, `false` on [markUnloaded]
+///                    (the container's own `unload()` — Flutter has no "channel cleared" signal);
+///   - `behavior`   ← [behaviorProvider], read when `VIDEO_STATE_CHANGE` arrives.
+/// A plain object so the wiring itself is unit-testable (R5 — the container cannot be pumped).
+class VodEndedCloseFeed {
+  VodEndedCloseFeed({
+    required this.gate,
+    this.behaviorProvider = _defaultVodEndBehaviorProvider,
+  });
+
+  final VodEndedCloseGate gate;
+  final VodEndBehaviorProvider behaviorProvider;
+
+  bool _hasChannel = false;
+  bool _isLive = false;
+  bool _hasNext = false;
+
+  /// Mirror one `onChannelChange` tick.
+  void onChannelChange(LBPlayerChannelInfo info) {
+    _isLive = info.liveStatus == 1;
+    _hasChannel = true;
+  }
+
+  /// Route one unified SDK event (the container's wrapping listener calls this for EVERY event).
+  void onEvent(LBSdkEvent event) {
+    switch (event.eventName) {
+      case LBEvent.videoOpen:
+        _hasChannel = true;
+        _hasNext = event.params['next_video_id'] is String;
+      case LBEvent.videoStateChange:
+        final s = event.params['state'];
+        if (s is! String) return;
+        gate.handleStateChange(
+          lbPlayerStateFromString(s),
+          hasChannel: _hasChannel,
+          isLive: _isLive,
+          hasNext: _hasNext,
+          behavior: behaviorProvider(),
+        );
+    }
+  }
+
+  /// The container is about to `unload()` its own player (channel cleared, `ended` follows).
+  void markUnloaded() => _hasChannel = false;
 }
 
 // MARK: - 領獎提交 seam（具名純函式 —— 讓「email 真的到得了 core」可被測試釘住）
@@ -1512,6 +1602,11 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// `LivebuyPlayerController`'s MethodChannel in the test env).
   late final VodEndedCloseGate _vodEndedCloseGate;
 
+  /// rb-flutter-vod-ended-no-next-close — mirrors the gate's inputs (`isLive` / `hasNext` /
+  /// `hasChannel` / `behavior`) from data this container already receives (see
+  /// [VodEndedCloseFeed]'s doc). Replaces the former `_lastIsLive` field.
+  late final VodEndedCloseFeed _vodEndedCloseFeed;
+
   /// Edge-trigger latch for [didChangeAppLifecycleState]: Flutter emits several non-`resumed`
   /// states (`inactive` → `hidden` → `paused`) when leaving the foreground, but the was-playing
   /// capture must happen exactly once, on the FIRST leave (before the native background pause).
@@ -1539,14 +1634,6 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   final PlayerErrorFeed _errorFeed =
       PlayerErrorFeed((e) => LivebuyUI.playerTemplate?.handleError(e));
   String _lastServiceLink = '';
-
-  /// Latest channel `liveStatus == 1`（fix-flutter-vod-ended-gate-live-endscreen）：mirrored from
-  /// every `onChannelChange` tick (same pattern as [_lastServiceLink] / [_lastDiversion] below),
-  /// fed into [_vodEndedCloseGate] so it can tell a LIVE `.ended` apart from a VOD one. `false`
-  /// before the first `onChannelChange` tick arrives — a `.ended` cannot occur before playback has
-  /// started, and `onChannelChange` always fires before any playback state transition (same timing
-  /// assumption [_lastServiceLink] / [_lastDiversion] already rely on).
-  bool _lastIsLive = false;
 
   /// flutter-product-tap-diversion-wiring-reference-ui: mirrors `_lastServiceLink`'s pattern —
   /// every `onChannelChange` tick also captures `info.diversion` here, so the default
@@ -1682,6 +1769,7 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     _vodEndedCloseGate = VodEndedCloseGate(onClose: () {
       if (mounted) _closePlayer();
     });
+    _vodEndedCloseFeed = VodEndedCloseFeed(gate: _vodEndedCloseGate);
     // 永遠安裝一個包裹 listener：攔 VIDEO_SWITCH 更新 swipe 基準 _currentVideoId（core 自動接續
     // 不經容器 → 否則過時 → swipe 上一支落到前前一支，rb-flutter-swipe-prev-after-autoadvance），
     // 再轉發 host listener（無則回 passthrough，回覆語意不變）。
@@ -1722,13 +1810,9 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // platform needs the debounced close check. Extends THIS existing wrapping
       // listener rather than installing a second `setListener` (a second call would
       // REPLACE this one — livebuy_sdk.dart:382).
-      if (event.eventName == LBEvent.videoStateChange) {
-        final s = event.params['state'];
-        if (s is String) {
-          _vodEndedCloseGate.handleStateChange(lbPlayerStateFromString(s),
-              isLive: _lastIsLive);
-        }
-      }
+      // rb-flutter-vod-ended-no-next-close: the feed also captures `VIDEO_OPEN`'s
+      // `next_video_id` (→ hasNext) and reads `LivebuySDK.vodEndBehavior` per state change.
+      _vodEndedCloseFeed.onEvent(event);
       // iOS-gated (rc != null): track the latest player state for the was-playing latch.
       final rc = _resumeController;
       if (rc != null && event.eventName == LBEvent.videoStateChange) {
@@ -1785,11 +1869,17 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// back to core `controller.unload()`. Shared by `PlayerShellView
   /// .onCloseRequest`'s wiring AND the new VOD-ended-no-next auto-close
   /// (rb-flutter-endscreen-live-empty-state) so both exits stay byte-identical.
-  void _closePlayer() =>
-      (widget.config.onDismiss ?? () => _controller.unload())();
+  void _closePlayer() => (widget.config.onDismiss ??
+      () {
+        // rb-flutter-vod-ended-no-next-close: the `ended` this unload surfaces is a teardown,
+        // not a natural end — parity iOS/Android `hasChannel == false` (channel cleared first).
+        _vodEndedCloseFeed.markUnloaded();
+        _controller.unload();
+      })();
 
   @override
   void dispose() {
+    _vodEndedCloseGate.cancel();
     // Symmetric with the iOS-gated addObserver in initState (no-op / never added on Android).
     if (_resumeController != null) {
       WidgetsBinding.instance.removeObserver(this);
@@ -2054,10 +2144,9 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
             onChannelChange: (info) {
               _lastServiceLink = info.serviceLink;
               _lastDiversion = info.diversion;
-              // fix-flutter-vod-ended-gate-live-endscreen: mirror `liveStatus == 1` for
-              // `_vodEndedCloseGate` (same capture pattern as `_lastServiceLink`/`_lastDiversion`
-              // above).
-              _lastIsLive = info.liveStatus == 1;
+              // fix-flutter-vod-ended-gate-live-endscreen / rb-flutter-vod-ended-no-next-close:
+              // mirror `liveStatus == 1` (+ hasChannel) for `_vodEndedCloseGate`.
+              _vodEndedCloseFeed.onChannelChange(info);
               forwardChannelChangeToTemplate(info, LivebuyUI.playerTemplate);
             },
             // flutter-moment-products-wiring-reference-ui — live-updating product state

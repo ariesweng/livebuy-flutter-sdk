@@ -40,6 +40,14 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
         )
     }
 
+    /// vod-end-loop-flutter-core — pure wire-string → `LBVodEndBehavior` mapping for `configure`'s
+    /// `vodEndBehavior` argument. Only the exact string `"advance"` selects `.advance`; anything else
+    /// (including missing / nil) falls back to `.loop`, the native core default (iOS core 4.28.0+).
+    /// Mirrors the Android bridge's `VodEndBehaviorBridge.fromWire` (identical logic).
+    static func vodEndBehavior(fromWire wire: String?) -> LBVodEndBehavior {
+        wire == "advance" ? .advance : .loop
+    }
+
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         let args = call.arguments as? [String: Any]
         switch call.method {
@@ -65,6 +73,9 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
             // SDK-wide environment selector forwarded as a wire string; unknown / missing → .production.
             // Native selects BOTH the data API base URL and the /stat endpoint; Dart resolves no URL.
             let environment: LBEnvironment = (args?["environment"] as? String) == "develop" ? .develop : .production
+            // vod-end-loop-flutter-core: wire string "advance" → .advance; anything else / missing → .loop
+            // (core 4.28.0 default). Native core does the end-of-playback branching.
+            let vodEndBehavior = LivebuyPlugin.vodEndBehavior(fromWire: args?["vodEndBehavior"] as? String)
             let user: LBUser? = (displayName != nil || avatarUrl != nil || externalUserId != nil)
                 ? LBUser(displayName: displayName ?? "", avatarUrl: avatarUrl, externalUserId: externalUserId)
                 : nil
@@ -77,7 +88,8 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                         enableConversionAttribution: enableConversionAttribution,
                         enablePowerProfileAdaptation: enablePowerProfileAdaptation,
                         enableStatReporting: enableStatReporting,
-                        environment: environment
+                        environment: environment,
+                        vodEndBehavior: vodEndBehavior
                     )
                     DispatchQueue.main.async { result(nil) }
                 } catch LBSDKError.notConfigured {

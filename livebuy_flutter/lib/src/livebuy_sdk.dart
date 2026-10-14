@@ -43,6 +43,13 @@ class LivebuySDK {
   /// native forward. `null` before [configure] has ever been called.
   static String? _currentShopId;
 
+  /// Dart-side cache of the [LBConfigOptions.vodEndBehavior] last passed to
+  /// [configure] (`vod-end-loop-flutter-core`). Unlike
+  /// [_enableDirectCloseButton], the value IS also forwarded to native — this
+  /// is a parallel echo for synchronous Dart reads (e.g. `flutter-reference-ui`).
+  /// Default [LBVodEndBehavior.loop], matching native core.
+  static LBVodEndBehavior _vodEndBehavior = LBVodEndBehavior.loop;
+
   // MARK: - Configure
 
   /// Initialize the SDK. Must be called once at App launch.
@@ -73,6 +80,10 @@ class LivebuySDK {
     // is a parallel Dart-side echo of the same input value (see
     // [currentShopId] doc).
     _currentShopId = options.shopId;
+    // vod-end-loop-flutter-core: Dart-side echo captured synchronously before
+    // the round-trip (same rationale as `_currentShopId`); the value is ALSO
+    // forwarded to native below as `vodEndBehavior`.
+    _vodEndBehavior = options.vodEndBehavior;
     await _channel.invokeMethod('configure', {
       'apiKey': options.apiKey,
       'secret': options.secret,
@@ -88,7 +99,26 @@ class LivebuySDK {
       'enablePowerProfileAdaptation': options.enablePowerProfileAdaptation,
       'enableStatReporting': options.enableStatReporting,
       'environment': options.environment.wireName,
+      'vodEndBehavior': options.vodEndBehavior.wireName,
     });
+  }
+
+  // MARK: - VOD end behavior readback (vod-end-loop-flutter-core)
+
+  /// Read back the [LBConfigOptions.vodEndBehavior] last passed to
+  /// [configure] (`vod-end-loop-flutter-core`). A pure, synchronous Dart-side
+  /// read (no method-channel round-trip), mirroring [currentShopId]'s
+  /// echo-cache pattern: the value itself is forwarded to native
+  /// `configure(vodEndBehavior:)` on every [configure] call, and this getter
+  /// reflects the caller's last input even if that call threw. Defaults to
+  /// [LBVodEndBehavior.loop] before [configure] has ever been called.
+  static LBVodEndBehavior get vodEndBehavior => _vodEndBehavior;
+
+  /// Test-only. Resets [vodEndBehavior] back to its [LBVodEndBehavior.loop]
+  /// default. Production code never calls this.
+  @visibleForTesting
+  static void resetVodEndBehaviorForTesting() {
+    _vodEndBehavior = LBVodEndBehavior.loop;
   }
 
   // MARK: - Direct close button (player-direct-close-button, Dart-only)

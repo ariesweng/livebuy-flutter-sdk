@@ -125,6 +125,22 @@ class LBConfigOptions {
   /// their own independent, parallel `requireLoginForAddToCart` core flag.
   final bool requireLoginForAddToCart;
 
+  /// What the player does when a VOD / replay (`liveStatus != 1`) video
+  /// finishes playing naturally (`vod-end-loop-flutter-core`). Default
+  /// [LBVodEndBehavior.loop]: replay the current video from the start
+  /// (whether or not the channel has a next video). Pass
+  /// [LBVodEndBehavior.advance] to restore the pre-4.28.0 behavior: continue
+  /// to the next video when the channel has one, otherwise stop in `ended`.
+  /// Live (`liveStatus == 1`) endings are unaffected by either value.
+  ///
+  /// Forwarded over the `tv.livebuy/sdk` method channel as the wire string
+  /// [LBVodEndBehavior.wireName] (`'loop'` / `'advance'`) to native
+  /// `configure(vodEndBehavior:)` (iOS / Android core 4.28.0+), where the
+  /// actual end-of-playback branching happens. Also captured Dart-side into
+  /// [LivebuySDK.vodEndBehavior] so the `flutter-reference-ui` drop-in can
+  /// read it synchronously.
+  final LBVodEndBehavior vodEndBehavior;
+
   const LBConfigOptions({
     required this.apiKey,
     required this.secret,
@@ -140,7 +156,40 @@ class LBConfigOptions {
     this.environment = LBEnvironment.production,
     this.enableDirectCloseButton = true,
     this.requireLoginForAddToCart = false,
+    this.vodEndBehavior = LBVodEndBehavior.loop,
   });
+}
+
+// MARK: - VOD end behavior (vod-end-loop-flutter-core)
+
+/// What the player does when a VOD / replay video finishes playing, mirroring
+/// the native iOS `enum LBVodEndBehavior { case loop, advance }` / Android
+/// `enum class LBVodEndBehavior { LOOP, ADVANCE }` (core 4.28.0+). Chosen once
+/// by the host at [LivebuySDK.configure] via [LBConfigOptions.vodEndBehavior];
+/// **defaults to [loop]**.
+///
+/// [wireName] is the stable cross-platform string carried across the method
+/// channel; the native plugin handlers map `'advance'` → advance and anything
+/// else (including missing) → loop.
+enum LBVodEndBehavior {
+  /// Replay the current video from the start (default, whether or not the
+  /// channel has a next video).
+  loop('loop'),
+
+  /// Pre-4.28.0 behavior: continue to the next video when the channel has
+  /// one; otherwise stop in `ended`.
+  advance('advance');
+
+  final String wireName;
+  const LBVodEndBehavior(this.wireName);
+
+  /// Parse a wire string back to the enum. Only `'advance'` maps to
+  /// [advance]; unknown / `null` conservatively maps to [loop] (the default),
+  /// matching the native plugin handlers.
+  static LBVodEndBehavior fromWireName(String? name) =>
+      name == LBVodEndBehavior.advance.wireName
+          ? LBVodEndBehavior.advance
+          : LBVodEndBehavior.loop;
 }
 
 // MARK: - Environment (sdk-stat-endpoint-environment-selection-core +

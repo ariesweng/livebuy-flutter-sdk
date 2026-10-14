@@ -17,7 +17,8 @@
 //   • CI (flutter-bridge-build.yml) + local dev (example bootstrap) export
 //     LIVEBUY_SDK_LOCAL_PATH=<repo>/ios to compile against monorepo source.
 //   • Published consumers (no env var) resolve LivebuySDK from the distribution
-//     repo over Git.
+//     repo over Git. Floor 4.28.0: the bridge passes `configure(..., vodEndBehavior:)`
+//     / `LBVodEndBehavior`, introduced in iOS v4.28.0 (vod-end-loop-flutter-core).
 import PackageDescription
 
 let livebuySDKDependency: Package.Dependency = {
@@ -27,7 +28,7 @@ let livebuySDKDependency: Package.Dependency = {
     return .package(
         name: "LivebuySDK",
         url: "https://github.com/ariesweng/livebuy-ios-sdk.git",
-        from: "4.23.0"
+        from: "4.28.0"
     )
 }()
 
