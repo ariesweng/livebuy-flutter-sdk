@@ -19,6 +19,7 @@ import 'resolved_product_photo.dart';
 import 'sheet_header_close_button.dart';
 import 'sheet_scaffold.dart';
 import 'zoom_badge.dart';
+import '../i18n/i18n.dart';
 
 /// How this sheet presents the same product-detail state (rb-align-flutter-product-action-sheet,
 /// iOS parity): [detail] = full browse (header「商品明細」+ 168 大圖 + body 底部單獨置中一行的
@@ -208,21 +209,19 @@ final Color _soldOutColor = colorFromHex('#9A96A3') ?? const Color(0xFF9A96A3);
 final Color _photoStart = colorFromHex('#C7C7CC') ?? const Color(0xFFC7C7CC);
 final Color _photoEnd = colorFromHex('#8E8E93') ?? const Color(0xFF8E8E93);
 
-// MARK: - Fixed localized copy (static presentation strings — parity to iOS/Android)
+// MARK: - Localized copy (reference-ui string table — rb-flutter-i18n-string-table)
 
-const String _headerTitle = '商品明細';
-const String _soldOutLabel = '已售完';
-const String _qtyLabel = '數量';
-const String _stockCaptionPrefix = '只剩庫存 ';
-const String _stockCaptionSuffix = ' 組';
-const String _addToCartLabel = '加入購物車';
+String get _headerTitle => ReferenceUIStrings.text('detail_header_title');
+String get _soldOutLabel => ReferenceUIStrings.text('product_sold_out');
+String get _qtyLabel => ReferenceUIStrings.text('product_qty');
+String get _addToCartLabel => ReferenceUIStrings.text('product_add_to_cart');
 /// 加購請求中 CTA 文字（rb-flutter-cart-add-loading-state，對齊設計 `LBPButton.loadingLabel`）。
-const String _addingLabel = '加入中…';
-const String _favLabel = '收藏';
-const String _favedLabel = '已收藏';
-const String _shareLabel = '分享';
-const String _retryLabel = '重試';
-const String _failureTitle = '加入購物車失敗,請稍後再試';
+String get _addingLabel => ReferenceUIStrings.text('detail_adding');
+String get _favLabel => ReferenceUIStrings.text('detail_fav');
+String get _favedLabel => ReferenceUIStrings.text('detail_faved');
+String get _shareLabel => ReferenceUIStrings.text('common_share');
+String get _retryLabel => ReferenceUIStrings.text('common_retry');
+String get _failureTitle => ReferenceUIStrings.text('detail_add_failed');
 // 「請選規格」prompt 的 copy 已搬到 `select_variant_prompt_modal.dart`（hoist 到容器 overlay root）。
 
 /// 「商品介紹」區塊標題（design `screens.jsx` `ProductDetailSheet` L879；
@@ -234,10 +233,10 @@ const String _failureTitle = '加入購物車失敗,請稍後再試';
 /// [ProductDetailSheet.description] / [ProductDetailSheet.showsProductIntro] /
 /// [_productIntroSection]。設計稿字面上的 `product.intro || '商品介紹內容'` fallback 因此在
 /// Flutter 這裡不再適用，`_productIntroFallback` 常數已隨這個反轉一併移除。
-const String _productIntroTitle = '商品介紹';
+String get _productIntroTitle => ReferenceUIStrings.text('detail_intro_title');
 
 /// 「更多商品」推薦格標題（design `screens.jsx` L886；rb-flutter-product-detail-recommendations §3）。
-const String _recommendationsTitle = '更多商品';
+String get _recommendationsTitle => ReferenceUIStrings.text('detail_more_products');
 
 /// 推薦格裁切張數上限（design.md D1，`expose-other-goods-recommendations-template` —
 /// 「裁切成幾張」刻意留給 reference-ui 自行決定，不需要動 template）。原始值為 4
@@ -670,8 +669,7 @@ class ProductDetailSheet extends StatelessWidget {
   ResolvedProductPhoto get _resolvedPhoto =>
       resolveProductPhoto(detail: detail, selectedSpec: selectedSpec);
 
-  String get _stockCaption =>
-      '$_stockCaptionPrefix${qty.max}$_stockCaptionSuffix';
+  String get _stockCaption => ReferenceUIStrings.text('detail_stock_left', {'count': qty.max});
 
   /// Whether the「只剩庫存 N 組」caption is drawn — the SINGLE decision point
   /// (rb-flutter-show-stock-caption-toggle). The ONE call of [normalizeShowStock] in this
@@ -682,7 +680,10 @@ class ProductDetailSheet extends StatelessWidget {
       showsStockCaption(normalizeShowStock(showStock), _isSoldOut);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // Top-rounded sheet shell (LBPBottomSheet rounds ONLY the top two corners,
     // 20 20 0 0). The grab handle + header pin at top, the footer pins at bottom, and
     // only the photo / variant / qty body scrolls within the ½-screen cap

@@ -9,6 +9,7 @@ import '../playershell/bag_glyph.dart';
 import '../playershell/pin_fill_glyph.dart';
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import '../i18n/i18n.dart';
 
 // ChatFeedView — family-2 feed-win surface 1 (merged chat-feed stream).
 //
@@ -191,13 +192,13 @@ const double _chatLineHeight = 1.22;
 
 /// Un-joined event-join CTA label (rb-flutter-chat-message-line-restyle, design R30:
 /// changed from `'加入活動'` — same single call site, value updated in place).
-const String _joinLabel = '立即參加';
+String get _joinLabel => ReferenceUIStrings.text('common_join_now');
 
 /// 已參加 joined-state label.
-const String _joinedLabel = '已參加';
+String get _joinedLabel => ReferenceUIStrings.text('chat_joined');
 
 /// Fallback copy when an event-join `text` is empty (LBEventJoinLine default).
-const String _defaultEventCopy = '🎉 抽獎開始！留言「抽獎」即可參加';
+String get _defaultEventCopy => ReferenceUIStrings.text('chat_event_default');
 
 /// The family-2 merged chat-feed stream surface. Paints the bottom-anchored,
 /// newest-at-bottom translucent feed over the video area, dispatching each
@@ -728,7 +729,10 @@ class _ScrollableChatFeedState extends State<_ScrollableChatFeed> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final viewport = MediaQuery.of(context).size.height * _scrollableHeightFraction;
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -787,7 +791,7 @@ class _ScrollableChatFeedState extends State<_ScrollableChatFeed> {
                         ArrowDownGlyph(size: 10, color: widget.theme.accent),
                         const SizedBox(width: 4),
                         Text(
-                          '最新訊息',
+                          ReferenceUIStrings.text('chat_return_to_latest'),
                           style: TextStyle(
                             color: widget.theme.accent,
                             fontSize: 11.5 * widget.theme.fontScale,
@@ -834,7 +838,10 @@ class _ChatLine extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // Avatar derivation key: the nickname when present, else `text` (legacy). So one
     // author = one stable avatar; a nameless row falls back to the message (parity iOS).
     final hasName = userName.isNotEmpty;
@@ -902,7 +909,7 @@ class _ChatLine extends StatelessWidget {
                           ),
                         ),
                         TextSpan(
-                          text: '：',
+                          text: ReferenceUIStrings.text('chat_name_separator'),
                           style: baseStyle.copyWith(
                             color: _onGlass,
                             fontWeight: FontWeight.w600,
@@ -978,7 +985,10 @@ class _HostChatLine extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final hasName = userName.isNotEmpty;
     final hasReply = replyText != null && replyText!.isNotEmpty;
     return Row(
@@ -1032,7 +1042,7 @@ class _HostChatLine extends StatelessWidget {
                     if (isAI) _roleTag(theme, 'AI', solid: false),
                     if (hasName || isAI)
                       Text(
-                        '：',
+                        ReferenceUIStrings.text('chat_name_separator'),
                         style: TextStyle(
                           color: _onGlass,
                           fontSize: 11.5 * theme.fontScale,
@@ -1137,9 +1147,14 @@ class _PinnedBanner extends StatelessWidget {
   const _PinnedBanner({required this.theme, required this.pinned});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final namePrefix =
-        (pinned.kind == 'comment' && pinned.name.isNotEmpty) ? '${pinned.name}：' : '';
+        (pinned.kind == 'comment' && pinned.name.isNotEmpty)
+            ? '${pinned.name}${ReferenceUIStrings.text('chat_name_separator')}'
+            : '';
     return Container(
       key: LbTestKeys.pinnedBanner,
       margin: const EdgeInsets.only(bottom: _rowGap),
@@ -1246,7 +1261,10 @@ class _EventJoinLine extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // Shared message-row language (ACT_ROW gap 8, same as _ActivityLine / _HostChatLine): a
     // 24dp round accent avatar SLOT OUTSIDE the bubble, then a NEUTRAL bubble (R30 — no
     // longer solid-accent) wrapping a header + copy + (optional) CTA block below — same
@@ -1297,7 +1315,7 @@ class _EventJoinLine extends StatelessWidget {
                     if (hasHostName) _roleTag(theme, hostName, solid: true),
                     if (hasHostName)
                       Text(
-                        '：',
+                        ReferenceUIStrings.text('chat_name_separator'),
                         style: TextStyle(
                           color: _onGlass,
                           fontSize: 11.5 * theme.fontScale,

@@ -7,6 +7,7 @@ import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'looping_video_view.dart';
 import 'widget_model.dart' show WidgetGoods, WidgetModel;
+import '../i18n/i18n.dart';
 
 // CarouselCardView — family-5 shared 9:16 widget card primitive (LBPCarouselCard).
 //
@@ -340,7 +341,10 @@ class CarouselCardView extends StatelessWidget {
       !_isLive && item.type == 2 && scheduledDate(item.publishAt).isNotEmpty;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final card = SizedBox(
       width: width,
       child: Column(

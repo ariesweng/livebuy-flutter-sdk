@@ -7,6 +7,7 @@ import '../reference_ui_widget_embed_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'carousel_card.dart';
 import 'widget_model.dart' show WidgetGoods, WidgetSeeds;
+import '../i18n/i18n.dart';
 
 // VideoShopGridView — family-5 widget surface 2 (影音商城 / LBPVideoShop).
 //
@@ -102,8 +103,8 @@ const int _maxGridCards = 6;
 
 // MARK: - Fixed presentation strings
 
-const String _loadMoreLabel = '載入更多影片...';
-const String _endOfListLabel = '已顯示全部影片';
+String get _loadMoreLabel => ReferenceUIStrings.text('widget_load_more');
+String get _endOfListLabel => ReferenceUIStrings.text('widget_end_of_list');
 
 /// The family-5 影音商城 widget surface (`LBPVideoShop`): a 2-column grid of shared
 /// [CarouselCardView]s over a FIXED SMALL set of [videos], plus a centered footer
@@ -249,7 +250,10 @@ class VideoShopGridView extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // Three-state dispatch (widget-loading-placeholder, rb-flutter-widget-loading-
     // placeholder — design D4): first-load placeholder takes priority; then a
     // confirmed-empty list hides the ENTIRE widget (a deliberate behavior change

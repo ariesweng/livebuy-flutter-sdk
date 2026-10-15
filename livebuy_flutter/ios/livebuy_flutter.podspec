@@ -40,29 +40,29 @@ Flutter plugin for Livebuy live-shopping SDK (iOS & Android).
   #
   # `LivebuyPlugin.swift` `import LivebuySDK` and calls `Livebuy.configure(...)`,
   # so this pod must link the core `LivebuySDK` XCFramework to fully COMPILE.
-  # `~> 4.28` = CocoaPods optimistic operator, [4.28.0, 5.0.0) — floor 4.28.0 because the bridge
+  # `~> 4.29` = CocoaPods optimistic operator, [4.29.0, 5.0.0) — floor 4.29.0 because the bridge's
+  # `getLanguage` reads `Livebuy.currentLanguage` (iOS v4.29.0+, i18n-language-source-ios-core;
+  # bridge-native-pin-4-29-0-core). Previous floor 4.28.0: the bridge
   # passes `Livebuy.configure(..., vodEndBehavior:)` / `LBVodEndBehavior` (iOS v4.28.0+,
-  # vod-end-loop-flutter-core; previous floor 4.23.0 came from `Livebuy.retryPendingAction(token:)` /
+  # vod-end-loop-flutter-core; floor before that, 4.23.0, came from `Livebuy.retryPendingAction(token:)` /
   # `discardPendingAction(token:)`); the upper bound is aligned to the
   # major boundary introduced by the 2026-07-16 brand-casing rename (commit
   # c140f4bf), same bound the RN bridge podspec pins.
   #
   # RESOLUTION — the consumer's Podfile MUST make the `LivebuySDK` pod findable
-  # (exactly like SwiftPM consumers add `.package(url:)`). Pick ONE, same three
-  # options react-native/livebuy-react-native.podspec documents:
-  #   • spec repo:
-  #       source "https://github.com/ariesweng/livebuy-ios-podspecs.git"
-  #       source "https://cdn.cocoapods.org"
-  #   • release-attached podspec:
+  # (exactly like SwiftPM consumers add `.package(url:)`). There is currently NO
+  # public CocoaPods spec repo; same options react-native/livebuy-react-native.podspec
+  # documents:
+  #   • release-attached podspec (the supported integration path):
   #       pod "LivebuySDK", :podspec =>
   #         "https://github.com/ariesweng/livebuy-ios-sdk/releases/download/<current release tag>/LivebuySDK.podspec"
-  #   • local dev (monorepo checkout):
+  #   • local dev only (Livebuy-internal monorepo checkout):
   #       pod "LivebuySDK", :podspec => "<repo>/livebuy-ios-sdk/LivebuySDK.podspec"
   #
-  # Without one of these, `pod install` stops with "unable to find a
+  # Without either, `pod install` stops with "unable to find a
   # specification for LivebuySDK" — the correct, expected plan-B behaviour.
   # ───────────────────────────────────────────────────────────────────────────
-  s.dependency 'LivebuySDK', '~> 4.28'
+  s.dependency 'LivebuySDK', '~> 4.29'
 
   # Flutter.framework does not contain an i386 slice, which is specific to iOS.
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }

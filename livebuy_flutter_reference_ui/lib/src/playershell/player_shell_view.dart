@@ -34,6 +34,7 @@ import 'subtitle_vtt_pipeline.dart';
 import 'upcoming_countdown_view.dart';
 import 'video_info_panel_view.dart';
 import 'vtt_subtitle_parser.dart';
+import '../i18n/i18n.dart';
 
 // rb-flutter-marquee-title-scroll — the pure entry point for the
 // `extensions.video_title_scroll` merchant gate lives next to the surface that consumes
@@ -2779,8 +2780,8 @@ class _PlayerShellViewState extends State<PlayerShellView> {
 // 空 onTap → 攔截觸控）。只在 `PlayerShellView` 偵測 `m.isRestricted == true` 時建出，故未受限時
 // 不出像素（golden byte-identical）。鏡像 iOS canonical `RestrictionMaskView` / RN 文案；lock glyph /
 // 最終視覺 / 退出 affordance DECISION-PENDING 待設計稿（純文字呈現）。
-const String _restrictionTitle = '此內容限定會員等級觀看';
-const String _restrictionSubtitle = '提升會員等級後即可觀看';
+String get _restrictionTitle => ReferenceUIStrings.text('player_restricted_title');
+String get _restrictionSubtitle => ReferenceUIStrings.text('player_restricted_body');
 
 class _RestrictionMask extends StatelessWidget {
   final ReferenceUITheme theme;
@@ -2788,7 +2789,10 @@ class _RestrictionMask extends StatelessWidget {
   const _RestrictionMask({required this.theme});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     return GestureDetector(
       // 攔截下層互動（軟閘門：core 不擋播放，refui 擋互動）。
       behavior: HitTestBehavior.opaque,
@@ -3005,7 +3009,10 @@ class _RailMoreMenuSheet extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     return ClipRRect(
       key: LbTestKeys.liveMoreSheet,
       borderRadius: const BorderRadius.only(
@@ -3045,7 +3052,7 @@ class _RailMoreMenuSheet extends StatelessWidget {
                   // 其他 rail pill 的固定白字慣例（那是「疊在影片上」的配色，這裡誤套過一次，已由獨立
                   // 驗證抓到並修正）。
                   icon: showShare ? ShareFillGlyph(color: theme.text, size: 20) : null,
-                  label: showShare ? '分享' : null,
+                  label: showShare ? ReferenceUIStrings.text('common_share') : null,
                   onTap: onShare,
                 ),
                 const SizedBox(width: 20),
@@ -3056,7 +3063,7 @@ class _RailMoreMenuSheet extends StatelessWidget {
                   // operation-rail-batch，取代 Material Icons.chat_bubble——parity 側欄
                   // serviceLink pill / VideoInfoPanel footer 兩處已同步改用的同一顆 ContactGlyph）。
                   icon: showContact ? ContactGlyph(color: theme.text, size: 20) : null,
-                  label: showContact ? '客服' : null,
+                  label: showContact ? ReferenceUIStrings.text('live_more_contact') : null,
                   onTap: onContact,
                 ),
                 const SizedBox(width: 20),

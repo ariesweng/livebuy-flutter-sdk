@@ -4,6 +4,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show LBMiniCartPeek;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'sheet_scaffold.dart' show liveProductImage;
+import '../i18n/i18n.dart';
 
 // MiniCartPeek — family-3 product sheet-stack surface 3 (mini-cart peek).
 //
@@ -128,7 +129,7 @@ final Color _photoEnd = colorFromHex('#8E8E93') ?? const Color(0xFF8E8E93);
 // MARK: - Static copy (LBPMiniCart labels)
 
 /// Sold-out price-line label (design `已售完`).
-const String miniCartSoldOutLabel = '已售完';
+String get miniCartSoldOutLabel => ReferenceUIStrings.text('product_sold_out');
 
 /// Up-to-2-char monogram from the product name (deterministic, pure) — for the photo
 /// placeholder. Mirrors `ProductDetailSheet._monogram`.
@@ -196,7 +197,10 @@ class MiniCartPeek extends StatelessWidget {
   bool get _isSoldOut => peek?.soldOut == 1;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final p = peek;
     // Self-guard (D-4): an absent peek → no floating card (the container also
     // gates, mirroring iOS / Android, so this is safe to compose unconditionally).

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import '../i18n/i18n.dart';
 
 // CartToastView — family-3 add-to-cart success toast (~1.8s confirmation, Flutter).
 //
@@ -22,7 +23,7 @@ import '../testing/lb_test_keys.dart';
 const Color _glassFill = Color(0xDB141418);
 
 /// The confirmation label (design default 「已加入購物車」).
-const String _defaultLabel = '已加入購物車';
+String get _defaultLabel => ReferenceUIStrings.text('cart_added_toast');
 
 /// Accent-ringed checkmark diameter (design `LBPCartToast` 24px circle).
 const double _checkSize = 24;
@@ -34,17 +35,22 @@ class CartToastView extends StatelessWidget {
   const CartToastView({
     super.key,
     required this.theme,
-    this.label = _defaultLabel,
-  });
+    String? label,
+  }) : _label = label;
 
   /// The resolved reference-ui theme (FIRST, always). The accent drives the checkmark ring.
   final ReferenceUITheme theme;
 
-  /// The confirmation label (design default 「已加入購物車」).
-  final String label;
+  /// The confirmation label (design default 「已加入購物車」, in the CURRENT reference-ui
+  /// language — resolved at read time when omitted / null, rb-flutter-i18n-string-table).
+  String get label => _label ?? _defaultLabel;
+  final String? _label;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     return Container(
       key: LbTestKeys.cartToast,
       padding: const EdgeInsets.fromLTRB(12, 10, 16, 10),

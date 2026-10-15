@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../reference_ui_theme.dart';
+import '../i18n/i18n.dart';
 
 // GestureMuteToastView — family-1 centre mute toast (0.7s tap-to-mute feedback).
 //
@@ -43,11 +44,14 @@ class GestureMuteToastView extends StatelessWidget {
   static final Color _glass =
       (colorFromHex('#141418') ?? const Color(0xFF141418)).withValues(alpha: 0.78);
 
-  static const String _mutedLabel = '靜音';
-  static const String _unmutedLabel = '聲音開啟';
+  static String get _mutedLabel => ReferenceUIStrings.text('player_muted');
+  static String get _unmutedLabel => ReferenceUIStrings.text('player_unmuted');
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(color: _glass, borderRadius: BorderRadius.circular(999)),
       child: Padding(

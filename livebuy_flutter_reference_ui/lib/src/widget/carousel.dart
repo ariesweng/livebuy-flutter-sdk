@@ -8,6 +8,7 @@ import '../reference_ui_widget_embed_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'carousel_card.dart';
 import 'widget_model.dart' show WidgetGoods, WidgetSeeds;
+import '../i18n/i18n.dart';
 
 // CarouselView — family-5 widget surface 1 (LBPCarousel, horizontal card row).
 //
@@ -109,9 +110,12 @@ class CarouselView extends StatelessWidget {
   /// scrollable). This surface never mutates / re-fetches.
   final List<LBVideoItem> videos;
 
-  /// Section title (heavy, leading). Defaults to the design's「精選影片」. An empty
-  /// title AND a null subtitle hide the entire header row (mirrors widgets.jsx 283).
-  final String title;
+  /// Section title (heavy, leading). Defaults (constructor argument omitted / null) to the
+  /// design's「精選影片」in the CURRENT reference-ui language (rb-flutter-i18n-string-table —
+  /// resolved at read time, so a runtime language change is picked up). An empty title AND a
+  /// null subtitle hide the entire header row (mirrors widgets.jsx 283).
+  String get title => _title ?? defaultTitle;
+  final String? _title;
 
   /// Optional section subtitle (dim, below the title). null → no subtitle line.
   final String? subtitle;
@@ -187,7 +191,7 @@ class CarouselView extends StatelessWidget {
     super.key,
     required ReferenceUITheme theme,
     required this.videos,
-    this.title = defaultTitle,
+    String? title,
     this.subtitle,
     this.cardWidth = 132,
     this.goodsFor,
@@ -200,7 +204,8 @@ class CarouselView extends StatelessWidget {
     this.scrollable = false,
     this.isInitialLoading = false,
     this.showsHeader = true,
-  }) : resolvedTheme = theme;
+  })  : resolvedTheme = theme,
+        _title = title;
 
   /// Whether there IS header content to show — `title` non-empty OR a `subtitle` exists
   /// (mirrors `LBPCarousel`'s `(title || subtitle) && (...)`, widgets.jsx 283). Renamed from
@@ -217,7 +222,10 @@ class CarouselView extends StatelessWidget {
       videos.length <= maxCards ? videos : videos.sublist(0, maxCards);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // Three-state dispatch (widget-loading-placeholder, rb-flutter-widget-loading-
     // placeholder — design D4): first-load placeholder takes priority; then a
     // confirmed-empty list hides the ENTIRE widget (including the header — a
@@ -584,10 +592,10 @@ class CarouselView extends StatelessWidget {
   // MARK: - Fixed presentation strings / caps
 
   /// Default section title (the design's `LBPCarousel` default,「精選影片」).
-  static const String defaultTitle = '精選影片';
+  static String get defaultTitle => ReferenceUIStrings.text('widget_carousel_title');
 
   /// Header「查看更多 ›」accent link label (widgets.jsx 292).
-  static const String seeMoreLabel = '查看更多 ›';
+  static String get seeMoreLabel => ReferenceUIStrings.text('widget_see_more');
 
   /// Max cards drawn in the FIXED static row (the rest live behind the host's real
   /// horizontal scroll). Parity with iOS / Android's capped static row.

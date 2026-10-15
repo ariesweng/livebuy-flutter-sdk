@@ -6,6 +6,65 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.11.0 - 2026-10-15
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。
+> `livebuy_flutter`：新增讀取／訂閱目前語言的 API、語言 fallback 改為 `en`，原生依賴升到 `4.29.0`；
+> `livebuy_flutter_ui`：無內容變更、僅隨版號；`livebuy_flutter_reference_ui`：文案改走自帶五語系字串表並可執行中切換語言。
+> **host 須三套件一起升到 `2.11.0`，原生依賴為 iOS `LivebuySDK` `4.29.0`（`~> 4.29`）／Android `tv.livebuy:livebuy` `4.29.0`。**
+> 語言優先序改變見 [`docs/release-notes/v4.29.0.md`](../docs/release-notes/v4.29.0.md)。新增公開 API 為主，故為 minor；
+> 含 reference-ui 3 個公開常數由 `const` 改 getter 的 ⚠️ 源碼相容性破壞（見下方專節）。
+
+### Added
+
+- 讀取目前語言（`i18n-language-source-flutter-core`）：`LivebuySDK.getLanguage()`（`Future<LBLocaleCode>`，經
+  method channel `getLanguage` 讀 iOS `Livebuy.currentLanguage`／Android `LivebuySDK.currentLanguage`）、同步快取
+  `LivebuySDK.currentLanguage`（初始 `en`；首次存取、`configure` 結束後、`setLanguage` 結束後回填，並以
+  `LANGUAGE_CHANGED` 的 `params.to` 更新）與變更串流 `LivebuySDK.languageChanges`（broadcast，值實際改變才 emit、
+  不重播目前值）。語言優先序（host > 手機系統語言 > API `lang` > `en`）由原生 core 決定。
+- reference-ui 文案改走自帶五語系字串表（`rb-flutter-i18n-string-table`，`livebuy_flutter_reference_ui`；134 key＝iOS 133＋
+  Flutter 獨有 1 `activity_acknowledge`，譯文與 iOS 逐字一致），單一訂閱 core `languageChanges`，執行中切換語言即時重繪；
+  直播預告月日依語言格式化。
+- 中獎／活動入口補無障礙標示（`rb-flutter-parity-debt-closure`）：`Semantics` label＋button，`excludeSemantics` 讓朗讀只念
+  label（對齊 iOS）。
+
+### Changed
+
+- ⚠️ **行為變更：語言 fallback 由 `zh-TW` 改為 `en`**（`i18n-fallback-en-flutter-core`，隨原生 core `4.29.0`）：host 未指定
+  語言、手機系統語言不在 5 語系內、且後端沒回 `lang` 時，SDK 改用 `en`（之前是 `zh-TW`）。`LivebuySDK.currentLanguage` 在
+  第一次原生讀取完成前的初始值也改為 `LBLocaleCode.en`。要固定語言請在 `configure(lang: …)` 明確指定。API 無變動。
+- reference-ui 缺 key fallback 改「目前語言 → `en` → key」，未知語言碼與讀不到 core 時一律視為 `en`
+  （`rb-flutter-i18n-fallback-en`）。五張表 key 集合由測試把關為完全相同，正式畫面不受影響。
+- zh-TW 文案統一為 iOS 寫法（`rb-flutter-i18n-string-table`／`rb-flutter-parity-debt-closure`）：展開輸入框提示「留言…」→
+  「留言...」；`nickname_taken_error`「此暱稱已被使用，請換一個」、`nickname_retryable_error`「暱稱設定失敗，請稍後再試」、
+  `variant_prompt_body` 逗號改全形、`widget_demo_data_caption`「（示範資料 — 未取得直播列表）」。其餘 zh-TW 畫面逐字不變。
+- `CarouselView.title`、`CcUnavailableTooltip.text`、`CartToastView.label` 建構子參數由「帶 zh-TW 預設值的 `String`」改為
+  `String?`（`rb-flutter-i18n-string-table`）：省略或傳 `null` 時用目前語言的預設值；欄位讀取端仍是 `String`。參數型別放寬，
+  既有呼叫照常編譯（源碼相容）。
+- `scheduledDate`（直播預告與預告卡共用）遇不合法月日（如 13 月、2/30）改回傳空字串（之前會照字面拼出）。
+- 原生依賴下限升到 `4.29.0`（bridge 的 `getLanguage` 用到 `4.29.0` 才有的 `currentLanguage`，`bridge-native-pin-4-29-0-core`）：
+  Android `tv.livebuy:livebuy` `4.28.0` → `4.29.0`；iOS `livebuy_flutter.podspec` `LivebuySDK ~> 4.28` → `~> 4.29`、
+  `Package.swift` `from: "4.28.0"` → `from: "4.29.0"`。先前 iOS（範圍約束、可解析到 `4.29.0`）與 Android（精確 pin `4.28.0`）
+  語言行為暫時不一致的情形隨之消除。
+- ⚠️ **以 CocoaPods 消費的 host**，Podfile 中 `LivebuySDK` 的 podspec URL **必須**改指 `v4.29.0`（或更新）的 release——
+  仍指向舊 release 的 podspec 時，`pod install` 會因不滿足 `~> 4.29` 而失敗。
+
+### ⚠️ BREAKING
+
+- **`CarouselView.defaultTitle`／`CarouselView.seeMoreLabel`／頂層 `miniCartSoldOutLabel` 由 `const` 改為 getter**
+  （`livebuy_flutter_reference_ui`，`rb-flutter-i18n-string-table`）：值改依目前語言（zh-TW 值不變）。在 `const` 情境
+  （如 `const Text(CarouselView.defaultTitle)`）使用它們的 host 升級後會編譯失敗，拿掉 `const` 即可。
+- 只使用 `LivebuyPlayer`／`LivebuyWidget` drop-in 容器、未直接引用上述符號的 host 不受影響。
+
+### 已知限制
+
+- 原生端發起的語言變更（API `lang` 到達、Android 執行中系統語言變更）只有在原生 listener 已安裝時（host
+  `LivebuySDK.setListener(...)` 或 drop-in 容器）才會即時進入 `currentLanguage`／`languageChanges`。純 Tier A 單獨使用且
+  host 未安裝 listener 時，可呼叫 `LivebuySDK.getLanguage()` 強制重讀。Dart 發起的變更（`configure`／`setLanguage`）不受影響。
+
+> **驗證範圍**：`flutter test`／`flutter analyze` 三套件（見發版準備 change）；Flutter Android bridge 與 iOS plugin 已對已發佈
+> `4.29.0` 實際編譯通過。**未經模擬器或真機實測語言切換**。
+
 ## 2.10.0 - 2026-10-14
 
 > **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。

@@ -7,6 +7,7 @@ import '../testing/lb_test_keys.dart';
 import 'sheet_header_close_button.dart';
 import 'sheet_scaffold.dart';
 import 'zoom_badge.dart';
+import '../i18n/i18n.dart';
 
 // NotifyRestockSheet — family-3 product sheet-stack surface 4 (restock-notify).
 //
@@ -86,14 +87,14 @@ final Color _bgSunken = colorFromHex('#F4F4F6') ?? const Color(0xFFF4F4F6);
 /// `theme.soldOut` (sold-out caption — design `#9A9BA5`).
 final Color _soldOut = colorFromHex('#9A9BA5') ?? const Color(0xFF9A9BA5);
 
-// MARK: - Fixed localized copy (static presentation strings — parity to iOS/Android)
+// MARK: - Localized copy (reference-ui string table — rb-flutter-i18n-string-table)
 
-const String _soldOutLabel = '已售完';
-const String _qtyLabel = '數量';
-const String _noStockLabel = '尚無庫存';
+String get _soldOutLabel => ReferenceUIStrings.text('product_sold_out');
+String get _qtyLabel => ReferenceUIStrings.text('product_qty');
+String get _noStockLabel => ReferenceUIStrings.text('restock_no_stock');
 // 補貨 CTA 文案（對齊 design `screens.jsx` `NotifyRestockSheet` + iOS/Android）。
-const String _noticeOffLabel = '補貨通知我';
-const String _noticeOnLabel = '已開啟補貨通知';
+String get _noticeOffLabel => ReferenceUIStrings.text('restock_notice_off');
+String get _noticeOnLabel => ReferenceUIStrings.text('restock_notice_on');
 
 /// The family-3 SOLD-OUT restock-notify sheet for one sold-out
 /// [LBProductDetailState]. Renders the bottom-sheet shell (grab handle + centered
@@ -146,7 +147,10 @@ class NotifyRestockSheet extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // Top-rounded sheet shell (LBPBottomSheet rounds ONLY the top two corners,
     // radius 20). The grab handle + 補貨通知 header PIN at top, the 通知我補貨 footer PINS
     // at bottom, and only the product block + qty body scrolls — within the ½-screen cap

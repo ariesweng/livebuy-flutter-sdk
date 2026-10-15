@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart';
 import '../productsheets/sheet_scaffold.dart' show liveProductImage;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
+import '../i18n/i18n.dart';
 
 // UpcomingCountdownView — 直播預告 (upcoming / awaitingLive) full-bleed surface.
 //
@@ -86,7 +87,10 @@ class UpcomingCountdownView extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final date = scheduledDate(scheduledStartAt);
     return Stack(
       key: LbTestKeys.momentCountdownRoot,
@@ -168,7 +172,7 @@ String scheduledDate(String publishAt) {
   final month = int.tryParse(date[1]);
   final day = int.tryParse(date[2]);
   if (month == null || day == null) return '';
-  return '$month月$day日';
+  return ReferenceUIStrings.monthDay(month, day, referenceUILanguage.current);
 }
 
 /// Reformat a backend `publish_at` (`"2026-06-20 20:00:00"`) → `"20:00"` (HH:MM) by

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../i18n/i18n.dart';
 
 // CcUnavailableTooltip — small dark tooltip bubble shown after tapping the CC (字幕) icon while
 // it is in its `unavailable` state.
@@ -30,14 +31,17 @@ enum CcTooltipPlacement {
 const Color _bubbleFill = Color(0xE6000000);
 
 /// The default「未提供字幕/隱藏式輔助字幕」copy (design-literal, parity `ccTip` call sites).
-const String _defaultText = '未提供字幕/隱藏式輔助字幕';
+String get _defaultText => ReferenceUIStrings.text('player_subtitle_unavailable');
 
 /// The small dark tooltip bubble + triangle arrow (design `LBPTooltip`). `show == false` renders
 /// nothing (`SizedBox.shrink`) — same "absent, not just invisible" convention as `LBPTooltip`'s
 /// own `if (!show) return null`.
 class CcUnavailableTooltip extends StatelessWidget {
   final bool show;
-  final String text;
+  /// The bubble copy. Defaults (omitted / null) to「未提供字幕/隱藏式輔助字幕」in the CURRENT
+  /// reference-ui language, resolved at read time (rb-flutter-i18n-string-table).
+  String get text => _text ?? _defaultText;
+  final String? _text;
   final CcTooltipPlacement placement;
 
   /// Extra horizontal offset (px) applied to the ARROW ONLY, independent of the bubble body
@@ -54,13 +58,16 @@ class CcUnavailableTooltip extends StatelessWidget {
   const CcUnavailableTooltip({
     super.key,
     required this.show,
-    this.text = _defaultText,
+    String? text,
     this.placement = CcTooltipPlacement.top,
     this.arrowOffset = 0,
-  });
+  }) : _text = text;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     if (!show) return const SizedBox.shrink();
 
     final bubble = Container(

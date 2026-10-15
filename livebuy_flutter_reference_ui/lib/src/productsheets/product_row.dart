@@ -14,6 +14,7 @@ import 'product_row_name_tag.dart' as name_tag;
 import 'product_row_overlay.dart' show ProductRowMode, isReplayNeverIntroduced;
 import 'product_status_badge.dart';
 import 'sheet_scaffold.dart';
+import '../i18n/i18n.dart';
 
 // ProductRow — reusable product-card component (row / grid two states, Flutter).
 //
@@ -185,7 +186,10 @@ class ProductRow extends StatelessWidget {
   void _share() => onShareProduct?.call(product);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     switch (layout) {
       case ProductRowLayout.row:
         return _buildRow(context);
@@ -1220,26 +1224,26 @@ final Color _introducingBadgeFill =
 final Color _hotNameTagColor =
     (colorFromHex('#F03246') ?? const Color(0xFFF03246)).withValues(alpha: 0.7);
 
-const String _soldOutLabel = '已售完';
-const String _introducingLabel = '介紹中';
+String get _soldOutLabel => ReferenceUIStrings.text('product_sold_out');
+String get _introducingLabel => ReferenceUIStrings.text('product_introducing');
 
 /// 名稱前「即將售完」標籤文案（rb-flutter-product-row-name-tag-system，design R39）——訂正
 /// 補上 🔥 emoji 前綴，對齊設計來源 `sdk-components.jsx:1183` 的字面值 `'🔥 即將售完'`。查證：
 /// 此常數在本次修改前唯一的呼叫點就是本次移除/取代的舊「價格列之後」徽章分支，無其他呼叫端
 /// 受影響，故就地訂正不拆分新舊常數。
-const String _outSoonLabel = '🔥 即將售完';
-const String _hotLabel = '熱賣中';
-const String _playHintLabel = '看講解';
+String get _outSoonLabel => ReferenceUIStrings.text('product_out_soon');
+String get _hotLabel => ReferenceUIStrings.text('product_hot');
+String get _playHintLabel => ReferenceUIStrings.text('product_play_hint');
 
 /// 名稱前「直播價」外框標籤文案（rb-flutter-product-row-name-tag-system，design R39，parity
-/// iOS/Android/RN）。reference-ui 層文案一律寫死，MUST NOT 透過 i18n 系統存取（比照本檔案既有
-/// 其餘標籤文案的既定慣例）。
-const String _livePriceLabel = '直播價';
+/// iOS/Android/RN）。走 reference-ui 自帶字串表（rb-flutter-i18n-string-table，key
+/// `product_live_price`），MUST NOT 透過 core 的 i18n 系統存取（比照本檔案其餘標籤文案）。
+String get _livePriceLabel => ReferenceUIStrings.text('product_live_price');
 
 /// 名稱前「搶購中」實心標籤文案（design R39, rb-flutter-flash-sale-live-signal-wiring, parity
-/// iOS/Android/RN sibling changes）。reference-ui 層文案一律寫死,MUST NOT 透過 i18n 系統存取
-/// （比照本檔案既有其餘標籤文案的既定慣例）。
-const String _rushLabel = '搶購中';
+/// iOS/Android/RN sibling changes）。走 reference-ui 自帶字串表（key `product_rush`），MUST NOT
+/// 透過 core 的 i18n 系統存取（比照本檔案其餘標籤文案）。
+String get _rushLabel => ReferenceUIStrings.text('product_rush');
 
 /// 縮圖左上角編號徽章（design R35）介紹中內容的文字——「熱賣中」（[_hotLabel]，`is_hot` 商品狀態
 /// 標籤）是一個完全不同的概念，兩者刻意使用不同常數，不共用。

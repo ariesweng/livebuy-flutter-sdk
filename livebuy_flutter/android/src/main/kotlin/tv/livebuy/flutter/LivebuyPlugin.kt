@@ -346,6 +346,14 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                 LivebuySDK.setLanguage(lang)
                 result.success(null)
             }
+            "getLanguage" -> {
+                // i18n-language-source-flutter-core: native current language
+                // (always one of zh-TW / zh-CN / en / ms-MY / id-ID; safe before
+                // configure). Requires an Android core that ships
+                // `LivebuySDK.currentLanguage` (android-v4.29.0+; the bridge pins
+                // tv.livebuy:livebuy 4.29.0, bridge-native-pin-4-29-0-core).
+                result.success(LivebuySDK.currentLanguage)
+            }
             "notifyCheckoutCompleted" -> {
                 val orderId: String = call.argument("orderId")
                     ?: return result.error("BAD_ARG", "orderId required", null)

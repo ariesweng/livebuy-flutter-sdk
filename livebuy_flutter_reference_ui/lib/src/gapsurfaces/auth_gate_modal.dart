@@ -6,6 +6,7 @@ import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'lock_glyph.dart';
 import '../safearea/lb_safe_area.dart';
+import '../i18n/i18n.dart';
 
 // AuthGateModalView — family-6 gap-surfaces surface 1 (「請先登入」auth-gate modal).
 //
@@ -76,20 +77,20 @@ final Color _textDim = colorFromHex('#6B6775') ?? const Color(0xFF6B6775);
 /// `theme.surface.strokeStrong` (plain-button outline —「稍後再說」border).
 final Color _strokeStrong = colorFromHex('#D8D5DE') ?? const Color(0xFFD8D5DE);
 
-// MARK: - Fixed localized copy (static presentation strings, 繁中 — parity verbatim)
+// MARK: - Localized copy (reference-ui string table — rb-flutter-i18n-string-table)
 
-const String _title = '請先登入';
-const String _dismissLabel = '稍後再說';
-const String _loginLabel = '前往登入';
+String get _title => ReferenceUIStrings.text('auth_title');
+String get _dismissLabel => ReferenceUIStrings.text('auth_dismiss');
+String get _loginLabel => ReferenceUIStrings.text('auth_login');
 
 // Trigger-specific body copy — verbatim from the design's `LBP_AUTH_COPY`.
-const String _bodyCartAdd = '登入後即可將商品加入購物車';
-const String _bodyCommentSend = '登入後即可參與留言互動';
-const String _bodyCouponClaim = '登入後即可領取優惠與獎品';
+String get _bodyCartAdd => ReferenceUIStrings.text('auth_body_cart_add');
+String get _bodyCommentSend => ReferenceUIStrings.text('auth_body_comment_send');
+String get _bodyCouponClaim => ReferenceUIStrings.text('auth_body_coupon_claim');
 // 訂閱情境（rb-flutter-subscribe-login-gate，parity iOS `bodySubscribe` / Android `BODY_SUBSCRIBE` /
 // RN `BODY_SUBSCRIBE`）— 未登入點訂閱時顯示。
-const String _bodySubscribe = '登入後即可訂閱直播主，第一時間掌握開播與專屬優惠';
-const String _bodyOther = '登入後即可使用完整功能';
+String get _bodySubscribe => ReferenceUIStrings.text('auth_body_subscribe');
+String get _bodyOther => ReferenceUIStrings.text('auth_body_other');
 
 /// Optional-preserving login forward with a dismiss (dropin-hide-unwired-affordances-flutter,
 /// parity iOS / Android / RN `lbForwardLogin`): a gate that wants「前往登入」to ALSO dismiss its own
@@ -163,7 +164,10 @@ class AuthGateModalView extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // Read-only visibility guard (spec): logged-in OR no pending gate → draw nothing.
     final pendingGate = gate;
     if (isLoggedIn || pendingGate == null) return const SizedBox.shrink();

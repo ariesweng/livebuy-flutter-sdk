@@ -6,6 +6,7 @@ import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'arrow_up_circle_fill_glyph.dart';
 import '../safearea/lb_safe_area.dart';
+import '../i18n/i18n.dart';
 
 // MARK: - ChatComposerBar — the on-demand chat composer (SheetKit-of-Flutter; new pixel)
 //
@@ -234,7 +235,10 @@ class _ChatComposerBarState extends State<ChatComposerBar> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     if (!widget.controller.isPresented) return const SizedBox.shrink();
     final theme = widget.theme;
     // The transparent tap-to-dismiss layer is drawn FIRST (underneath); the bar (Align)
@@ -279,7 +283,7 @@ class _ChatComposerBarState extends State<ChatComposerBar> {
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => _submit(),
                     decoration: InputDecoration(
-                      hintText: '留言…',
+                      hintText: ReferenceUIStrings.text('chat_comment_placeholder'),
                       hintStyle:
                           TextStyle(color: Colors.white.withValues(alpha: 0.5)),
                       isDense: true,

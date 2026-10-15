@@ -85,7 +85,13 @@ dependencies {
     // pub.dev consumers). Distinct from this file's own `version` (the tv.livebuy.flutter plugin
     // artifact version) — different version axis.
     //
-    // Current pin: 4.28.0 (vod-end-loop-flutter-core) — bumped from 4.26.1.
+    // Current pin: 4.29.0 (bridge-native-pin-4-29-0-core) — bumped from 4.28.0.
+    // Symbol-gap bump: the bridge's `getLanguage` handler reads `LivebuySDK.currentLanguage`,
+    // introduced in android-v4.29.0 (i18n-language-source-android-core); against 4.28.0 the
+    // bridge does not compile. Compile floor is therefore 4.29.0. Also realigns Android with
+    // the iOS side, whose `~> 4.28` / `from: "4.28.0"` ranges already resolved 4.29.0.
+    //
+    // Previous pin note: 4.28.0 (vod-end-loop-flutter-core) — bumped from 4.26.1.
     // This IS a symbol-gap bump: the bridge's `configure` handler now passes
     // `vodEndBehavior = VodEndBehaviorBridge.fromWire(...)` and imports
     // `tv.livebuy.sdk.models.LBVodEndBehavior`, both introduced in android-v4.28.0
@@ -169,7 +175,7 @@ dependencies {
     // `flutter-distribution-core-pin-refresh` for the incident). Always re-check bridge Kotlin
     // source against the target version's CHANGELOG for new public API the bridge already
     // references, not just "did core change at all".
-    implementation "tv.livebuy:livebuy:4.28.0"
+    implementation "tv.livebuy:livebuy:4.29.0"
 
     // The bridge uses kotlinx.coroutines directly (CoroutineScope / Dispatchers / launch).
     // The SDK pulls it transitively but as `implementation`, so it is not on the

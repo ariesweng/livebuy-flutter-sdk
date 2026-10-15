@@ -18,6 +18,7 @@ import 'cc_tooltip_layout.dart';
 import 'cc_unavailable_tooltip.dart';
 import 'more_glyph.dart';
 import 'person_edit_glyph.dart';
+import '../i18n/i18n.dart';
 
 // LiveBottomBarView — family-1 player-shell LIVE bottom bar.
 //
@@ -94,10 +95,10 @@ const double _badgeMinSize = 16; // cart badge minWidth / height
 const double _badgeFontSize = 10; // fontSize 10, weight 800
 const double _badgeBorderWidth = 1.5; // 1.5px solid #fff border
 const double _commentFontSize = 13; // 留言... 13px left
-const String _commentPlaceholder = '留言...';
+String get _commentPlaceholder => ReferenceUIStrings.text('chat_comment_placeholder');
 /// 已結束直播回放 chat-closed 變體文字（design-literal，同 `_commentPlaceholder` 模式；
 /// `rb-flutter-replay-live-chrome-parity`，parity iOS `chatClosedPlaceholder`）。
-const String _chatClosedPlaceholder = '聊天室已關閉';
+String get _chatClosedPlaceholder => ReferenceUIStrings.text('chat_closed_placeholder');
 
 /// The family-1 LIVE bottom bar surface. Renders the horizontal bag / comment /
 /// nickname / share / like row from `LBLiveBottomBar`. The comment entry is always
@@ -542,7 +543,10 @@ class _CommentPill extends StatelessWidget {
   const _CommentPill({super.key, this.onTap});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
@@ -554,9 +558,9 @@ class _CommentPill extends StatelessWidget {
           color: _commentBackground,
           borderRadius: BorderRadius.all(Radius.circular(999)),
         ),
-        child: const Text(
+        child: Text(
           _commentPlaceholder,
-          style: TextStyle(color: Color(0xC7FFFFFF), fontSize: _commentFontSize),
+          style: const TextStyle(color: Color(0xC7FFFFFF), fontSize: _commentFontSize),
         ),
       ),
     );
@@ -574,7 +578,10 @@ class _ChatClosedPill extends StatelessWidget {
   const _ChatClosedPill({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     return Container(
       height: _iconSize,
       padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -583,9 +590,9 @@ class _ChatClosedPill extends StatelessWidget {
         color: _commentBackground.withValues(alpha: 0.6),
         borderRadius: const BorderRadius.all(Radius.circular(999)),
       ),
-      child: const Text(
+      child: Text(
         _chatClosedPlaceholder,
-        style: TextStyle(color: Color(0x80FFFFFF), fontSize: _commentFontSize),
+        style: const TextStyle(color: Color(0x80FFFFFF), fontSize: _commentFontSize),
       ),
     );
   }

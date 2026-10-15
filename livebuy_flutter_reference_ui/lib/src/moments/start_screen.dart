@@ -10,6 +10,7 @@ import '../testing/lb_test_keys.dart';
 import 'chevron_forward_glyph.dart';
 import 'loading_mark_animation_view.dart';
 import '../safearea/lb_safe_area.dart';
+import '../i18n/i18n.dart';
 
 // StartScreenView — family-4 moments surface 1 (start-lifecycle).
 //
@@ -108,11 +109,11 @@ final Color _brandBackdrop = colorFromHex('#0C0C10') ?? const Color(0xFF0C0C10);
 /// Chrome capsule fill (`rgba(20,20,24,…)`).
 final Color _chromeFill = colorFromHex('#141418') ?? const Color(0xFF141418);
 
-// MARK: - Fixed localized copy (static presentation strings — parity to iOS/Android)
+// MARK: - Localized copy (reference-ui string table — rb-flutter-i18n-string-table)
 
 // rb-ios-skip-intro-label-static (four-platform parity): the skip pill shows a STATIC
 // 「略過介紹」label with NO `(N)` countdown (the host wires `onSkip` → core `skipStart()`).
-const String _skipLabel = '略過介紹';
+String get _skipLabel => ReferenceUIStrings.text('player_skip_intro');
 
 // MARK: - Loading cover gate (pure, directly unit-testable)
 
@@ -285,7 +286,10 @@ class StartScreenView extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     switch (phase) {
       case LBPStartPhase.loading:
         return _loadingScreen();

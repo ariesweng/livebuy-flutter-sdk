@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'event_listener.dart';
+import 'language_cache.dart';
+import 'lb_event.dart';
 import 'models.dart';
 import 'sdk_config.dart';
 
@@ -84,6 +86,18 @@ class LivebuySDK {
     // the round-trip (same rationale as `_currentShopId`); the value is ALSO
     // forwarded to native below as `vodEndBehavior`.
     _vodEndBehavior = options.vodEndBehavior;
+    try {
+      await _invokeConfigure(options);
+    } finally {
+      // i18n-language-source-flutter-core: re-read the native current language
+      // once the native configure settles — success OR failure (native language
+      // state may already have changed even when configure throws). Fire and
+      // forget; failures keep the cached value.
+      _refreshLanguageCache();
+    }
+  }
+
+  static Future<void> _invokeConfigure(LBConfigOptions options) async {
     await _channel.invokeMethod('configure', {
       'apiKey': options.apiKey,
       'secret': options.secret,
@@ -323,8 +337,95 @@ class LivebuySDK {
 
   /// Switch the SDK display language at runtime. Overrides [LBConfigOptions.lang]
   /// and the API-returned `lang`. Unsupported values are ignored with a warning.
-  static Future<void> setLanguage(LBLocaleCode lang) {
-    return _channel.invokeMethod('setLanguage', {'lang': lang.code});
+  ///
+  /// `i18n-language-source-flutter-core`: once the native call settles
+  /// (success or failure) the Dart cache [currentLanguage] is re-read from
+  /// native (no optimistic update — native may reject the value).
+  static Future<void> setLanguage(LBLocaleCode lang) async {
+    try {
+      await _channel.invokeMethod('setLanguage', {'lang': lang.code});
+    } finally {
+      _refreshLanguageCache();
+    }
+  }
+
+  // MARK: - Current language (i18n-language-source-flutter-core)
+
+  static LBLanguageCache _languageCache = _newLanguageCache();
+  static bool _languageCacheStarted = false;
+
+  static LBLanguageCache _newLanguageCache() =>
+      LBLanguageCache(() => _channel.invokeMethod<Object?>('getLanguage'));
+
+  /// First touch of the language API (Dart has no "module load" hook): issue
+  /// one native read so [currentLanguage] converges even if neither
+  /// [configure] nor [setLanguage] is ever called by this isolate.
+  static void _startLanguageCache() {
+    if (_languageCacheStarted) return;
+    _languageCacheStarted = true;
+    _languageCache.refreshSilently();
+  }
+
+  /// Backfill after [configure] / [setLanguage]: one native read, which also
+  /// counts as the first touch (no second read from [_startLanguageCache]).
+  static void _refreshLanguageCache() {
+    _languageCacheStarted = true;
+    _languageCache.refreshSilently();
+  }
+
+  /// Async read of the native core's current language
+  /// (`i18n-language-source-flutter-core`): iOS `Livebuy.currentLanguage` /
+  /// Android `LivebuySDK.currentLanguage`, via method channel `getLanguage`.
+  /// Always one of the 5 supported codes (any other native value completes
+  /// with a [FormatException]). Priority (decided natively): `configure(lang)`
+  /// / [setLanguage] > device system language (when it maps to a supported
+  /// code) > API `lang` > `en`. Safe before [configure]. Also refreshes the
+  /// synchronous [currentLanguage] cache, unless a newer `LANGUAGE_CHANGED`
+  /// event or a newer read superseded this one — the returned value is still
+  /// the native value.
+  static Future<LBLocaleCode> getLanguage() {
+    _languageCacheStarted = true;
+    return _languageCache.refresh();
+  }
+
+  /// Synchronous snapshot of the current language
+  /// (`i18n-language-source-flutter-core`). [LBLocaleCode.en] (the native
+  /// fallback, `i18n-fallback-en-flutter-core`) until the first native read
+  /// lands; then kept up to date by native reads (first
+  /// touch of [currentLanguage] / [languageChanges], after [configure], after
+  /// [setLanguage], every [getLanguage]) and by every `LANGUAGE_CHANGED` event
+  /// (`params.to`). Intended for build-time reads by reference-ui string
+  /// tables.
+  ///
+  /// Caveat: language changes that originate natively (API `lang`, Android
+  /// runtime system-language change) reach Dart via `LANGUAGE_CHANGED`, which
+  /// the native bridge forwards only while a listener is installed
+  /// ([setListener], or a drop-in container that calls it); call
+  /// [getLanguage] to force a re-read.
+  static LBLocaleCode get currentLanguage {
+    _startLanguageCache();
+    return _languageCache.current;
+  }
+
+  /// Broadcast stream of [currentLanguage] changes
+  /// (`i18n-language-source-flutter-core`). Emits the new code only when the
+  /// cached value actually changes (same value → no emission); does not
+  /// replay the current value, so pair it with [currentLanguage], e.g.
+  /// `StreamBuilder(stream: LivebuySDK.languageChanges, initialData:
+  /// LivebuySDK.currentLanguage, ...)`. Supports any number of subscribers;
+  /// cancel the [StreamSubscription] to unsubscribe. Independent of
+  /// [setListener] — subscribing never replaces the host's listener.
+  static Stream<LBLocaleCode> get languageChanges {
+    _startLanguageCache();
+    return _languageCache.changes;
+  }
+
+  /// Test-only: drop the language cache back to its initial state
+  /// (`en`, not started, fresh stream).
+  @visibleForTesting
+  static void resetLanguageCacheForTesting() {
+    _languageCache = _newLanguageCache();
+    _languageCacheStarted = false;
   }
 
   /// Report a completed order to attribute it to an SDK-assisted add-to-cart.
@@ -635,10 +736,16 @@ class LivebuySDK {
 
   static Future<Object?> _onMethodCall(MethodCall call) async {
     if (call.method != 'onSdkEvent') return null;
+    final raw = call.arguments;
+    final args = raw is Map ? raw.cast<Object?, Object?>() : null;
+    // i18n-language-source-flutter-core: the language cache observes the event
+    // in-line (before, and independently of, the host listener). It is NOT a
+    // second listener — the host listener still receives the event exactly
+    // once below, and its reply is unaffected.
+    _observeLanguageChanged(args);
+
     final handler = _listener;
     if (handler == null) return LBEventReply.passthrough.toMap();
-
-    final args = (call.arguments as Map?)?.cast<Object?, Object?>();
     if (args == null) return LBEventReply.passthrough.toMap();
 
     final eventName = args['eventName'] as String? ?? '';
@@ -666,5 +773,12 @@ class LivebuySDK {
       // Listener exceptions are sandboxed: report passthrough so the SDK falls back to default UI.
       return LBEventReply.passthrough.toMap();
     }
+  }
+
+  static void _observeLanguageChanged(Map<Object?, Object?>? args) {
+    if (args == null || args['eventName'] != LBEvent.languageChanged) return;
+    final params = args['params'];
+    if (params is! Map) return;
+    _languageCache.applyEvent(params['to']);
   }
 }

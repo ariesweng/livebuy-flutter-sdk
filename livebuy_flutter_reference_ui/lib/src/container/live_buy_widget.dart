@@ -43,6 +43,7 @@ import '../widget/widget_model.dart' show WidgetGoods, WidgetSeeds;
 import 'live_buy_player.dart' show LivebuyPlayer, LivebuyPlayerConfig;
 import 'reference_ui_design.dart';
 import 'widget_data.dart';
+import '../i18n/i18n.dart';
 
 export 'widget_data.dart' show WidgetContainerMode;
 
@@ -312,7 +313,10 @@ class _LivebuyWidgetState extends State<LivebuyWidget> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final template = _template;
     if (template == null) return const SizedBox.shrink();
 
@@ -361,7 +365,7 @@ class _LivebuyWidgetState extends State<LivebuyWidget> {
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 6),
           child: Text(
-            '（示範資料 — 未取得 widget 列表）',
+            ReferenceUIStrings.text('widget_demo_data_caption'),
             style: TextStyle(fontSize: 11, color: _theme.text.withValues(alpha: 0.6)),
           ),
         ),

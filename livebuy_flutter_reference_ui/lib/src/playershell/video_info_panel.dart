@@ -7,6 +7,7 @@ import '../productsheets/sheet_scaffold.dart' show LBSheetScaffold, liveProductI
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'contact_glyph.dart';
+import '../i18n/i18n.dart';
 
 // VideoInfoPanelView — family-1 player-shell surface 3 (info / notice panel).
 //
@@ -101,20 +102,19 @@ final Color _strokeStrong = colorFromHex('#D8D5DE') ?? const Color(0xFFD8D5DE);
 /// `theme.surface.bgSunken` (#F4F4F6) — ghost footer-button fill (design `LBPButton`).
 final Color _bgSunken = colorFromHex('#F4F4F6') ?? const Color(0xFFF4F4F6);
 
-// MARK: - Fixed localized copy (static presentation strings — parity to iOS/Android)
+// MARK: - Localized copy (reference-ui string table — rb-flutter-i18n-string-table)
 
-const String _panelTitle = '影片資訊';
-const String _panelTitleLive = '直播資訊';
-const String _infoTabTitle = '影片詳情';
-const String _infoTabTitleLive = '直播詳情';
-const String _noticeTabTitle = '公告訊息';
-const String _systemNoticeLabel = '系統公告';
-const String _mallNoticeLabel = '商城公告';
-const String _subscribeLabel = '訂閱通知';
-const String _subscribedLabel = '已訂閱';
-const String _shopSublinePrefix = '這裡是 ';
-const String _noticeEmptyPlaceholder = '目前沒有公告';
-const String _contactLabel = '與商家一對一對話';
+String get _panelTitle => ReferenceUIStrings.text('info_panel_title');
+String get _panelTitleLive => ReferenceUIStrings.text('info_panel_title_live');
+String get _infoTabTitle => ReferenceUIStrings.text('info_tab_title');
+String get _infoTabTitleLive => ReferenceUIStrings.text('info_tab_title_live');
+String get _noticeTabTitle => ReferenceUIStrings.text('info_notice_tab');
+String get _systemNoticeLabel => ReferenceUIStrings.text('info_system_notice');
+String get _mallNoticeLabel => ReferenceUIStrings.text('info_mall_notice');
+String get _subscribeLabel => ReferenceUIStrings.text('info_subscribe');
+String get _subscribedLabel => ReferenceUIStrings.text('info_subscribed');
+String get _noticeEmptyPlaceholder => ReferenceUIStrings.text('info_notice_empty');
+String get _contactLabel => ReferenceUIStrings.text('info_contact');
 
 // MARK: - publishAt-row three-state copy (design R44, rb-flutter-video-info-panel-replay-copy)
 //
@@ -123,13 +123,13 @@ const String _contactLabel = '與商家一對一對話';
 // selected by `isFinishedLiveReplay`.
 
 /// publishAt-row 非直播分支、`isFinishedLiveReplay == false`（既有預設）純文字（design R44）。
-const String _vodStatusLabel = '點播影片';
+String get _vodStatusLabel => ReferenceUIStrings.text('info_vod_status');
 
 /// publishAt-row 非直播分支、`isFinishedLiveReplay == true` 純文字（design R44，ADDED）。
-const String _replayStatusLabel = '直播回放';
+String get _replayStatusLabel => ReferenceUIStrings.text('info_replay_status');
 
 /// 「直播中」badge label (design `screens.jsx:1368` `直播中`).
-const String _liveBadgeLabel = '直播中';
+String get _liveBadgeLabel => ReferenceUIStrings.text('info_live_badge');
 
 /// 「直播中」badge fill — `#F03246` (design literal, same red as the LIVE pill elsewhere).
 final Color _liveBadgeFill = colorFromHex('#F03246') ?? const Color(0xFFF03246);
@@ -349,7 +349,10 @@ class VideoInfoPanelView extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // Top-rounded sheet shell (LBPBottomSheet rounds ONLY the top two corners,
     // 20 20 0 0). The container shadow is handled by the host; reference-ui keeps
     // this deterministic (shadows are disabled in golden tests anyway).
@@ -723,7 +726,7 @@ class VideoInfoPanelView extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '$_shopSublinePrefix$shopName',
+                  ReferenceUIStrings.text('info_shop_subline', {'shop': shopName}),
                   style: TextStyle(
                     color: _textDim,
                     fontSize: 12 * theme.fontScale,

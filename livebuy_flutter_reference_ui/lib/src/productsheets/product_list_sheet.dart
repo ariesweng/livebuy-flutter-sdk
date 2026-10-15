@@ -9,6 +9,7 @@ import 'product_row_overlay.dart';
 import 'search_glyph.dart';
 import 'sheet_header_close_button.dart';
 import 'sheet_scaffold.dart';
+import '../i18n/i18n.dart';
 
 // ProductListSheet — family-3 product sheet-stack surface 1 (product list drawer).
 //
@@ -93,25 +94,26 @@ final Color _bgSunken = colorFromHex('#F4F4F6') ?? const Color(0xFFF4F4F6);
 // MARK: - Static copy (LBPSheetHeader / LBPCartCTA labels)
 
 /// Sheet header title.
-const String _titleLabel = '銷售商品';
+String get _titleLabel => ReferenceUIStrings.text('product_list_title');
 
 /// Bottom cart CTA label.
-const String _cartLabel = '查看購物車';
+String get _cartLabel => ReferenceUIStrings.text('common_view_cart');
 
 /// Empty-state line (no products).
-const String _emptyLabel = '目前沒有商品';
+String get _emptyLabel => ReferenceUIStrings.text('product_list_empty');
 
 // `_soldOutLabel` / `_introducingLabel` / `_outSoonLabel` / `_hotLabel` (row copy) moved
 // to `product_row.dart` alongside the extracted `ProductRow` widget.
 
 /// Search field placeholder (rb-flutter-product-list-search，問題 2).
-const String _searchPlaceholder = '搜尋商品名稱';
+String get _searchPlaceholder => ReferenceUIStrings.text('product_list_search_placeholder');
 
 /// Search cancel button label.
-const String _searchCancel = '取消';
+String get _searchCancel => ReferenceUIStrings.text('common_cancel');
 
 /// No-search-hit empty line for [query].
-String _noResultsLabel(String query) => '找不到符合「$query」的商品';
+String _noResultsLabel(String query) =>
+    ReferenceUIStrings.text('product_list_no_results', {'query': query});
 
 /// The family-3 product LIST drawer. Renders the core-fed [products] as a plain
 /// non-scrolling Column of product rows (縮圖 placeholder + name + sale/strike
@@ -258,7 +260,10 @@ class _ProductListSheetState extends State<ProductListSheet> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final theme = widget.theme;
     // 顯示過濾：case-insensitive `name` contains。純呈現過濾、不 mutate products snapshot。
     final q = _query.text.trim().toLowerCase();
@@ -436,7 +441,10 @@ class _SheetHeader extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final title =
         productCount > 0 ? '$_titleLabel ($productCount)' : _titleLabel;
     return Padding(
@@ -508,7 +516,10 @@ class _SearchHeader extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
       child: Row(
@@ -581,17 +592,20 @@ class _SearchHeader extends StatelessWidget {
 ///「找不到符合『…』的商品」(search no-hit).
 class _EmptyState extends StatelessWidget {
   final ReferenceUITheme theme;
-  final String message;
+  final String? message;
 
-  const _EmptyState({required this.theme, this.message = _emptyLabel});
+  const _EmptyState({required this.theme, this.message});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 40),
       child: Center(
         child: Text(
-          message,
+          message ?? _emptyLabel,
           style: TextStyle(
             color: _textDim,
             fontSize: 13 * theme.fontScale,
@@ -625,7 +639,10 @@ class _CartCTAFooter extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,

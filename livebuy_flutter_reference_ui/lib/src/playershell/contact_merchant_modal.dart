@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import '../safearea/lb_safe_area.dart';
+import '../i18n/i18n.dart';
 
 // ContactMerchantModalView — family-1「聯絡商家」confirm modal (LBPAlertModal).
 //
@@ -35,10 +36,10 @@ final Color _textDim = colorFromHex('#6B6775') ?? const Color(0xFF6B6775);
 /// `theme.surface.strokeStrong` (plain-button outline). Matches `AuthGateModalView`.
 final Color _strokeStrong = colorFromHex('#D8D5DE') ?? const Color(0xFFD8D5DE);
 
-const String _title = '聯繫商家';
-const String _body = '確定要開啟商城指定的客服連結嗎?';
-const String _cancelLabel = '取消';
-const String _confirmLabel = '確定';
+String get _title => ReferenceUIStrings.text('contact_title');
+String get _body => ReferenceUIStrings.text('contact_body');
+String get _cancelLabel => ReferenceUIStrings.text('common_cancel');
+String get _confirmLabel => ReferenceUIStrings.text('common_confirm');
 
 /// The family-1「聯絡商家」confirm modal (`LBPAlertModal`). Renders a centered card
 /// (title「聯繫商家」/ body「確定要開啟商城指定的客服連結嗎?」/ horizontal [取消][確定]
@@ -63,7 +64,10 @@ class ContactMerchantModalView extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // Full-bleed dim scrim (LBPAlertModal backdrop). Tap = dismiss.
     return GestureDetector(
       key: LbTestKeys.contactScrim,

@@ -4,6 +4,7 @@ import 'package:livebuy_flutter/livebuy_flutter.dart' show LBActiveEvent, LBWinn
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'win_glyph.dart';
+import '../i18n/i18n.dart';
 
 // WinEntryView — family-2 feed-win surface 2 (unclaimed-win entry + live-event
 // entry, two `variant`s of the SAME widget).
@@ -95,8 +96,8 @@ const Color _labelBackground = Color(0xCC373C44);
 /// Bottom label bar text size (`fontSize: 9`).
 const double _labelFontSize = 9;
 
-/// Bottom label bar text for `variant: win`. Reference-ui hardcoded copy, not i18n.
-const String _labelText = '領獎';
+/// Bottom label bar text for `variant: win` (reference-ui string table).
+String get _labelText => ReferenceUIStrings.text('win_entry_label');
 
 // MARK: - Design tokens (`activity` variant, rb-flutter-live-activity-sheet, R26)
 //
@@ -109,9 +110,19 @@ const String _labelText = '領獎';
 /// a semi-transparent dark fill, replacing `win`'s opaque white.
 const Color _activityBackground = Color(0x4D3A3A3A);
 
-/// Bottom label bar text for `variant: activity`. Reference-ui hardcoded copy,
-/// not i18n.
-const String _activityLabelText = '活動';
+/// Bottom label bar text for `variant: activity` (reference-ui string table).
+String get _activityLabelText => ReferenceUIStrings.text('win_entry_activity_label');
+
+// MARK: - Accessibility labels (rb-flutter-parity-debt-closure, parity iOS
+// `WinEntryView.winAccessibilityLabel` / `activityAccessibilityLabel`, Android `WinEntry.kt` /
+// `ActivityEntry.kt`, RN `WinEntryView.tsx` / `ActivityEntryView.tsx`). Read inside the build that
+// `referenceUILocalized` re-runs, so a language switch updates the label of a mounted entry.
+
+/// Screen-reader label for `variant: win` (zh-TW「查看中獎」).
+String get _winA11yLabel => ReferenceUIStrings.text('win_entry_a11y');
+
+/// Screen-reader label for `variant: activity` (zh-TW「參加活動」).
+String get _activityA11yLabel => ReferenceUIStrings.text('win_entry_activity_a11y');
 
 /// The two uses of the SAME `WinEntryView` widget (design.md D1 — one component,
 /// two variants, mirroring `moments.jsx`'s `LBWinEntry(variant)` prop rather than
@@ -204,7 +215,10 @@ class WinEntryView extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final isActivity = variant == WinEntryVariant.activity;
 
     // Visibility rule (D-3 / R26): nothing to show for this variant → draw nothing.
@@ -214,54 +228,68 @@ class WinEntryView extends StatelessWidget {
       if (unclaimedCount <= 0) return const SizedBox.shrink();
     }
 
+    final onTap = isActivity ? _handleOpenActivity : _handleTap;
+
     return SizedBox(
       key: isActivity ? LbTestKeys.activityEntry : LbTestKeys.winEntry,
       width: _entrySize,
       height: _entrySize,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: isActivity ? _handleOpenActivity : _handleTap,
-        child: ClipRRect(
-          // `overflow: hidden` — clips the bottom label bar's straight edges to
-          // the button's rounded corners.
-          borderRadius: BorderRadius.circular(_entryCornerRadius),
-          child: Container(
-            width: _entrySize,
-            height: _entrySize,
-            color: isActivity ? _activityBackground : const Color(0xFFFFFFFF),
-            child: Stack(
-              alignment: Alignment.bottomCenter,
-              children: [
-                // Glyph — centered on the FULL 48×48 button area (the design's
-                // icon `<span>` is `flex:1` filling the WHOLE button; the label
-                // below is `position:absolute` and does NOT shrink it). 100%
-                // shared between variants (design.md D1) — no second Path.
-                Center(
-                  child: CustomPaint(
-                    size: const Size(_glyphSize, _glyphSize),
-                    painter: const WinTrophyGlyphPainter(),
-                  ),
-                ),
-
-                // Bottom semi-transparent label bar (`position:absolute; left:0;
-                // right:0; bottom:0`).
-                Container(
-                  width: double.infinity,
-                  height: _labelHeight,
-                  color: _labelBackground,
-                  alignment: Alignment.center,
-                  child: Text(
-                    isActivity ? _activityLabelText : _labelText,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: const Color(0xFFFFFFFF),
-                      fontSize: _labelFontSize * theme.fontScale,
-                      fontWeight: FontWeight.w600,
-                      height: 1.0,
+      // rb-flutter-parity-debt-closure: one button node whose label REPLACES the bottom label
+      // text, like iOS `.accessibilityLabel` on a SwiftUI `Button` (and RN `accessibilityLabel`
+      // on a `Pressable`). `excludeSemantics` keeps the「領獎」/「活動」Text from being merged
+      // into the announcement; because that also drops the GestureDetector's semantic tap
+      // action, the same handler is exposed here as the node's `onTap`. Semantics adds no
+      // RenderObject paint, so the golden stays byte-identical.
+      child: Semantics(
+        label: isActivity ? _activityA11yLabel : _winA11yLabel,
+        button: true,
+        excludeSemantics: true,
+        onTap: onTap,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: ClipRRect(
+            // `overflow: hidden` — clips the bottom label bar's straight edges to
+            // the button's rounded corners.
+            borderRadius: BorderRadius.circular(_entryCornerRadius),
+            child: Container(
+              width: _entrySize,
+              height: _entrySize,
+              color: isActivity ? _activityBackground : const Color(0xFFFFFFFF),
+              child: Stack(
+                alignment: Alignment.bottomCenter,
+                children: [
+                  // Glyph — centered on the FULL 48×48 button area (the design's
+                  // icon `<span>` is `flex:1` filling the WHOLE button; the label
+                  // below is `position:absolute` and does NOT shrink it). 100%
+                  // shared between variants (design.md D1) — no second Path.
+                  Center(
+                    child: CustomPaint(
+                      size: const Size(_glyphSize, _glyphSize),
+                      painter: const WinTrophyGlyphPainter(),
                     ),
                   ),
-                ),
-              ],
+
+                  // Bottom semi-transparent label bar (`position:absolute; left:0;
+                  // right:0; bottom:0`).
+                  Container(
+                    width: double.infinity,
+                    height: _labelHeight,
+                    color: _labelBackground,
+                    alignment: Alignment.center,
+                    child: Text(
+                      isActivity ? _activityLabelText : _labelText,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: const Color(0xFFFFFFFF),
+                        fontSize: _labelFontSize * theme.fontScale,
+                        fontWeight: FontWeight.w600,
+                        height: 1.0,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

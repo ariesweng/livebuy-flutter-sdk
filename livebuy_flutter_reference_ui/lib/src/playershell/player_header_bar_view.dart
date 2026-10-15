@@ -6,6 +6,7 @@ import '../productsheets/sheet_scaffold.dart' show liveProductImage;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'pip_glyph.dart';
+import '../i18n/i18n.dart';
 
 // PlayerHeaderBarView — family-1 surface 1 (top-bar chrome).
 //
@@ -279,7 +280,10 @@ class PlayerHeaderBarView extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // rb-flutter-live-chrome-gradient-removal: the top-down dark scrim gradient (linear-gradient
     // rgba(0,0,0,0.45) → transparent) is REMOVED, matching the corrected design source
     // (`sdk-components.jsx` `LBPTopBar` no longer carries a `background` gradient). `DecoratedBox`
@@ -914,7 +918,7 @@ class PlayerHeaderBarView extends StatelessWidget {
   /// (rb-flutter-player-direct-close-button, parity iOS
   /// `minimizeButtonAccessibilityLabel`). Pure / deterministic — no widget dependency.
   static String minimizeButtonSemanticsLabel(bool showCloseIcon) =>
-      showCloseIcon ? '關閉' : '最小化';
+      ReferenceUIStrings.text(showCloseIcon ? 'player_close_a11y' : 'player_minimize_a11y');
 
   /// The clean-mode-only mute-toggle button (rb-flutter-gesture-clean-mode-v2). Only ever
   /// composed by [build] while [onToggleMute] is non-null. Icon follows [muted] — parity

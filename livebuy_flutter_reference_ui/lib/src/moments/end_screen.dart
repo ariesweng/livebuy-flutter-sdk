@@ -7,6 +7,7 @@ import '../productsheets/cart_fill_glyph.dart' show CartFillGlyph;
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import '../safearea/lb_safe_area.dart';
+import '../i18n/i18n.dart';
 
 // EndScreenView — family-4 moments surface 2 (full-screen END moment, LIVE-only).
 //
@@ -193,13 +194,13 @@ const List<Shadow> _captionShadow = [
 /// 空狀態 caption color (`rgba(255,255,255,0.85)`; alpha 0xD9 ≈ 0.85, moments.jsx `241`).
 const Color _emptyCaptionColor = Color(0xD9FFFFFF);
 
-// MARK: - Fixed localized copy (static presentation strings — parity to iOS/Android)
+// MARK: - Localized copy (reference-ui string table — rb-flutter-i18n-string-table)
 
-const String _endedLabel = '影片結束';
+String get _endedLabel => ReferenceUIStrings.text('end_video_ended');
 
 /// 空狀態 big title (moments.jsx `240` — replaces the retired 熱門變體's small
 /// rule-flanked「直播已結束」label with a large standalone headline).
-const String _liveEndedTitle = '直播已結束';
+String get _liveEndedTitle => ReferenceUIStrings.text('end_live_ended');
 // NOTE: moments.jsx's CURRENT text reads「秒後播放其他精采影片」(line 212), but this
 // is UNRELATED, pre-existing drift the design source picked up at some undocumented
 // point — NOT part of R41's scope (which only removes the 熱門變體), and NOT yet
@@ -208,13 +209,12 @@ const String _liveEndedTitle = '直播已結束';
 // parity value here (byte-stable against the EXISTING `end-screen-countdown-variant`
 // golden, which this redesign does NOT touch) — re-syncing the wording is a separate,
 // documented follow-up, not this change's job.
-const String _autoPlayPrefix = '秒後自動播放下一支';
-const String _untitledNext = '下一支影片';
-const String _cancelLabel = '取消';
-const String _watchNextLabel = '立即觀看';
+String get _untitledNext => ReferenceUIStrings.text('end_untitled_next');
+String get _cancelLabel => ReferenceUIStrings.text('common_cancel');
+String get _watchNextLabel => ReferenceUIStrings.text('end_watch_now');
 
 /// 空狀態 CTA label (moments.jsx `250`, `LBPCartCTA`「查看購物車」).
-const String _viewCartLabel = '查看購物車';
+String get _viewCartLabel => ReferenceUIStrings.text('common_view_cart');
 
 /// 空狀態 duration fallback when no `liveDuration` is host-fed (moments.jsx `241`
 /// `(liveInfo && liveInfo.duration) || '--:--:--'`).
@@ -303,7 +303,10 @@ class EndScreenView extends StatelessWidget {
   bool get _showCountdown => countdown != null && next.isNotEmpty;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     return DefaultTextStyle(
       key: LbTestKeys.momentEnd,
       style: TextStyle(
@@ -492,7 +495,7 @@ class EndScreenView extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            '$remain $_autoPlayPrefix',
+            ReferenceUIStrings.text('end_auto_next', {'seconds': remain}),
             style: TextStyle(
               fontSize: 12 * theme.fontScale,
               color: _onDarkDim,
@@ -620,7 +623,7 @@ class EndScreenView extends StatelessWidget {
               ),
               const SizedBox(height: 14),
               Text(
-                '直播時長：$duration',
+                ReferenceUIStrings.text('end_live_duration', {'duration': duration}),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 15.5 * theme.fontScale,

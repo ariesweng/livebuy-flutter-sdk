@@ -9,6 +9,7 @@ import 'arrow_up_circle_glyph.dart';
 import 'search_alert_glyph.dart';
 import 'wifi_slash_glyph.dart';
 import '../safearea/lb_safe_area.dart';
+import '../i18n/i18n.dart';
 
 // ErrorScreenView — family-4 player moment surface 3 (full-screen terminal error).
 //
@@ -94,20 +95,20 @@ final Color _onScrimDim = const Color(0xFFFFFFFF).withValues(alpha: 0.62);
 /// Outlined secondary button stroke (`rgba(255,255,255,0.28)`).
 final Color _onScrimStroke = const Color(0xFFFFFFFF).withValues(alpha: 0.28);
 
-// MARK: - Fixed localized copy (static presentation strings — 人話, NO raw code)
+// MARK: - Localized copy (reference-ui string table — rb-flutter-i18n-string-table)
 //
 // Mirrors the Android family-4 requirement copy: `.stream`「播放發生問題」(重試 + 返回) /
 // `.notFound`「找不到影片」(僅返回) / `.outdated`「請更新版本」(前往更新). NO raw code.
 
-const String _streamTitle = '連線發生問題';
-const String _streamBody = '目前無法載入這場直播，請確認網路後再試一次。';
-const String _notFoundTitle = '找不到這部影片';
-const String _notFoundBody = '這部影片可能已下架或不存在。';
-const String _outdatedTitle = '請更新 App 以繼續觀看';
-const String _outdatedBody = '你的版本較舊，更新後即可觀看這場直播。';
-const String _retryLabel = '重試';
-const String _updateLabel = '前往更新';
-const String _dismissLabel = '返回';
+String get _streamTitle => ReferenceUIStrings.text('error_stream_title');
+String get _streamBody => ReferenceUIStrings.text('error_stream_body');
+String get _notFoundTitle => ReferenceUIStrings.text('error_not_found_title');
+String get _notFoundBody => ReferenceUIStrings.text('error_not_found_body');
+String get _outdatedTitle => ReferenceUIStrings.text('error_outdated_title');
+String get _outdatedBody => ReferenceUIStrings.text('error_outdated_body');
+String get _retryLabel => ReferenceUIStrings.text('common_retry');
+String get _updateLabel => ReferenceUIStrings.text('error_upgrade');
+String get _dismissLabel => ReferenceUIStrings.text('common_back');
 
 /// The family-4 full-screen terminal error moment for one [LBPlayerErrorState].
 /// Renders a centered error card — an icon disc + kind-specific 人話 title / body —
@@ -144,7 +145,10 @@ class ErrorScreenView extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final e = error;
     if (e == null) return const SizedBox.shrink(); // current == null → nothing
 

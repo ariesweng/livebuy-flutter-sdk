@@ -9,6 +9,7 @@ import '../testing/lb_test_keys.dart';
 import 'resolved_product_photo.dart';
 import 'sheet_scaffold.dart' show liveProductImage;
 import '../safearea/lb_safe_area.dart';
+import '../i18n/i18n.dart';
 
 // ProductImageZoomOverlay — family-3 product-image lightbox (rb-flutter-product-image-zoom-lightbox).
 //
@@ -42,8 +43,8 @@ final Color _zoomPhotoStart = colorFromHex('#C7C7CC') ?? const Color(0xFFC7C7CC)
 final Color _zoomPhotoEnd = colorFromHex('#8E8E93') ?? const Color(0xFF8E8E93);
 
 const double _zoomed = 2.4;
-const String _hintIdle = '點圖片放大';
-const String _hintZoomed = '拖曳檢視細節 · 點一下還原';
+String get _hintIdle => ReferenceUIStrings.text('zoom_hint_idle');
+String get _hintZoomed => ReferenceUIStrings.text('zoom_hint_zoomed');
 
 /// Up-to-2-char monogram (deterministic, pure). Mirrors `product_detail_sheet._monogram`.
 String _monogram(String name) {
@@ -134,7 +135,10 @@ class _ProductImageZoomOverlayState extends State<ProductImageZoomOverlay> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final theme = widget.theme;
     final detail = widget.detail;
     // The photo this overlay draws (rb-flutter-product-detail-image-gallery): a non-null,

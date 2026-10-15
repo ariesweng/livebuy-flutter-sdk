@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import '../safearea/lb_safe_area.dart';
+import '../i18n/i18n.dart';
 
 // SelectVariantPromptModalView — family-3「請選規格」acknowledge modal (LBPAlertModal).
 //
@@ -35,12 +36,12 @@ import '../safearea/lb_safe_area.dart';
 /// `theme.surface.textDim` (body text). Matches `ContactMerchantModalView` / `AuthGateModalView`.
 final Color _textDim = colorFromHex('#6B6775') ?? const Color(0xFF6B6775);
 
-const String _title = '請選規格';
-const String _body = '請先選擇商品規格,再加入購物車。';
-const String _primaryLabel = '我知道了';
+String get _title => ReferenceUIStrings.text('variant_prompt_title');
+String get _body => ReferenceUIStrings.text('variant_prompt_body');
+String get _primaryLabel => ReferenceUIStrings.text('variant_prompt_ok');
 
 /// The family-3「請選規格」acknowledge modal (`LBPAlertModal`). Renders a centered card
-/// (title「請選規格」/ body「請先選擇商品規格,再加入購物車。」/ single full-width primary
+/// (title「請選規格」/ body「請先選擇商品規格，再加入購物車。」/ single full-width primary
 /// 「我知道了」) over a black-0.55 scrim. The「我知道了」CTA and a scrim tap both call `onDismiss`
 /// (the container's local dismiss latch, mirroring the cart-needs-login gate) so the variant chips
 /// become reachable. Renders correctly with a null action (golden / preview safe).
@@ -60,7 +61,10 @@ class SelectVariantPromptModalView extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // Full-bleed dim scrim (LBPAlertModal backdrop). Tap = dismiss.
     return GestureDetector(
       key: LbTestKeys.variantPromptScrim,

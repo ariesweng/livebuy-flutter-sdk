@@ -5,6 +5,7 @@ import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'win_glyph.dart';
 import '../safearea/lb_safe_area.dart';
+import '../i18n/i18n.dart';
 
 // ActivitySheetView — family-2 feed-win surface (直播抽獎「進行中活動」彈窗, Flutter).
 //
@@ -192,14 +193,13 @@ final Color _scrimColor = Colors.black.withValues(alpha: 0.6);
 /// 獨立重新宣告的同值 file-private 常數，非 import）。
 final Color _pageDotInactive = colorFromHex('#D8DBE0') ?? const Color(0xFFD8DBE0);
 
-// MARK: - Fixed localized copy (static presentation strings — parity with the
-// rest of this family; this layer全層寫死中文常數, 不使用任何 i18n API)
+// MARK: - Localized copy (reference-ui string table — rb-flutter-i18n-string-table)
 
-const String _ctaJoin = '立即參加';
-const String _ctaAcknowledge = '知道了';
-const String _footerTerms = '使用條款';
+String get _ctaJoin => ReferenceUIStrings.text('common_join_now');
+String get _ctaAcknowledge => ReferenceUIStrings.text('activity_acknowledge');
+String get _footerTerms => ReferenceUIStrings.text('common_terms');
 const String _footerSeparator = ' | ';
-const String _footerPrivacy = '隱私政策';
+String get _footerPrivacy => ReferenceUIStrings.text('common_privacy');
 
 /// Badge glyph render size inside the 60×60 badge circle (`LBActivitySheet`'s
 /// literal `giftSvg(30, accent)`).
@@ -304,7 +304,10 @@ class _ActivitySheetViewState extends State<ActivitySheetView> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     return GestureDetector(
       // 分頁滑動手勢（rb-flutter-activity-sheet-pagination）：包住整個 modal（scrim + 底
       // 卡），對齊設計稿 `LBActivitySheet` 外層 `onTouchStart`/`onTouchEnd` 量測 `clientX`
@@ -462,7 +465,7 @@ class _ActivitySheetViewState extends State<ActivitySheetView> {
         if (hasKeyword) ...[
           const SizedBox(height: 14),
           Text(
-            '留言關鍵字【$keyword】即可參加抽獎！',
+            ReferenceUIStrings.text('activity_keyword_cta', {'keyword': keyword}),
             textAlign: TextAlign.center,
             // `LBActivitySheet`'s literal `fontSize:14, fontWeight:700, height:1.5`.
             style: TextStyle(

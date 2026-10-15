@@ -20,6 +20,7 @@ import 'chat_composer_bar.dart';
 import 'live_now_poll_controller.dart';
 import 'player_error_feed.dart';
 import 'reference_ui_design.dart';
+import '../i18n/i18n.dart';
 
 // MARK: - LivebuyPlayer — turnkey drop-in player container (Flutter)
 //
@@ -2797,12 +2798,13 @@ bool completeGuestNicknameSubmitIfCurrent({
 
 /// 暱稱被取走時顯示的錯誤文案（`PlatformException(code: 'GUEST_NAME_TAKEN')`）—— 使用者應換一個
 /// 名字重試。
-const String _guestNicknameTakenErrorText = '此暱稱已被使用，請換一個名字';
+String get _guestNicknameTakenErrorText => ReferenceUIStrings.text('nickname_taken_error');
 
 /// checkName 遇到其他驗證錯誤時顯示的通用文案（`PlatformException(code: 'CHECKNAME_FAILED')`，或任
 /// 何非 `GUEST_NAME_TAKEN` 的例外）—— 可重試。後端刻意不對外細分「其他錯誤」的原因（沿用
 /// `guest-nickname-checkname-on-set-flutter` 的既有分類，本層不新造第三種文案）。
-const String _guestNicknameCheckFailedErrorText = '發生錯誤，請稍後再試';
+String get _guestNicknameCheckFailedErrorText =>
+    ReferenceUIStrings.text('nickname_retryable_error');
 
 /// Map a caught `_controller.setGuestNicknameVerified` failure to the user-facing inline error
 /// text [GuestNameEditModalView] shows (rb-flutter-nickname-taken-inline-error). Pure (no widget /

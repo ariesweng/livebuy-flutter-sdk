@@ -209,6 +209,14 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
             Livebuy.setLanguage(lang)
             result(nil)
 
+        case "getLanguage":
+            // i18n-language-source-flutter-core: native current language
+            // (always one of zh-TW / zh-CN / en / ms-MY / id-ID; safe before
+            // configure). Requires an iOS core that ships
+            // `Livebuy.currentLanguage` (iOS v4.29.0+; the bridge's podspec /
+            // Package.swift floor is 4.29.0, bridge-native-pin-4-29-0-core).
+            result(Livebuy.currentLanguage)
+
         case "notifyCheckoutCompleted":
             guard let orderId = args?["orderId"] as? String else {
                 return result(FlutterError(code: "BAD_ARG", message: "orderId required", details: nil))

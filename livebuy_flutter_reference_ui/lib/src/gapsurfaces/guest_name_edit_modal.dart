@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import '../safearea/lb_safe_area.dart';
+import '../i18n/i18n.dart';
 
 // MARK: - GuestNameEditModalView — family-6 gap-surface 2 (guest nickname-edit modal)
 //
@@ -81,17 +82,17 @@ import '../safearea/lb_safe_area.dart';
 
 const int _maxNicknameLength = 10;
 
-// MARK: - Fixed localized copy (static presentation strings, 繁中 — parity iOS/Android)
+// MARK: - Localized copy (reference-ui string table — rb-flutter-i18n-string-table)
 
-const String _titleText = '設定暱稱';
-const String _subtitleText = '請輸入直播留言的暱稱';
-const String _inputPlaceholder = '暱稱字數上限 10 個字';
-const String _submitLabel = '送出';
+String get _titleText => ReferenceUIStrings.text('nickname_title');
+String get _subtitleText => ReferenceUIStrings.text('nickname_subtitle');
+String get _inputPlaceholder => ReferenceUIStrings.text('nickname_placeholder');
+String get _submitLabel => ReferenceUIStrings.text('common_submit');
 
 // rb-flutter-nickname-taken-inline-error: submitting-state CTA label (parity
 // `WinClaimSheetView._submittingLabel` — same Chinese copy, reused so the reference-ui family
 // reads as one voice for "awaiting a host round-trip").
-const String _submittingLabel = '送出中…';
+String get _submittingLabel => ReferenceUIStrings.text('common_submitting');
 
 // MARK: - Decorative design tokens (literal minimal hex via colorFromHex)
 //
@@ -238,7 +239,10 @@ class _GuestNameEditModalViewState extends State<GuestNameEditModalView> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final theme = widget.theme;
     return Stack(
       fit: StackFit.expand,

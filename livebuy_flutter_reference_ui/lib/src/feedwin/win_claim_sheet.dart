@@ -15,6 +15,7 @@ import '../testing/lb_test_keys.dart';
 import 'gift_glyph.dart';
 import 'win_glyph.dart';
 import '../safearea/lb_safe_area.dart';
+import '../i18n/i18n.dart';
 
 // WinClaimSheetView — family-2 feed-win surface 3 (四階段領獎 modal，含 email 輸入，Flutter).
 //
@@ -251,43 +252,39 @@ final Color _confettiInk = colorFromHex('#111111') ?? const Color(0xFF111111);
 /// confetti 顆數（v2：22 → 20）。
 const int _confettiCount = 20;
 
-// MARK: - Fixed localized copy (static presentation strings — parity iOS / Android / RN)
-//
-// 本層全層寫死中文常數，**不使用**任何 i18n API（與 `_textDim` 等 design-literal 同慣例）。
+// MARK: - Localized copy (reference-ui string table — rb-flutter-i18n-string-table)
 
-const String _congratsTitle = '恭喜中獎';
-const String _awardNameFallback = '直播間限定獎品';
-const String _emailPlaceholder = '電子郵件';
-const String _ctaSubmit = '確認領獎';
-const String _footerTerms = '使用條款';
+String get _congratsTitle => ReferenceUIStrings.text('win_congrats_title');
+String get _awardNameFallback => ReferenceUIStrings.text('win_award_fallback');
+String get _emailPlaceholder => ReferenceUIStrings.text('win_email_placeholder');
+String get _ctaSubmit => ReferenceUIStrings.text('win_claim_confirm');
+String get _footerTerms => ReferenceUIStrings.text('common_terms');
 const String _footerSeparator = ' | ';
-const String _footerPrivacy = '隱私政策';
+String get _footerPrivacy => ReferenceUIStrings.text('common_privacy');
 
-const String _submitAlertTitle = '確認領獎';
-const String _submitAlertBodyPrefix = '請確認 ';
-const String _submitAlertBodySuffix = ' 填寫正確，送出後將不可變更，確定要送出領獎資料嗎？';
-const String _submitAlertNoteDiscount = '※結帳折扣碼將會寄送到您的信箱內。';
-const String _submitAlertNoteProduct = '※獎品將自動加入為待結帳商品。';
+String get _submitAlertTitle => ReferenceUIStrings.text('win_claim_confirm');
+String get _submitAlertNoteDiscount => ReferenceUIStrings.text('win_submit_note_discount');
+String get _submitAlertNoteProduct => ReferenceUIStrings.text('win_submit_note_product');
 
-const String _alertCancelLabel = '取消';
-const String _alertConfirmLabel = '確定';
+String get _alertCancelLabel => ReferenceUIStrings.text('common_cancel');
+String get _alertConfirmLabel => ReferenceUIStrings.text('common_confirm');
 
-const String _submittingLabel = '送出中…';
+String get _submittingLabel => ReferenceUIStrings.text('common_submitting');
 
-const String _doneTitle = '領獎完成';
-const String _doneSublineDiscount = '結帳折扣碼已寄送到以下電子郵件';
-const String _doneSublineProduct = '獎品已加入待結帳商品，結帳前完成訂購';
-const String _copyLabel = '複製';
-const String _copiedLabel = '已複製';
-const String _pendingItemCaption = '待結帳商品';
+String get _doneTitle => ReferenceUIStrings.text('win_done_title');
+String get _doneSublineDiscount => ReferenceUIStrings.text('win_done_subline_discount');
+String get _doneSublineProduct => ReferenceUIStrings.text('win_done_subline_product');
+String get _copyLabel => ReferenceUIStrings.text('common_copy');
+String get _copiedLabel => ReferenceUIStrings.text('common_copied');
+String get _pendingItemCaption => ReferenceUIStrings.text('win_pending_item_caption');
 
-const String _failTitle = '領獎失敗';
-const String _failSubline = '領獎過程發生錯誤，你的中獎資格仍保留，請稍後再試一次。';
+String get _failTitle => ReferenceUIStrings.text('win_fail_title');
+String get _failSubline => ReferenceUIStrings.text('win_fail_subline');
 
 /// 🔴 通用文案 —— **MUST NOT** 換成 `CLAIM_TIMEOUT` 之類捏造的錯誤代碼，理由見 `_failNoticeRow`
 /// 的註解（R13 刻意分歧 2/2）。
-const String _failNotice = '若持續發生，請聯繫客服';
-const String _retryLabel = '重新領獎';
+String get _failNotice => ReferenceUIStrings.text('win_fail_notice');
+String get _retryLabel => ReferenceUIStrings.text('win_claim_retry');
 
 // MARK: - Pure color helpers
 
@@ -554,7 +551,10 @@ class _WinClaimSheetViewState extends State<WinClaimSheetView> {
   // 且只出現在 claim 卡。
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     final stage = _stage;
     final mq = MediaQuery.of(context);
     // rb-flutter-edge-to-edge-safe-area-audit: the card layer is inset to the safe rect (the
@@ -1010,8 +1010,8 @@ class _WinClaimSheetViewState extends State<WinClaimSheetView> {
   Widget _alertLayer() {
     final theme = widget.theme;
     final title = _submitAlertTitle;
-    final body =
-        '$_submitAlertBodyPrefix${_emailController.text.trim()}$_submitAlertBodySuffix';
+    final body = ReferenceUIStrings.text(
+        'win_submit_alert_body', {'email': _emailController.text.trim()});
     final note = _isDiscount ? _submitAlertNoteDiscount : _submitAlertNoteProduct;
 
     return Positioned.fill(

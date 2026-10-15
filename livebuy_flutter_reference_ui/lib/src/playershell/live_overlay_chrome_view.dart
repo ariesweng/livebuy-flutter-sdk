@@ -10,6 +10,7 @@ import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'megaphone_glyph.dart';
 import 'now_introducing_carousel.dart' show PageDots;
+import '../i18n/i18n.dart';
 
 /// Horizontal swipe velocity (px/s) that commits a pinned-card page flip (parity now-introducing).
 const double _pinnedSwipeVelocity = 80;
@@ -198,7 +199,10 @@ class LiveOverlayChromeView extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
+
+  /// The original build, re-run on a language change (rb-flutter-i18n-string-table).
+  Widget _buildLocalized(BuildContext context) {
     // Full-bleed overlay. Affordances are positioned with explicit padding so the
     // layout matches `live-chrome.jsx`'s absolute placement (parity to the iOS
     // ZStack / Android Box). The caption + gesture hints carry no tap intent
@@ -775,12 +779,13 @@ final Color _pinnedImageGlyph = colorFromHex('#C7C7CC') ?? const Color(0xFFC7C7C
 final Color _introducingBadgeFill =
     (colorFromHex('#F03246') ?? const Color(0xFFF03246)).withValues(alpha: 0.7);
 
-// Static localized copy (matching iOS `LiveOverlayChromeView` + `LBPGestureHint`).
+// Localized copy — reference-ui string table (rb-flutter-i18n-string-table; keys match iOS
+// `LiveOverlayChromeView` + `LBPGestureHint`).
 /// Host caption label ("主持人").
-const String _hostCaptionLabel = '主持人';
+String get _hostCaptionLabel => ReferenceUIStrings.text('live_host_caption');
 
 /// Narrate-tag copy shown on the pinned card ("介紹中").
-const String _narrateTagText = '介紹中';
+String get _narrateTagText => ReferenceUIStrings.text('product_introducing');
 
 /// Sold-out price-line color (`#9A96A3`), matching this package's existing sold-out-specific
 /// treatment (`ProductRow._soldOutColor` / `MiniCartPeek._soldOutColor`,
@@ -791,9 +796,9 @@ const String _narrateTagText = '介紹中';
 final Color _soldOutColor = colorFromHex('#9A96A3') ?? const Color(0xFF9A96A3);
 
 /// Sold-out price-line copy ("已售完"), matching `MiniCartPeek` / `ProductRow`.
-const String _soldOutLabel = '已售完';
+String get _soldOutLabel => ReferenceUIStrings.text('product_sold_out');
 
-/// Gesture-hint copy (static localized presentation strings). `_hintTap` updated by
+/// Gesture-hint copy (reference-ui string table). `_hintTap` updated by
 /// rb-flutter-gesture-clean-mode-v2 (was '點擊畫面 = 切換靜音' — R23's tap-to-mute gesture is
 /// retired, replaced by tap-to-toggle-clean-mode). `_hintHold` is a FRESH constant
 /// (`rb-flutter-replay-live-chrome-parity`) — NOT the old R23-era `_hintHold` ('長按畫面 =
@@ -801,9 +806,9 @@ const String _soldOutLabel = '已售完';
 /// is R29's distinct hold-for-2x-speed copy, parity iOS/Android `hintHold`, shown only for
 /// `isLive == false` (see `_gestureHints()`'s own doc comment for the full reachability
 /// derivation).
-const String _hintTap = '點擊畫面 = 切換乾淨模式';
-const String _hintHold = '長按畫面 = 2倍速快轉';
-const String _hintSwipe = '上下滑動 = 切換影片';
+String get _hintTap => ReferenceUIStrings.text('gesture_hint_tap');
+String get _hintHold => ReferenceUIStrings.text('gesture_hint_hold');
+String get _hintSwipe => ReferenceUIStrings.text('gesture_hint_swipe');
 
 // ── LBLivePinnedCard carousel — single card OR multi-product carousel + 分頁點 ──
 
