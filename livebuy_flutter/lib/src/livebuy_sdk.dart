@@ -569,8 +569,10 @@ class LivebuySDK {
   /// `{'backend_error_code': '<code>'}` in the PlatformException `details`, the
   /// thrown [LBErrorServer.backendErrorCode] carries it (e.g. `spec_required` /
   /// `goods_not_found` / `goods_unavailable` / `out_of_stock` /
-  /// `cart_add_failed` / `purchase_limit_exceeded`). With the current native pin
-  /// (4.29.0) the bridge sends no details, so it is `null`.
+  /// `cart_add_failed` / `purchase_limit_exceeded`). The plugin's native bridge
+  /// forwards it from `2.12.1` (native core `4.30.0`,
+  /// flutter-bridge-forward-backend-error-code-and-replay-raw-core); it is
+  /// `null` when the backend response had no `error_code`.
   static Future<LBCartResult> addToCart(LBAddToCartOptions options) async {
     try {
       final raw = await _channel.invokeMethod<Map<Object?, Object?>>(

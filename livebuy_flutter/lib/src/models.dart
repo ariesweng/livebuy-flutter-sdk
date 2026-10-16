@@ -833,8 +833,7 @@ class LBAwardClaimInput {
 /// failure-path whitelist. On failure the event may additionally carry the
 /// optional `backend_error_code` (raw backend `error_code`, e.g.
 /// `award_already_claimed`; backend-error-code-flutter-core) — present only
-/// with a native core that includes backend-error-code and a backend that
-/// sends it.
+/// when the backend sends it (native core `4.30.0`+, i.e. plugin `2.12.0`+).
 ///
 /// **Side-effect boundary** (narrowed by `award-product-auto-cart`): the SDK
 /// MUST NOT navigate and MUST NOT render any UI off the back of this event, and
@@ -954,10 +953,11 @@ sealed class LBError {
   /// ([LBErrorVideoNotFound], [LBErrorInvalidSignature], [LBErrorNetwork],
   /// [LBErrorRestricted], [LBErrorCartAddDeduplicated]) are always `null`.
   ///
-  /// ⚠️ Reaching Dart requires the plugin's native core dependency to include
-  /// `backend-error-code-{ios,android}-core` (the native release after
-  /// 4.29.0) **and** the plugin's native bridge to forward the value; with the
-  /// current pin (4.29.0) it is always `null`.
+  /// The plugin's native bridge forwards it (player error events and the
+  /// `PlatformException.details` of failed calls such as `addToCart`) from
+  /// `2.12.1`, built on native core `4.30.0`
+  /// (flutter-bridge-forward-backend-error-code-and-replay-raw-core). Plugin
+  /// `2.12.0` and earlier never forward it, so it is always `null` there.
   final String? backendErrorCode;
 
   const LBError({this.backendErrorCode});
@@ -2289,9 +2289,12 @@ class LBViewCartIntent {
 /// (`is_anonymous` / `host_name` / `reply_template`) and the native core's
 /// composed sentences (`composed_text` / `composed_name` / `composed_reply`),
 /// all optional, so a host can also decode `CHAT_HISTORY_LOADED` comments via
-/// [asCommentList]. They reach Dart only once the native core pin includes
-/// the `chat-raw-compose-*-core` behavior; until then the raw fields are
-/// `null` and the `composed*` getters fall back to `text` / `name` / `reply`.
+/// [asCommentList]. `CHAT_HISTORY_LOADED` carries them from native core
+/// `4.30.0` (plugin `2.12.0`); the `replayChatRevealed` channel carries them
+/// from plugin `2.12.1`
+/// (flutter-bridge-forward-backend-error-code-and-replay-raw-core). When they
+/// are absent (older plugin / older backend) the raw fields are `null` and the
+/// `composed*` getters fall back to `text` / `name` / `reply`.
 class LBComment {
   final String text;
   final String name;

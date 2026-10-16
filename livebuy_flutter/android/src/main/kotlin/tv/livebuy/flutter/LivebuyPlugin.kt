@@ -234,8 +234,9 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                             result.error("NOT_CONFIGURED", "HMAC / apiKey rejected", null)
                         }
                     } catch (t: Throwable) {
+                        val details = BackendErrorCodeBridge.detailsFor(t)
                         mainHandler.post {
-                            result.error("CONFIGURE_ERROR", t.message ?: "configure failed", null)
+                            result.error("CONFIGURE_ERROR", t.message ?: "configure failed", details)
                         }
                     }
                 }
@@ -259,8 +260,9 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                             result.error("NOT_CONFIGURED", "configure() not called", null)
                         }
                     } catch (t: Throwable) {
+                        val details = BackendErrorCodeBridge.detailsFor(t)
                         mainHandler.post {
-                            result.error("REFRESH_ERROR", t.message ?: "refresh failed", null)
+                            result.error("REFRESH_ERROR", t.message ?: "refresh failed", details)
                         }
                     }
                 }
@@ -384,8 +386,9 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                             ))
                         }
                     } catch (t: Throwable) {
+                        val details = BackendErrorCodeBridge.detailsFor(t)
                         mainHandler.post {
-                            result.error("FLUSH_ERROR", t.message, null)
+                            result.error("FLUSH_ERROR", t.message, details)
                         }
                     }
                 }
@@ -408,7 +411,8 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                     } catch (e: IllegalStateException) {
                         mainHandler.post { result.error("NOT_CONFIGURED", "configure() not called", null) }
                     } catch (t: Throwable) {
-                        mainHandler.post { result.error("FETCH_LATEST_LIVE_ERROR", t.message, null) }
+                        val details = BackendErrorCodeBridge.detailsFor(t)
+                        mainHandler.post { result.error("FETCH_LATEST_LIVE_ERROR", t.message, details) }
                     }
                 }
             }
@@ -442,7 +446,8 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                     } catch (e: IllegalStateException) {
                         mainHandler.post { result.error("NOT_CONFIGURED", "configure() not called", null) }
                     } catch (t: Throwable) {
-                        mainHandler.post { result.error("FETCH_WIDGET_ERROR", t.message, null) }
+                        val details = BackendErrorCodeBridge.detailsFor(t)
+                        mainHandler.post { result.error("FETCH_WIDGET_ERROR", t.message, details) }
                     }
                 }
             }
@@ -456,7 +461,8 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                         LivebuySDK.login(memberId, memberName)
                         mainHandler.post { result.success(null) }
                     } catch (t: Throwable) {
-                        mainHandler.post { result.error("LB_ERROR", t.message ?: "login failed", null) }
+                        val details = BackendErrorCodeBridge.detailsFor(t)
+                        mainHandler.post { result.error("LB_ERROR", t.message ?: "login failed", details) }
                     }
                 }
             }
@@ -473,7 +479,8 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                         LivebuySDK.bindSession(memberId, memberName, avatarUrl)
                         mainHandler.post { result.success(null) }
                     } catch (t: Throwable) {
-                        mainHandler.post { result.error("LB_ERROR", t.message ?: "bindSession failed", null) }
+                        val details = BackendErrorCodeBridge.detailsFor(t)
+                        mainHandler.post { result.error("LB_ERROR", t.message ?: "bindSession failed", details) }
                     }
                 }
             }
@@ -549,9 +556,14 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                         // Convey the inner serverError code (e.g. 401 raised for an empty buy_no) as the
                         // error code so the Dart `LivebuySDK.addToCart` can surface the typed LBErrorServer
                         // and branch needs-login (401) vs failure (cart-needs-login-vs-failure).
-                        mainHandler.post { result.error(e.code.toString(), e.message ?: "addToCart failed", null) }
+                        // flutter-bridge-forward-backend-error-code-and-replay-raw-core: the raw backend
+                        // `error_code` (e.g. `out_of_stock`) rides in `details`, read before posting;
+                        // Dart surfaces it as LBErrorServer.backendErrorCode.
+                        val details = BackendErrorCodeBridge.detailsFor(e)
+                        mainHandler.post { result.error(e.code.toString(), e.message ?: "addToCart failed", details) }
                     } catch (t: Throwable) {
-                        mainHandler.post { result.error("LB_ERROR", t.message ?: "addToCart failed", null) }
+                        val details = BackendErrorCodeBridge.detailsFor(t)
+                        mainHandler.post { result.error("LB_ERROR", t.message ?: "addToCart failed", details) }
                     }
                 }
             }
@@ -569,7 +581,8 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                         LivebuySDK.reportCartTrack(shopId = shopId, buyNo = buyNo, trackId = trackId)
                         mainHandler.post { result.success(null) }
                     } catch (t: Throwable) {
-                        mainHandler.post { result.error("LB_ERROR", t.message ?: "reportCartTrack failed", null) }
+                        val details = BackendErrorCodeBridge.detailsFor(t)
+                        mainHandler.post { result.error("LB_ERROR", t.message ?: "reportCartTrack failed", details) }
                     }
                 }
             }
@@ -616,7 +629,8 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                         LivebuySDK.setAwaitGoods(goodsGpn, enabled)
                         mainHandler.post { result.success(null) }
                     } catch (t: Throwable) {
-                        mainHandler.post { result.error("LB_ERROR", t.message ?: "setAwaitGoods failed", null) }
+                        val details = BackendErrorCodeBridge.detailsFor(t)
+                        mainHandler.post { result.error("LB_ERROR", t.message ?: "setAwaitGoods failed", details) }
                     }
                 }
             }
@@ -630,7 +644,8 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                         LivebuySDK.setNoticeGoods(goodsGpn, enabled)
                         mainHandler.post { result.success(null) }
                     } catch (t: Throwable) {
-                        mainHandler.post { result.error("LB_ERROR", t.message ?: "setNoticeGoods failed", null) }
+                        val details = BackendErrorCodeBridge.detailsFor(t)
+                        mainHandler.post { result.error("LB_ERROR", t.message ?: "setNoticeGoods failed", details) }
                     }
                 }
             }

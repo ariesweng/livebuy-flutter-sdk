@@ -97,8 +97,9 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                         result(FlutterError(code: "NOT_CONFIGURED", message: "HMAC / apiKey rejected", details: nil))
                     }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "CONFIGURE_ERROR", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "CONFIGURE_ERROR", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -125,8 +126,9 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                         result(FlutterError(code: "NOT_CONFIGURED", message: "configure() not called", details: nil))
                     }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "REFRESH_ERROR", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "REFRESH_ERROR", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -248,8 +250,9 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                         ])
                     }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "FLUSH_ERROR", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "FLUSH_ERROR", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -271,8 +274,9 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                         result(FlutterError(code: "NOT_CONFIGURED", message: "configure() not called", details: nil))
                     }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "FETCH_LATEST_LIVE_ERROR", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "FETCH_LATEST_LIVE_ERROR", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -307,8 +311,9 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                         result(FlutterError(code: "NOT_CONFIGURED", message: "configure() not called", details: nil))
                     }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "FETCH_WIDGET_ERROR", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "FETCH_WIDGET_ERROR", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -325,8 +330,9 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                     try await Livebuy.login(memberId: memberId, memberName: memberName)
                     DispatchQueue.main.async { result(nil) }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -344,8 +350,9 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                     try await Livebuy.bindSession(memberId: memberId, memberName: memberName, avatarUrl: avatarUrl)
                     DispatchQueue.main.async { result(nil) }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -406,6 +413,10 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                         result(out)
                     }
                 } catch let lbError as LBError {
+                    // flutter-bridge-forward-backend-error-code-and-replay-raw-core: the raw backend
+                    // `error_code` (e.g. `out_of_stock`) rides in `details`, read before the main-queue
+                    // hop; Dart surfaces it as LBErrorServer.backendErrorCode.
+                    let details = flutterBackendErrorDetails(for: lbError)
                     // cart-add-tier2-unify: a 30s 重複加購 dedupe-hit → FlutterError code
                     // `cart_add_deduplicated` so Dart maps the typed LBErrorCartAddDeduplicated
                     // (host treats it as「已加入購物車」). serverError code (e.g. 401 for an empty
@@ -414,14 +425,15 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                         if case .cartAddDeduplicated = lbError {
                             result(FlutterError(code: "cart_add_deduplicated", message: "Add-to-cart deduplicated (already added within 30 s).", details: nil))
                         } else if case .serverError(let code, let message) = lbError {
-                            result(FlutterError(code: String(code), message: message, details: nil))
+                            result(FlutterError(code: String(code), message: message, details: details))
                         } else {
-                            result(FlutterError(code: "LB_ERROR", message: lbError.localizedDescription, details: nil))
+                            result(FlutterError(code: "LB_ERROR", message: lbError.localizedDescription, details: details))
                         }
                     }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -438,8 +450,9 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                     try await Livebuy.reportCartTrack(shopId: shopId, buyNo: buyNo, trackId: trackId)
                     DispatchQueue.main.async { result(nil) }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -483,8 +496,9 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                     try await Livebuy.setAwaitGoods(goodsGpn: goodsGpn, enabled: awaitEnabled)
                     DispatchQueue.main.async { result(nil) }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -499,8 +513,9 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                     try await Livebuy.setNoticeGoods(goodsGpn: goodsGpn, enabled: noticeEnabled)
                     DispatchQueue.main.async { result(nil) }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -1033,6 +1048,9 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
                 payload["code"] = -1
                 payload["message"] = "unknown error"
             }
+            // flutter-bridge-forward-backend-error-code-and-replay-raw-core: raw backend
+            // `error_code` (omitted when empty; Dart keeps it only for backend-originated types).
+            flutterPutBackendErrorCode(flutterBackendErrorCode(of: error), into: &payload)
             LivebuyEventHandler.shared.emit(payload)
         }
 
@@ -1125,6 +1143,8 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
         playerVC.onReplayChatRevealed = { comments in
             LivebuyEventHandler.shared.emit([
                 "event": "replayChatRevealed",
+                // flutter-bridge-forward-backend-error-code-and-replay-raw-core: raw chat keys +
+                // composed sentences in the current SDK language (same as CHAT_HISTORY_LOADED).
                 "comments": comments.map { Self.lbCommentToBody($0) },
             ])
         }
@@ -1308,25 +1328,15 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
     }
 
     /// Serialize an `LBComment` to the Flutter bridge wire dict for the
-    /// `replayChatRevealed` event (replay-chat-revealed-seam-core-flutter, mirrors
-    /// `lbProductToBody(_:)`). Originally scoped to EXACTLY the 6 fields this seam's spec
-    /// contract enumerates (`text` / `name` / `color` / `reply` / `reply_color` / `time`,
-    /// matching the existing `CHAT_HISTORY_LOADED` comment wire shape's field naming) — NOT
-    /// the native SDK's full 8-field `LBComment` struct. `fix-flutter-comment-kind-wire-
-    /// priority-core` adds one more key, `kind`, sourced from the native SDK's
-    /// already-resolved `LBMessageKind.rawValue` (wire-`kind`-priority-with-`name`/`reply`-
-    /// fallback already applied natively); `isTop` remains omitted, no known consumer.
-    /// Does NOT set an `"event"` key — the caller adds its own.
+    /// `replayChatRevealed` event (replay-chat-revealed-seam-core-flutter). Keys: `text` /
+    /// `name` / `color` / `reply` / `reply_color` / `time` + `kind` (fix-flutter-comment-kind-
+    /// wire-priority-core; the native SDK's already-resolved `LBMessageKind.rawValue`) + the raw
+    /// chat keys and composed sentences (flutter-bridge-forward-backend-error-code-and-replay-
+    /// raw-core), composed in the current SDK language at emit time. `isTop` stays omitted.
+    /// Does NOT set an `"event"` key — the caller adds its own. Body: the pure file-level
+    /// `flutterReplayCommentBody(_:lang:)`.
     private static func lbCommentToBody(_ c: LBComment) -> [String: Any] {
-        [
-            "text": c.text,
-            "name": c.name,
-            "color": c.color,
-            "reply": c.reply,
-            "reply_color": c.replyColor,
-            "time": c.time,
-            "kind": c.kind.rawValue,
-        ]
+        flutterReplayCommentBody(c, lang: Livebuy.currentLanguage)
     }
 
     /// Serialize an `LBActiveEvent` to the Flutter bridge wire dict — EQUIVALENT to the SDK's
@@ -1489,12 +1499,16 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
                                             details: nil))
                     }
                 } catch LBError.guestNameTaken {
+                    // The pattern catch binds no value; `guestNameTaken` has no payload, so the
+                    // code recorded for that value is the one this failure produced.
+                    let details = flutterBackendErrorDetails(for: LBError.guestNameTaken)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "GUEST_NAME_TAKEN", message: "nickname already taken", details: nil))
+                        result(FlutterError(code: "GUEST_NAME_TAKEN", message: "nickname already taken", details: details))
                     }
                 } catch {
+                    let details = flutterBackendErrorDetails(for: error)
                     DispatchQueue.main.async {
-                        result(FlutterError(code: "CHECKNAME_FAILED", message: error.localizedDescription, details: nil))
+                        result(FlutterError(code: "CHECKNAME_FAILED", message: error.localizedDescription, details: details))
                     }
                 }
             }
@@ -1646,6 +1660,66 @@ func flutterSubtitleShouldEmit(channelId: String, lastEmittedId: String?) -> Boo
 /// native Int flag (0/1); `available` on the wire is the Bool it decodes to.
 func flutterSubtitlePayload(isSubtitle: Int, subtitleUrl: String) -> [String: Any] {
     ["event": "subtitleChange", "available": isSubtitle == 1, "url": subtitleUrl]
+}
+
+// MARK: - flutter-bridge-forward-backend-error-code-and-replay-raw-core
+//
+// Pure wire helpers (mirror the Android bridge's JVM-tested `BackendErrorCodeBridge`; this
+// plugin has no iOS native unit-test target). Dart already decodes `backend_error_code` from
+// player error maps and `PlatformException.details`, and the replay comment raw / composed keys
+// from `replayChatRevealed`; these helpers make the plugin send them.
+
+/// Wire key shared with the core event payloads and the Dart decoders.
+let flutterBackendErrorCodeKey = "backend_error_code"
+
+/// The non-empty backend `error_code` of `error` (`LBError.backendErrorCode`, iOS v4.30.0+), or
+/// nil. Call it inside the `catch` (before hopping to the main queue): the core remembers the
+/// code per error value and a later response with an equal value would overwrite it.
+func flutterBackendErrorCode(of error: Error) -> String? {
+    guard let code = (error as? LBError)?.backendErrorCode, !code.isEmpty else { return nil }
+    return code
+}
+
+/// `FlutterError.details`: `["backend_error_code": code]` when `code` is non-empty, else nil
+/// (so the details stay nil exactly as before when there is no code).
+func flutterBackendErrorDetails(code: String?) -> [String: Any]? {
+    guard let code = code, !code.isEmpty else { return nil }
+    return [flutterBackendErrorCodeKey: code]
+}
+
+/// Same as `flutterBackendErrorDetails(code:)` for a caught error.
+func flutterBackendErrorDetails(for error: Error) -> [String: Any]? {
+    flutterBackendErrorDetails(code: flutterBackendErrorCode(of: error))
+}
+
+/// Adds `backend_error_code` to an error event `payload` only when `code` is non-empty.
+func flutterPutBackendErrorCode(_ code: String?, into payload: inout [String: Any]) {
+    guard let code = code, !code.isEmpty else { return }
+    payload[flutterBackendErrorCodeKey] = code
+}
+
+/// `replayChatRevealed` comment dict: the 7 existing keys + raw keys `is_anonymous` /
+/// `host_name` / `reply_template` (omitted when nil, as in the core's `CHAT_HISTORY_LOADED`
+/// comments) + `composed_text` / `composed_name` / `composed_reply` (always present; equal to
+/// `text` / `name` / `reply` when the raw keys are missing). `lang` is the language to compose
+/// in — the caller passes `Livebuy.currentLanguage` at emit time, as the core does.
+func flutterReplayCommentBody(_ c: LBComment, lang: String) -> [String: Any] {
+    var item: [String: Any] = [
+        "text": c.text,
+        "name": c.name,
+        "color": c.color,
+        "reply": c.reply,
+        "reply_color": c.replyColor,
+        "time": c.time,
+        "kind": c.kind.rawValue,
+    ]
+    if let anonymous = c.isAnonymous { item["is_anonymous"] = anonymous }
+    if let hostName = c.hostName { item["host_name"] = hostName }
+    if let replyTemplate = c.replyTemplate { item["reply_template"] = replyTemplate }
+    item["composed_text"] = c.composedText(lang: lang)
+    item["composed_name"] = c.composedName(lang: lang)
+    item["composed_reply"] = c.composedReply(lang: lang)
+    return item
 }
 
 private func flutterLBProductFromArgs(_ map: [String: Any]) -> LBProduct? {

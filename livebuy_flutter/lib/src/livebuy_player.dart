@@ -739,9 +739,9 @@ class LivebuyPlayerController {
   /// |---|---|---|---|
   /// | `backend_error_code` | `String` | 失敗回應頂層 `error_code`(如 `award_already_claimed` / `award_not_found` / `claim_failed`;未知代碼原樣透傳) | 僅失敗且後端有帶 |
   ///
-  /// `backend_error_code` 需 plugin 的原生 core 依賴升到含 `backend-error-code-{ios,android}-core`
-  /// 的版本(4.29.0 之後的下一版);目前 pin(4.29.0)、舊後端、或 `contact.email` 缺漏的 fail-fast
-  /// (沒有後端回應)時**整個省略**。事件 params 整包泛型透傳,pin 升版後自動到達,bridge 不需改。
+  /// `backend_error_code` 自 plugin `2.12.0`(原生 core `4.30.0`)起隨事件到達;plugin `2.11.x` 及更早、
+  /// 舊後端、或 `contact.email` 缺漏的 fail-fast(沒有後端回應)時**整個省略**。事件 params 整包泛型透傳,
+  /// bridge 不需改。
   /// 讀法:`p['backend_error_code'] as String?`(請只接受非空字串)。
   ///
   /// 規則:

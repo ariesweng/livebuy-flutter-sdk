@@ -14,7 +14,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-（目前無待發項目——`2.12.0` 已於下方發布，三套件共用版號 lockstep。）
+（目前無待發項目——`2.12.1` 已於下方發布，三套件共用版號 lockstep。）
+
+## 2.12.1 - 2026-10-16
+
+> **三套件版號 lockstep patch**（只改 `livebuy_flutter` 的 plugin 原生碼；`livebuy_flutter_ui`／`livebuy_flutter_reference_ui` 無內容變更、僅隨版號）。
+> 公開 API 不變，原生依賴維持 iOS `~> 4.30`／Android `4.30.0`。後端（`error_code`／`sdk-i18n-raw-data`）已於 2026-10-16 上線。
+> **驗證範圍**：`flutter test`、`flutter analyze`、Android plugin 單元測試通過；plugin 原生碼已對已發佈 `4.30.0` 編譯（iOS／Android）。
+> iOS 原生端無單元測試、未經真機。
+
+### Fixed
+
+- 錯誤物件帶出後端錯誤代碼（`flutter-bridge-forward-backend-error-code-and-replay-raw-core`）：plugin 原生碼（iOS／Android）
+  現在會把原生 core 的 `LBError.backendErrorCode` 轉送給 Dart——播放器錯誤事件帶 `backend_error_code`，`addToCart` 等方法失敗時的
+  `PlatformException.details` 帶 `{'backend_error_code': ...}`，所以 `LBError.backendErrorCode`（例如加購的 `out_of_stock`）不再
+  一律是 `null`。沒有代碼時（舊後端、本地錯誤）照舊不帶，錯誤的 `code` / `message` 不變。
+- 回放聊天帶原始欄位與組好的句子（同一 change）：`replayChatRevealed` 每筆留言加帶 `is_anonymous` / `host_name` /
+  `reply_template`（有值才帶）與 `composed_text` / `composed_name` / `composed_reply`，鍵名與 `CHAT_HISTORY_LOADED` 相同；回放時
+  `LBComment.composedName` / `composedReply` 會顯示匿名名稱與替換好的直播主名，不再退回後端原文。Dart 程式碼不需修改。
 
 ## 2.12.0 - 2026-10-16
 

@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import tv.livebuy.sdk.LivebuySDK
 import tv.livebuy.sdk.events.LBCartResultCallback
 import tv.livebuy.sdk.events.LBEvent
 import tv.livebuy.sdk.events.LBListenerToken
@@ -255,6 +256,9 @@ class LivebuyFlutterPlayerView(
                     payload["message"] = "unknown error"
                 }
             }
+            // flutter-bridge-forward-backend-error-code-and-replay-raw-core: raw backend
+            // `error_code` (omitted when empty; Dart keeps it only for backend-originated types).
+            BackendErrorCodeBridge.putCode(payload, BackendErrorCodeBridge.codeOf(error))
             LivebuyEventHandler.emit(payload)
         }
 
@@ -333,6 +337,8 @@ class LivebuyFlutterPlayerView(
             LivebuyEventHandler.emit(
                 mapOf(
                     "event" to "replayChatRevealed",
+                    // flutter-bridge-forward-backend-error-code-and-replay-raw-core: raw chat keys +
+                    // composed sentences in the current SDK language (same as CHAT_HISTORY_LOADED).
                     "comments" to comments.map { commentToMap(it) },
                 )
             )
@@ -499,9 +505,11 @@ class LivebuyFlutterPlayerView(
                                 null
                             )
                         } catch (e: LBError.GuestNameTaken) {
-                            result.error("GUEST_NAME_TAKEN", "nickname already taken", null)
+                            result.error("GUEST_NAME_TAKEN", "nickname already taken",
+                                BackendErrorCodeBridge.detailsFor(e))
                         } catch (t: Throwable) {
-                            result.error("CHECKNAME_FAILED", t.message ?: "checkName failed", null)
+                            result.error("CHECKNAME_FAILED", t.message ?: "checkName failed",
+                                BackendErrorCodeBridge.detailsFor(t))
                         }
                     }
                 }
@@ -947,24 +955,14 @@ private fun productToMap(product: LBProduct): Map<String, Any?> {
     return payload
 }
 
-// replay-chat-revealed-seam-core-flutter — serialize an LBComment to the Flutter bridge
-// wire map for the `replayChatRevealed` event (mirrors `productToMap` above). Originally
-// scoped to EXACTLY the 6 fields this seam's spec contract enumerates (`text` / `name` /
-// `color` / `reply` / `reply_color` / `time`, matching the existing `CHAT_HISTORY_LOADED`
-// comment wire shape's field naming) — NOT the native SDK's full 8-field `LBComment` data
-// class. fix-flutter-comment-kind-wire-priority-core adds one more key, `kind`, sourced
-// from the native SDK's already-resolved `LBMessageKind.rawValue` (wire-`kind`-priority-
-// with-`name`/`reply`-fallback already applied natively); `isTop` remains omitted, no
-// known consumer.
-private fun commentToMap(c: LBComment): Map<String, Any> = mapOf(
-    "text" to c.text,
-    "name" to c.name,
-    "color" to c.color,
-    "reply" to c.reply,
-    "reply_color" to c.replyColor,
-    "time" to c.time,
-    "kind" to c.kind.rawValue,
-)
+// replay-chat-revealed-seam-core-flutter — serialize an LBComment to the Flutter bridge wire map
+// for the `replayChatRevealed` event. Keys: `text` / `name` / `color` / `reply` / `reply_color` /
+// `time` + `kind` (fix-flutter-comment-kind-wire-priority-core; the native SDK's already-resolved
+// `LBMessageKind.rawValue`) + the raw chat keys and composed sentences (flutter-bridge-forward-
+// backend-error-code-and-replay-raw-core), composed in the current SDK language at emit time.
+// `isTop` stays omitted. Body: the pure, JVM-tested `BackendErrorCodeBridge.replayCommentToMap`.
+private fun commentToMap(c: LBComment): Map<String, Any> =
+    BackendErrorCodeBridge.replayCommentToMap(c, LivebuySDK.currentLanguage)
 
 // player-moment-fields-bridge-core-flutter — serialize LBNavItem/LBHotItem to the Flutter
 // bridge wire map for the `momentStateChange` event (mirrors `productToMap`'s style). `internal`

@@ -131,9 +131,10 @@ class LBSdkConfigLoadFailedParams {
   /// key when it has a value, so this is `null` for an older backend, for
   /// non-backend failures (network / cache corruption), for a non-String or
   /// empty value, and for native cores without backend-error-code support
-  /// (the current pin 4.29.0 and earlier). [errorCode] keeps its existing
-  /// public string either way. The event params are forwarded generically, so
-  /// the key reaches Dart once the native pin is bumped — no bridge change.
+  /// (4.29.x and earlier, i.e. plugin `2.11.x` and earlier). [errorCode] keeps
+  /// its existing public string either way. The event params are forwarded
+  /// generically, so the key reaches Dart from plugin `2.12.0` (native core
+  /// `4.30.0`) — no bridge change.
   final String? backendErrorCode;
 
   const LBSdkConfigLoadFailedParams({
