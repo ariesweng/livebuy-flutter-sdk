@@ -164,8 +164,12 @@ HeaderCloseButtonResolution resolveHeaderCloseButton({
   required bool showCloseIcon,
   required VoidCallback? onMinimize,
   required VoidCallback? onCloseRequest,
+  // fix-flutter-error-screen-close-button-blocked: the terminal error moment gets the SAME
+  // "direct close" override (minimizing an unplayable video is meaningless). Defaults to
+  // `false` so every existing caller is unaffected.
+  bool errorActive = false,
 }) {
-  if (endScreenActive) {
+  if (endScreenActive || errorActive) {
     return (showCloseIcon: true, onMinimize: onCloseRequest);
   }
   return (showCloseIcon: showCloseIcon, onMinimize: onMinimize);
@@ -771,6 +775,13 @@ class PlayerShellView extends StatefulWidget {
   /// `config.onDismiss ?? controller.unload`. Parity iOS / Android / RN `onCloseRequest`.
   final VoidCallback? onCloseRequest;
 
+  /// Marks the header's top-right button so the error moment's scrim can let taps on it
+  /// through (fix-flutter-error-screen-close-button-blocked). The container passes the SAME
+  /// key to `MomentsOverlayView.errorPassthroughKey`. `null` (default — demo / golden) → no
+  /// key is attached. Safe to share between the two header call sites: `_buildUpcoming`
+  /// returns before `_buildContent` builds its header, so only one is ever mounted.
+  final GlobalKey? headerCloseHitKey;
+
   /// Reports the NEW video id after a vertical-swipe in-place switch resolves a non-null adjacent
   /// target (swipe-video-switched-notify, parity iOS / Android / RN). The container wires this to a
   /// notify-only callback (records the shown id + raises `config.onVideoSwitched(id)`) so a
@@ -933,6 +944,7 @@ class PlayerShellView extends StatefulWidget {
     this.onSwipeUp,
     this.onSwipeDown,
     this.onCloseRequest,
+    this.headerCloseHitKey,
     this.onDidSwitchVideo,
     this.onSwipeVideoLoad,
     this.onInfoPanelOpenChange,
@@ -1586,6 +1598,9 @@ class _PlayerShellViewState extends State<PlayerShellView> {
         // （`PlayerShellModel.isEndScreenActive` → `resolveHeaderCloseButton`）與
         // 結束畫面的顯示/隱藏同步，而不是等其他被合併的 listener 剛好一起觸發重建。
         t.endScreen,
+        // fix-flutter-error-screen-close-button-blocked: redraw the header when the error
+        // moment appears / clears (`isErrorActive` drives resolveHeaderCloseButton).
+        t.errorState,
       ],
     ];
 
@@ -1681,6 +1696,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     // below (that method has no closure over this local).
     final headerCloseButton = resolveHeaderCloseButton(
       endScreenActive: m.isEndScreenActive,
+      errorActive: m.isErrorActive,
       showCloseIcon: widget.showCloseIcon,
       onMinimize: widget.onMinimize,
       onCloseRequest: widget.onCloseRequest,
@@ -1922,6 +1938,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 // fix-flutter-endscreen-close-button-blocked: forced true while the end
                 // screen is active — see resolveHeaderCloseButton above.
                 showCloseIcon: headerCloseButton.showCloseIcon,
+                closeButtonHitKey: widget.headerCloseHitKey,
                 // 乾淨模式限定靜音鈕（rb-flutter-gesture-clean-mode-v2）：補回單擊切靜音手勢退役後
                 // 的操作管道，沿用既有 `widget.onToggleMute` host-wired seam，只是觸發手勢從「影片
                 // 區單擊」改成「點頂列這顆鈕」。`_cleanMode == false` 時 `onToggleMute` 傳 null →
@@ -2543,6 +2560,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
     // this method.
     final headerCloseButton = resolveHeaderCloseButton(
       endScreenActive: m.isEndScreenActive,
+      errorActive: m.isErrorActive,
       showCloseIcon: widget.showCloseIcon,
       onMinimize: widget.onMinimize,
       onCloseRequest: widget.onCloseRequest,
@@ -2614,6 +2632,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                 // fix-flutter-endscreen-close-button-blocked: forced true while the end
                 // screen is active — see resolveHeaderCloseButton above.
                 showCloseIcon: headerCloseButton.showCloseIcon,
+                closeButtonHitKey: widget.headerCloseHitKey,
                 // rb-flutter-clean-mode-upcoming-not-triggered — upcoming MUST NOT 支援乾淨模式，
                 // `hideHostPill` 不轉發，維持預設值 `false`。
               ),

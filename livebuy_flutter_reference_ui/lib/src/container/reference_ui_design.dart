@@ -301,6 +301,12 @@ class PlayerOverlayContext {
   /// `config.onDismiss ?? controller.unload`. Mirrors iOS `PlayerOverlayContext.onCloseRequest`.
   final VoidCallback? onCloseRequest;
 
+  /// The header top-right button's key, shared by `PlayerShellView.headerCloseHitKey` and
+  /// `MomentsOverlayView.errorPassthroughKey` so the error scrim lets taps on that button
+  /// through (fix-flutter-error-screen-close-button-blocked). Optional — `null` keeps the
+  /// scrim blocking everything (demo / bespoke designs).
+  final GlobalKey? headerCloseHitKey;
+
   /// Reports the NEW video id after a vertical-swipe in-place switch (swipe-video-switched-notify,
   /// parity iOS / Android / RN). The container wires this to a notify-only callback (records the
   /// shown id + raises `config.onVideoSwitched(id)`) so a host-bound video mirror (the minimized
@@ -366,6 +372,12 @@ class PlayerOverlayContext {
   /// `show_stock_caption_test.dart`) keeps compiling unchanged; `null` → the play icon
   /// simply forwards nothing (demo / an unwired custom design).
   final ValueChanged<String>? onSwitchRecommendationVideo;
+
+  /// productId → real `LBProduct` resolver forwarded to `ProductSheetsOverlayView
+  /// .productResolver` (rb-flutter-recommendation-resolve-real-product). Optional (like
+  /// [onSwitchRecommendationVideo]) so existing `PlayerOverlayContext(...)` call sites keep
+  /// compiling; `null` → recommendation taps fall back to `asDisplayProduct`.
+  final LBProduct? Function(String productId)? productResolver;
 
   // Moments seams.
   final VoidCallback onSkip;
@@ -461,6 +473,7 @@ class PlayerOverlayContext {
     this.onSwipeUp,
     this.onSwipeDown,
     this.onCloseRequest,
+    this.headerCloseHitKey,
     this.onSwipeDidSwitchVideo,
     this.onSwipeVideoLoad,
     required this.onJoinEvent,
@@ -473,6 +486,7 @@ class PlayerOverlayContext {
     required this.onSeekToProductIntro,
     required this.onShareProduct,
     this.onSwitchRecommendationVideo,
+    this.productResolver,
     required this.onSkip,
     required this.onWatchNext,
     required this.onPickHot,
@@ -700,6 +714,7 @@ class MinimalDesign extends ReferenceUIDesign {
               onSwipeDown: c.onSwipeDown,
               // Swipe toward an empty direction (no next/prev) → close (swipe-nav-close-on-empty).
               onCloseRequest: c.onCloseRequest,
+              headerCloseHitKey: c.headerCloseHitKey,
               // Report the switched video id after a swipe in-place switch (swipe-video-switched-notify).
               onDidSwitchVideo: c.onSwipeDidSwitchVideo,
               // Direct-reload seam (flutter-swipe-video-load-requester-wiring-reference-ui): the
@@ -808,6 +823,7 @@ class MinimalDesign extends ReferenceUIDesign {
             cartLoginGatePresentedNotifier: c.cartLoginGatePresented,
             // 商品明細「更多商品」推薦卡播放圖示 → 換片 (rb-flutter-product-detail-recommendations §4).
             onSwitchRecommendationVideo: c.onSwitchRecommendationVideo,
+            productResolver: c.productResolver,
             // 任一商品 sheet/modal 開合 → 回報容器（rb-flutter-block-swipe-nav-when-sheet-open），
             // 容器鏡射後轉發回上面 PlayerShellView 的 sheetsPresented，抑制上下滑動換片。
             onPresentationChange: c.onProductSheetsPresentedChange,
@@ -838,6 +854,7 @@ class MinimalDesign extends ReferenceUIDesign {
           liveDuration: c.liveDuration,
           onRetry: c.onRetry,
           onDismiss: c.onDismiss,
+          errorPassthroughKey: c.headerCloseHitKey,
           // Clean-mode intro progress bar play/pause + drag-seek control plane
           // (rb-flutter-intro-progress-bar-interactive) — the SAME already-resolved
           // `c.onTogglePlayPause` / `c.onSeek` already forwarded to `PlayerShellView` above

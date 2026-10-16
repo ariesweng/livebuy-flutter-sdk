@@ -1256,29 +1256,23 @@ const String _numberBadgeHotLabel = 'HOT';
 // (`productId` / `name` / `priceShow` / `originalPriceShow` / `pic` / `videoId?` /
 // `soldOut`) — it carries no `specifications` / `specOptions` / `stock`
 // (`originalPriceShow` was ADDED by `add-recommendation-original-price-template-
-// flutter`, no longer part of the gap — see the KNOWN GAP note below, which is now
-// narrower). [ProductRow] renders `LBProduct`, so this extension (mirrors iOS
+// flutter`) — see the tap-payload note below for how the missing fields are
+// recovered on tap). [ProductRow] renders `LBProduct`, so this extension (mirrors iOS
 // `LBProductRecommendation.asDisplayProduct`, `ProductRowView.swift`) builds a
 // PRESENTATION-ONLY `LBProduct` carrying just enough to paint the `.grid` card
 // correctly.
 //
-// ⚠️ Flutter-specific widening of the iOS/Android caveat (RN hit the identical
-// constraint and converged on the same mitigation — see below): on iOS / Android, the
-// container resolves the REAL `LBProduct` for a tapped recommendation from a
-// synchronously-held `channel.otherGoods` (keyed by `productId`) before forwarding it
-// to `onProductTap` — so [asDisplayProduct] there is used ONLY to paint the card,
-// never as the tap payload. Flutter's (and RN's) core exposes NO such synchronous
-// channel/otherGoods accessor at the reference-ui layer (Flutter's platform-view
-// bridge keeps channel state native-side; `DefaultPlayerTemplate` only exposes it
-// privately via `setOtherGoods`, and adding a public getter would be a `flutter-ui`
-// TEMPLATE-layer change, out of scope for this `## Layer: reference-ui` change — I7).
-// So on Flutter, [asDisplayProduct] IS the drill-in tap payload for the TAPPED
-// recommendation (`ProductSheetsOverlayView._handleOpenRecommendation` /
-// `_handleQuickAddRecommendation`) — that nested detail therefore has NO variant
-// chips (`specifications`/`specOptions` empty) and a derived (not real) stock number
-// (but DOES now carry a real `originalPriceShow`, so its price/strike-through display
-// is accurate). This is a documented, accepted KNOWN GAP (see
-// `reference-ui-rendering/spec.md`'s Requirement for this change), not an oversight.
+// Tap payload (rb-flutter-recommendation-resolve-real-product, parity iOS / Android):
+// [asDisplayProduct] is used to PAINT the card. For a tap on the card body / quick-add
+// button, the turnkey container resolves the REAL `LBProduct` (full `specifications` /
+// `specOptions` / `stock` / `videoId`) by `productId` from the latest channel's `goods`
+// ∪ `otherGoods` (`LivebuyPlayer` keeps them from `onChannelChange` and injects
+// `ProductSheetsOverlayView.productResolver`). Only when no resolver is injected
+// (demo / golden) or the id is not found does the tap fall back to this conversion —
+// that fallback detail has no variant chips and a derived stock number. (The earlier
+// "reference-ui cannot reach otherGoods" rationale for always using this conversion is
+// obsolete since `rb-flutter-other-goods-channel-bridge-core`. RN still has that gap —
+// see `docs/reference-ui/parity-debt-ledger.md` #59.)
 //
 // The OTHER side of a drill-in — pushing "what's currently open" onto the breadcrumb
 // so「返回」can restore it — does NOT use this conversion and is NOT degraded: it

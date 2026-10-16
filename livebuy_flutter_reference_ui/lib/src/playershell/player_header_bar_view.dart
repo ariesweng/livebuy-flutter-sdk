@@ -243,6 +243,11 @@ class PlayerHeaderBarView extends StatelessWidget {
   /// DOES is decided entirely by the caller.
   final bool showCloseIcon;
 
+  /// Attached to the top-right button (via `KeyedSubtree`, no extra render object) so the
+  /// error moment's scrim can read its on-screen rect and let taps on it through
+  /// (fix-flutter-error-screen-close-button-blocked). `null` (default) → nothing attached.
+  final GlobalKey? closeButtonHitKey;
+
   /// The CURRENT mute state (`PlayerShellModel.muted`) — selects the mute button's glyph
   /// (rb-flutter-gesture-clean-mode-v2). Only meaningful when [onToggleMute] is non-null (the
   /// button only renders then); default `false` keeps every EXISTING call site's construction
@@ -275,6 +280,7 @@ class PlayerHeaderBarView extends StatelessWidget {
     this.titleScroll,
     this.hideHostPill = false,
     this.showCloseIcon = false,
+    this.closeButtonHitKey,
     this.muted = false,
     this.onToggleMute,
   });
@@ -904,11 +910,14 @@ class PlayerHeaderBarView extends StatelessWidget {
       child: Semantics(
         label: minimizeButtonSemanticsLabel(showCloseIcon),
         button: true,
-        child: _glassIconButton(
-          showCloseIcon
-              ? (size, color) => Icon(Icons.close, size: size, color: color)
-              : (size, color) => PipGlyph(color: color, size: size),
-          onMinimize,
+        child: KeyedSubtree(
+          key: closeButtonHitKey,
+          child: _glassIconButton(
+            showCloseIcon
+                ? (size, color) => Icon(Icons.close, size: size, color: color)
+                : (size, color) => PipGlyph(color: color, size: size),
+            onMinimize,
+          ),
         ),
       ),
     );

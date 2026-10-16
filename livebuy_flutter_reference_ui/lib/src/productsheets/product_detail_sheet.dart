@@ -57,7 +57,7 @@ enum ProductSheetPresentation { detail, addToCart, restock }
 //   2. bound SNAPSHOT VALUES (read-only, BY VALUE):
 //        `detail: LBProductDetailState`, `variantGroups: List<LBVariantGroup>`,
 //        `variantSelection: Map<int, int>`, `qty: LBQtyState`,
-//        `needsVariantSelection: bool`, `addToCartFailed: bool`, `faved: bool` —
+//        `needsVariantSelection: bool`, `faved: bool` —
 //        passed BY VALUE from `ProductSheetsModel` (never the model, never the
 //        template).
 //   3. action callbacks (LAST, each defaulting to a no-op):
@@ -88,7 +88,9 @@ enum ProductSheetPresentation { detail, addToCart, restock }
 //   • `needsVariantSelection` → the centered「請選規格」prompt is NO LONGER drawn here; it is hoisted
 //     to the container's overlay root (`SelectVariantPromptModalView`). The field is retained for
 //     signature stability but unused by this widget.
-//   • `addToCartFailed` → retryable error banner.
+//   • add-to-cart failure → NOT drawn here any more (rb-flutter-cart-add-failure-toast): the
+//     container flashes the error `CartToastView` instead of the old bottom-of-scroll banner,
+//     which users could not see (livebuy-flutter-sdk issue #1).
 //
 // INLINE 收藏鈕 (rb-flutter-product-sheet-resize-fav-inline, design R19 — supersedes the
 // prior "RECONCILED" footer placement, design 2026-06-06): `.detail` draws a HORIZONTAL
@@ -220,8 +222,6 @@ String get _addingLabel => ReferenceUIStrings.text('detail_adding');
 String get _favLabel => ReferenceUIStrings.text('detail_fav');
 String get _favedLabel => ReferenceUIStrings.text('detail_faved');
 String get _shareLabel => ReferenceUIStrings.text('common_share');
-String get _retryLabel => ReferenceUIStrings.text('common_retry');
-String get _failureTitle => ReferenceUIStrings.text('detail_add_failed');
 // 「請選規格」prompt 的 copy 已搬到 `select_variant_prompt_modal.dart`（hoist 到容器 overlay root）。
 
 /// 「商品介紹」區塊標題（design `screens.jsx` `ProductDetailSheet` L879；
@@ -395,9 +395,6 @@ class ProductDetailSheet extends StatelessWidget {
   /// hoisted to the container's overlay root, `SelectVariantPromptModalView`). The container
   /// (`ProductSheetsOverlayView`) reads `m.needsVariantSelection` directly to drive that modal.
   final bool needsVariantSelection;
-
-  /// Add-to-cart failure flag (`DefaultPlayerTemplate.addToCartFailed`). Read-only.
-  final bool addToCartFailed;
 
   /// 加購「請求中」loading flag (rb-flutter-cart-add-loading-state) — 由容器以
   /// `ProductSheetsModel.addToCartInFlight` 經 320ms 防閃爍 floor derive 後傳入。`true` → CTA 切
@@ -592,7 +589,6 @@ class ProductDetailSheet extends StatelessWidget {
     required this.variantSelection,
     required this.qty,
     required this.needsVariantSelection,
-    required this.addToCartFailed,
     this.selectedSpec,
     this.addToCartInFlight = false,
     this.faved = false,
@@ -846,12 +842,6 @@ class ProductDetailSheet extends StatelessWidget {
             ],
             _hairline(vertical: 18),
             _qtyRow(),
-            // Add-to-cart failure banner (retryable), only when the route-B add
-            // threw (D-3). Sits above the footer so it reads as feedback.
-            if (addToCartFailed) ...[
-              const SizedBox(height: 16),
-              _failureBanner(),
-            ],
           ],
         ),
       );
@@ -869,20 +859,13 @@ class ProductDetailSheet extends StatelessWidget {
     // mirrors this file's existing 白卡 1 "bottom padding is 0 at the TOP because it touches
     // the scroll area's own top edge" convention (see the comment on 白卡 1 below), applied
     // symmetrically to the BOTTOM edge, so the last on-screen pixel row is white, not grey.
-    //
-    // `addToCartFailed`'s banner is the ONE exception: it deliberately has NO white card
-    // (design.md D3 — no design reference for that state), so when it is present IT is the
-    // true last element and keeps the grey trailing 12pt on its OWN `Padding` (below) —
-    // a white card followed by the banner MUST NOT also claim the extra 12, or the banner
-    // would gain an unwanted gap above it that never existed pre-fix.
+
     final showsIntroCard = showsProductIntro && description.isNotEmpty;
     final showsRecsCard =
         showsRecommendations && detail.recommendations.isNotEmpty;
-    final card1IsLastVisible =
-        !showsIntroCard && !showsRecsCard && !addToCartFailed;
-    final introIsLastVisible =
-        showsIntroCard && !showsRecsCard && !addToCartFailed;
-    final recsIsLastVisible = showsRecsCard && !addToCartFailed;
+    final card1IsLastVisible = !showsIntroCard && !showsRecsCard;
+    final introIsLastVisible = showsIntroCard && !showsRecsCard;
+    final recsIsLastVisible = showsRecsCard;
 
     return Container(
       width: double.infinity,
@@ -957,7 +940,7 @@ class ProductDetailSheet extends StatelessWidget {
           // `showsIntroCard`（= `showsProductIntro && description.isNotEmpty`）時渲染
           // （rb-flutter-product-intro-bgcolor-and-hide-empty 反轉了先前「恆顯示 +
           // fallback」的規則，見 [description] 的 doc comment）。Sits after 白卡 1（收藏
-          // 鈕），before 更多商品 / the failure banner. 底部同樣改為
+          // 鈕），before 更多商品. 底部同樣改為
           // `introIsLastVisible ? 28 : 16`（TRAILING BOTTOM GAP FIX，規則同白卡 1）。
           if (showsIntroCard) ...[
             const SizedBox(height: 20),
@@ -974,7 +957,7 @@ class ProductDetailSheet extends StatelessWidget {
           // AND `recommendations.isNotEmpty`）。The container sets [showsRecommendations] to
           // `false` for a NESTED (drill-in) detail so it does not render a second grid. When
           // shown this card always renders LAST among the white cards (nothing white-card-
-          // based follows it), so — barring the `addToCartFailed` banner — it is always the
+          // based follows it), so it is always the
           // last visible one; its bottom padding absorbs the trailing 12pt whenever
           // `recsIsLastVisible`（TRAILING BOTTOM GAP FIX，規則同白卡 1 / 白卡 2）。
           if (showsRecsCard) ...[
@@ -985,23 +968,6 @@ class ProductDetailSheet extends StatelessWidget {
             ),
           ],
 
-          // Add-to-cart failure banner (retryable), only when the route-B add threw
-          // (D-3). Sits directly on the grey backdrop (no white card — no design
-          // reference for this state; design.md D3), above the footer. Whenever shown it
-          // is UNCONDITIONALLY the true last element (nothing white-card-based renders
-          // after it, and none of the white cards above claim the extra 12pt in this case
-          // — see `card1IsLastVisible` / `introIsLastVisible` / `recsIsLastVisible`'s
-          // `!addToCartFailed` guard), so it keeps the grey trailing 12pt on ITS OWN bottom
-          // padding instead — exactly what the removed outer `Padding(bottom: 12)` used to
-          // contribute in this scenario (TRAILING BOTTOM GAP FIX, byte-identical spacing
-          // to pre-fix in this state).
-          if (addToCartFailed) ...[
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: _failureBanner(),
-            ),
-          ],
         ],
       ),
     );
@@ -1010,7 +976,7 @@ class ProductDetailSheet extends StatelessWidget {
   /// One white content "card" on the `.detail` grey scroll body (design's per-block
   /// `theme.surface.bg` wrapper, `screens.jsx` L806/878/885). `width: double.infinity`
   /// follows this file's existing "force full-bleed color inside a `CrossAxisAlignment
-  /// .start` Column" convention (`_failureBanner()` / `_hairline()`) — a bare `ColoredBox`
+  /// .start` Column" convention (`_hairline()`) — a bare `ColoredBox`
   /// would only wrap its child's natural width, not span the sheet.
   Widget _whiteCard({
     required Widget child,
@@ -1470,57 +1436,6 @@ class ProductDetailSheet extends StatelessWidget {
           size: 14,
           color: enabled ? theme.text : _textFaint,
         ),
-      ),
-    );
-  }
-
-  // MARK: - Add-to-cart failure banner (retryable)
-
-  Widget _failureBanner() {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: theme.accent.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      child: Row(
-        children: [
-          Icon(Icons.warning_amber_rounded, size: 15, color: theme.accent),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              _failureTitle,
-              style: TextStyle(
-                color: theme.text,
-                fontSize: 13 * theme.fontScale,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          // 重試 re-invokes onAddToCart (disabled when sold out).
-          GestureDetector(
-            key: LbTestKeys.addToCartRetry,
-            behavior: HitTestBehavior.opaque,
-            onTap: _isSoldOut ? null : onAddToCart,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: theme.accent, width: 1),
-              ),
-              child: Text(
-                _retryLabel,
-                style: TextStyle(
-                  color: theme.accent,
-                  fontSize: 13 * theme.fontScale,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

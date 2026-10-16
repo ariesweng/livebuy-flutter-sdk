@@ -326,6 +326,15 @@ class ProductSheetsOverlayView extends StatefulWidget {
   /// stranded over the video.
   final ValueChanged<String>? onSwitchRecommendationVideo;
 
+  /// productId → real `LBProduct` resolver for「更多商品」推薦卡卡片本體 / 加購鈕 taps
+  /// (rb-flutter-recommendation-resolve-real-product, parity iOS `LivebuyPlayer.swift` /
+  /// Android `resolveRecommendationProduct`). The production container (`LivebuyPlayer`)
+  /// backs it with the latest channel's `goods` ∪ `otherGoods`, so a cross-video
+  /// recommendation opens with its REAL specifications / stock / videoId. `null`
+  /// (default — demo / golden instances) or a `null` return → the tap falls back to the
+  /// presentation-only `item.asDisplayProduct`, exactly as before.
+  final LBProduct? Function(String productId)? productResolver;
+
   /// Reports whether ANY product sheet/modal this container renders (list drawer / detail-or-
   /// restock / zoom lightbox / cart-needs-login gate / variant-selection prompt — see
   /// [anyProductSheetPresented]) is currently presented (rb-flutter-block-swipe-nav-when-sheet-
@@ -361,6 +370,7 @@ class ProductSheetsOverlayView extends StatefulWidget {
     this.onDismissList,
     this.onRequestLogin,
     this.onSwitchRecommendationVideo,
+    this.productResolver,
     this.onPresentationChange,
     this.cartLoginGatePresentedNotifier,
   });
@@ -437,6 +447,9 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
   // builder, where `setState` is illegal). A rapid second success cancels the pending dismiss timer
   // and re-arms (extends the toast, parity iOS cancel+re-arm).
   bool _cartToastVisible = false;
+
+  /// rb-flutter-cart-add-failure-toast: whether the visible toast is the FAILURE variant.
+  bool _cartToastIsError = false;
   int _lastCartCount = -1;
   Timer? _cartToastTimer;
 
@@ -534,8 +547,17 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     final last = _lastCartCount;
     _lastCartCount = c;
     if (last < 0 || c <= last) return; // first pass / non-rise (dedup / clear) → no toast.
+    _flashCartToast(isError: false);
+  }
+
+  /// Show the cart toast (success or failure) and auto-dismiss it ~1.8s later. Runs outside
+  /// build (ChangeNotifier callback / after an awaited add), so `setState` is safe.
+  void _flashCartToast({required bool isError}) {
     _cartToastTimer?.cancel();
-    setState(() => _cartToastVisible = true);
+    setState(() {
+      _cartToastVisible = true;
+      _cartToastIsError = isError;
+    });
     _cartToastTimer = Timer(const Duration(milliseconds: 1800), () {
       if (mounted) setState(() => _cartToastVisible = false);
     });
@@ -769,7 +791,7 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
               // safe-area inset (zero → the literal 96 it always was).
               padding: EdgeInsets.only(
                   bottom: 96 + lbChromeSafeInsets(MediaQuery.of(context)).bottom),
-              child: IgnorePointer(child: CartToastView(theme: theme)),
+              child: IgnorePointer(child: CartToastView(theme: theme, isError: _cartToastIsError)),
             ),
           ),
       ],
@@ -818,7 +840,6 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
       selectedSpec: m.selectedSpec,
       qty: m.qty,
       needsVariantSelection: m.needsVariantSelection,
-      addToCartFailed: m.addToCartFailed,
       // 加購請求中 loading（rb-flutter-cart-add-loading-state）— 容器 derive 的防閃爍 visible。
       addToCartInFlight: _cartLoadingVisible,
       // 收藏（到貨追蹤 type=1）— model resolves goodsGpn from productId.
@@ -975,8 +996,14 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     // / .descriptionFor can fall back to it if this product turns out to not be in
     // the current video's own `products` snapshot.
     _recommendationFallbackCache[item.productId] = item;
-    widget.onProductTap?.call(item.asDisplayProduct);
+    widget.onProductTap?.call(_resolveRecommendation(item));
   }
+
+  /// rb-flutter-recommendation-resolve-real-product: the REAL `LBProduct` (full
+  /// specifications / stock / videoId) when [ProductSheetsOverlayView.productResolver]
+  /// finds it, else the presentation-only `item.asDisplayProduct` (unchanged fallback).
+  LBProduct _resolveRecommendation(LBProductRecommendation item) =>
+      widget.productResolver?.call(item.productId) ?? item.asDisplayProduct;
 
   /// 推薦卡**加購鈕** tap → SAME-SHEET SWAP into the compact AddToCart presentation. Same
   /// swap as [_handleOpenRecommendation]; only the LOCAL presentation mode differs
@@ -986,7 +1013,7 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     // rb-flutter-recommendation-product-intro-carry-through: same cache-before-forward
     // as _handleOpenRecommendation (see its doc).
     _recommendationFallbackCache[item.productId] = item;
-    widget.onProductTap?.call(item.asDisplayProduct);
+    widget.onProductTap?.call(_resolveRecommendation(item));
   }
 
   /// 推薦卡**播放圖示** tap → 換片，然後關閉整個 sheet stack —— 商品明細 sheet **與**外層
@@ -1070,9 +1097,13 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     // （此時旗標已由 await 結果寫入，但本地 setState 尚未重建；`_cartGatePresentedNow` 讀 template 旗標
     // 與本地 latch，與畫面顯示條件同源。）
     _consumeCartAddAuthGateIfOwned();
-    // Re-read the template's transient flags (failure banner / needs-login gate) after the async
-    // result. They are plain fields on the template (no ChangeNotifier of their own), so an
-    // explicit rebuild is required for them to surface — parity with the gate's reactive present.
+    // rb-flutter-cart-add-failure-toast: a genuine failure flashes the error toast (the detail
+    // stays open; tapping 加入購物車 again retries). Replaces the bottom-of-scroll banner users could
+    // not see (livebuy-flutter-sdk issue #1).
+    if (mounted && _model.addToCartFailed) _flashCartToast(isError: true);
+    // Re-read the template's transient flags (needs-login gate) after the async result. They are
+    // plain fields on the template (no ChangeNotifier of their own), so an explicit rebuild is
+    // required for them to surface — parity with the gate's reactive present.
     if (mounted) setState(() {});
   }
 

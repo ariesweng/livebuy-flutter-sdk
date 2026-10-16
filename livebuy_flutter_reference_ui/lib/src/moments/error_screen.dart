@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
     show LBPlayerErrorState, LBPlayerErrorKind;
 
@@ -142,7 +143,13 @@ class ErrorScreenView extends StatelessWidget {
     required this.error,
     this.onRetry,
     this.onDismiss,
+    this.passthroughKey,
   });
+
+  /// The header top-right button's key (fix-flutter-error-screen-close-button-blocked). Taps
+  /// inside that button's on-screen rect pass THROUGH the scrim so the button underneath
+  /// receives them; every other tap is still blocked. `null` (default) → blocks everything.
+  final GlobalKey? passthroughKey;
 
   @override
   Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
@@ -156,27 +163,30 @@ class ErrorScreenView extends StatelessWidget {
 
     // Full-bleed dim scrim (design `rgba(10,10,14,0.9)`) with the centered error
     // card composited over it. Plain Stack / Column — no Lazy / Scroll.
-    return ColoredBox(
-      key: LbTestKeys.momentError,
-      color: _scrim,
-      // rb-flutter-edge-to-edge-safe-area-audit: scrim full-bleed, content centered in the safe
-      // rect.
-      child: LBSafeAreaPadding(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 320),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 36),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  _iconBadge(copy.icon, copy.accentTinted),
-                  const SizedBox(height: 16),
-                  _messageBlock(copy),
-                  const SizedBox(height: 22),
-                  _actions(copy),
-                ],
+    return _ErrorScrimHitPassthrough(
+      passthroughKey: passthroughKey,
+      child: ColoredBox(
+        key: LbTestKeys.momentError,
+        color: _scrim,
+        // rb-flutter-edge-to-edge-safe-area-audit: scrim full-bleed, content centered in the safe
+        // rect.
+        child: LBSafeAreaPadding(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 320),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 36),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    _iconBadge(copy.icon, copy.accentTinted),
+                    const SizedBox(height: 16),
+                    _messageBlock(copy),
+                    const SizedBox(height: 22),
+                    _actions(copy),
+                  ],
+                ),
               ),
             ),
           ),
@@ -477,4 +487,49 @@ class _ErrorCopy {
     this.primaryForwardsDismiss = false,
     this.showBack = true,
   });
+}
+
+/// PURE (fix-flutter-error-screen-close-button-blocked): whether a tap at [globalPoint] should
+/// pass through the error scrim — true only inside [passthroughRect] (the header top-right
+/// button's global rect). `null` rect (key unmounted / not laid out) → `false` (block).
+bool errorScrimShouldPassThrough(Offset globalPoint, Rect? passthroughRect) =>
+    passthroughRect != null && passthroughRect.contains(globalPoint);
+
+/// The global rect of [key]'s render box, or `null` when it is not mounted / not laid out.
+Rect? _globalRectOf(GlobalKey? key) {
+  final ro = key?.currentContext?.findRenderObject();
+  if (ro is! RenderBox || !ro.attached || !ro.hasSize) return null;
+  return ro.localToGlobal(Offset.zero) & ro.size;
+}
+
+/// Wraps the error scrim: a tap inside [passthroughKey]'s rect reports "not hit" so the
+/// parent `Stack` keeps hit-testing the layers below (reaching the header button); every
+/// other tap hit-tests the scrim normally (blocked).
+class _ErrorScrimHitPassthrough extends SingleChildRenderObjectWidget {
+  const _ErrorScrimHitPassthrough({required this.passthroughKey, required super.child});
+
+  final GlobalKey? passthroughKey;
+
+  @override
+  _RenderErrorScrimHitPassthrough createRenderObject(BuildContext context) =>
+      _RenderErrorScrimHitPassthrough(passthroughKey);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderErrorScrimHitPassthrough renderObject) {
+    renderObject.passthroughKey = passthroughKey;
+  }
+}
+
+class _RenderErrorScrimHitPassthrough extends RenderProxyBox {
+  _RenderErrorScrimHitPassthrough(this.passthroughKey);
+
+  GlobalKey? passthroughKey;
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    if (errorScrimShouldPassThrough(localToGlobal(position), _globalRectOf(passthroughKey))) {
+      return false;
+    }
+    return super.hitTest(result, position: position);
+  }
 }

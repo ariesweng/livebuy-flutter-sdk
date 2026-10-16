@@ -733,13 +733,25 @@ class LivebuyPlayerController {
   /// | `award_code` | `String` | 回應 `code` | **discount-only**,成功且非空 |
   /// | `award_expiration` | `String` | 回應 `expiration_time` | **discount-only**,成功且非空 |
   ///
+  /// **後端錯誤代碼**(僅領獎失敗時存在,backend-error-code-flutter-core):
+  ///
+  /// | key | Dart 型別 | 來源 | 何時有 |
+  /// |---|---|---|---|
+  /// | `backend_error_code` | `String` | 失敗回應頂層 `error_code`(如 `award_already_claimed` / `award_not_found` / `claim_failed`;未知代碼原樣透傳) | 僅失敗且後端有帶 |
+  ///
+  /// `backend_error_code` 需 plugin 的原生 core 依賴升到含 `backend-error-code-{ios,android}-core`
+  /// 的版本(4.29.0 之後的下一版);目前 pin(4.29.0)、舊後端、或 `contact.email` 缺漏的 fail-fast
+  /// (沒有後端回應)時**整個省略**。事件 params 整包泛型透傳,pin 升版後自動到達,bridge 不需改。
+  /// 讀法:`p['backend_error_code'] as String?`(請只接受非空字串)。
+  ///
   /// 規則:
   ///
   /// - **省略規則**:值為 nil 或空字串的欄位,SDK **整個省略該 key**(Dart 端 `params['x']` 讀為
   ///   `null`);SDK **不會**以空字串佔位。要分辨「省略」與「顯式 null」請用 `params.containsKey('x')`
   ///   ——Dart 對缺 key 與顯式 null 皆回 `null`。
   /// - **失敗白名單**:領獎失敗(`failed` / `unknown_<code>`,**含 `contact.email` 缺漏的 fail-fast
-  ///   ——連 API 都沒送出)時,`params` **只帶四個記憶體來源 key**,不含任何 API 回應來源欄位。
+  ///   ——連 API 都沒送出)時,`params` **只帶四個記憶體來源 key**,不含任何 API 回應來源欄位;
+  ///   唯一例外是上表選填的 `backend_error_code`(有值才帶)。
   /// - **discount-only**:`award_code` / `award_expiration` 只在 discount award 出現;product award
   ///   不帶這兩欄。
   /// - **`award_stock` 的 `0` 是有效值**(代表已無庫存),不可當成缺值。

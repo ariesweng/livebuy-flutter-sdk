@@ -25,6 +25,12 @@ const Color _glassFill = Color(0xDB141418);
 /// The confirmation label (design default 「已加入購物車」).
 String get _defaultLabel => ReferenceUIStrings.text('cart_added_toast');
 
+/// The failure label (rb-flutter-cart-add-failure-toast, design `LBPCartToast variant='error'`).
+String get _errorLabel => ReferenceUIStrings.text('detail_add_failed');
+
+/// Failure badge color — design `LBPCartToast variant='error'` danger `#EB6E5F` (same as ErrorScreen).
+const Color _danger = Color(0xFFEB6E5F);
+
 /// Accent-ringed checkmark diameter (design `LBPCartToast` 24px circle).
 const double _checkSize = 24;
 
@@ -36,14 +42,20 @@ class CartToastView extends StatelessWidget {
     super.key,
     required this.theme,
     String? label,
+    this.isError = false,
   }) : _label = label;
+
+  /// `true` → the add-to-cart FAILURE variant (rb-flutter-cart-add-failure-toast, design
+  /// `LBPCartToast variant='error'`): danger-circle ✕ +「加入購物車失敗，請稍後再試」. Default `false`
+  /// keeps the success toast (and its golden) byte-identical.
+  final bool isError;
 
   /// The resolved reference-ui theme (FIRST, always). The accent drives the checkmark ring.
   final ReferenceUITheme theme;
 
   /// The confirmation label (design default 「已加入購物車」, in the CURRENT reference-ui
   /// language — resolved at read time when omitted / null, rb-flutter-i18n-string-table).
-  String get label => _label ?? _defaultLabel;
+  String get label => _label ?? (isError ? _errorLabel : _defaultLabel);
   final String? _label;
 
   @override
@@ -73,11 +85,13 @@ class CartToastView extends StatelessWidget {
               width: _checkSize,
               height: _checkSize,
               decoration: BoxDecoration(
-                color: theme.accent,
+                color: isError ? _danger : theme.accent,
                 shape: BoxShape.circle,
               ),
               alignment: Alignment.center,
-              child: const Icon(Icons.check, color: Colors.white, size: 15),
+              child: isError
+                  ? const Icon(Icons.close, color: Colors.white, size: 15)
+                  : const Icon(Icons.check, color: Colors.white, size: 15),
             ),
           ),
           const SizedBox(width: 9),

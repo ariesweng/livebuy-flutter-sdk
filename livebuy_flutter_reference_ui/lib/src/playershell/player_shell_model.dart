@@ -339,6 +339,11 @@ class PlayerShellModel {
     if (t == null) return false;
     return t.endScreen.countdown != null || t.endScreen.endScreenVisible;
   }
+
+  /// Whether the terminal error moment is showing (fix-flutter-error-screen-close-button-blocked)
+  /// — the SAME condition `MomentsOverlayView` uses to render `ErrorScreenView`
+  /// (`template.errorState.current != null`). `false` without a template (demo / seeds).
+  bool get isErrorActive => template?.errorState.current != null;
 }
 
 // GAP NOTES (reachability of family-1 surfaces — parity with iOS / Android)

@@ -1,5 +1,7 @@
 // T13.7 — Dart public data models
 
+import 'backend_error_code.dart';
+
 class LBUser {
   /// Required when calling [LivebuySDK.setUser]; optional on [LBConfigOptions].
   final String? displayName;
@@ -828,7 +830,11 @@ class LBAwardClaimInput {
 /// re-calling the API. See the params contract table on
 /// [LivebuyPlayerController.requestAwardClaim] for the authoritative field
 /// list, the omission rule (nil / empty → key dropped entirely) and the
-/// failure-path whitelist.
+/// failure-path whitelist. On failure the event may additionally carry the
+/// optional `backend_error_code` (raw backend `error_code`, e.g.
+/// `award_already_claimed`; backend-error-code-flutter-core) — present only
+/// with a native core that includes backend-error-code and a backend that
+/// sends it.
 ///
 /// **Side-effect boundary** (narrowed by `award-product-auto-cart`): the SDK
 /// MUST NOT navigate and MUST NOT render any UI off the back of this event, and
@@ -935,7 +941,26 @@ LBPlayerState lbPlayerStateFromString(String s) =>
         orElse: () => LBPlayerState.error);
 
 sealed class LBError {
-  const LBError();
+  /// Raw backend `error_code` string carried by the response that produced
+  /// this error (backend-error-code-flutter-core; parity iOS
+  /// `LBError.backendErrorCode`). Unknown codes pass through unchanged.
+  ///
+  /// `null` when the response had no `error_code` (older backend), when the
+  /// error was produced locally by the SDK, or when the native core the plugin
+  /// is built against does not forward it yet. Only errors that can come from
+  /// a backend response carry it: [LBErrorServer], [LBErrorChatRateLimited],
+  /// [LBErrorSdkVersionUnsupported], [LBErrorGuestNameTaken],
+  /// [LBErrorChatRequiresLogin] and [LBErrorNotLive]. The others
+  /// ([LBErrorVideoNotFound], [LBErrorInvalidSignature], [LBErrorNetwork],
+  /// [LBErrorRestricted], [LBErrorCartAddDeduplicated]) are always `null`.
+  ///
+  /// ⚠️ Reaching Dart requires the plugin's native core dependency to include
+  /// `backend-error-code-{ios,android}-core` (the native release after
+  /// 4.29.0) **and** the plugin's native bridge to forward the value; with the
+  /// current pin (4.29.0) it is always `null`.
+  final String? backendErrorCode;
+
+  const LBError({this.backendErrorCode});
 }
 
 class LBErrorRestricted extends LBError {
@@ -951,7 +976,7 @@ class LBErrorInvalidSignature extends LBError {
 }
 
 class LBErrorChatRateLimited extends LBError {
-  const LBErrorChatRateLimited();
+  const LBErrorChatRateLimited({super.backendErrorCode});
 }
 
 // commentsub-checkname-contract-core §8.1: chat business errors. The native
@@ -961,23 +986,23 @@ class LBErrorChatRateLimited extends LBError {
 
 /// Guest display name already taken (`POST /sdk/video/checkname` 403).
 class LBErrorGuestNameTaken extends LBError {
-  const LBErrorGuestNameTaken();
+  const LBErrorGuestNameTaken({super.backendErrorCode});
 }
 
 /// Chat requires a logged-in member (`POST /sdk/video/commentsub` 401).
 class LBErrorChatRequiresLogin extends LBError {
-  const LBErrorChatRequiresLogin();
+  const LBErrorChatRequiresLogin({super.backendErrorCode});
 }
 
 /// Live broadcast is not currently live (404).
 class LBErrorNotLive extends LBError {
-  const LBErrorNotLive();
+  const LBErrorNotLive({super.backendErrorCode});
 }
 
 /// Backend inner code 426 — this SDK version is no longer accepted.
 /// Per api-version-resilience §Deprecation 強制升級訊號.
 class LBErrorSdkVersionUnsupported extends LBError {
-  const LBErrorSdkVersionUnsupported();
+  const LBErrorSdkVersionUnsupported({super.backendErrorCode});
 }
 
 class LBErrorNetwork extends LBError {
@@ -988,7 +1013,7 @@ class LBErrorNetwork extends LBError {
 class LBErrorServer extends LBError {
   final int code;
   final String message;
-  const LBErrorServer(this.code, this.message);
+  const LBErrorServer(this.code, this.message, {super.backendErrorCode});
 }
 
 /// Add-to-cart 30s 防重複建單 dedupe 命中（cart-add-tier2-unify）：同
@@ -999,22 +1024,34 @@ class LBErrorCartAddDeduplicated extends LBError {
   const LBErrorCartAddDeduplicated();
 }
 
+/// Decodes a native error map (`{type, code?, message?, backend_error_code?}`).
+///
+/// backend-error-code-flutter-core: `backend_error_code` is kept only for the
+/// backend-originated types (see [LBError.backendErrorCode]) and only when it is
+/// a non-empty String; any other value decodes as `null`. The other types
+/// ignore the key even when present.
 LBError lbErrorFromMap(Map<Object?, Object?> map) {
+  final backend = backendErrorCodeOf(map['backend_error_code']);
   switch (map['type'] as String) {
     case 'restricted':       return const LBErrorRestricted();
     case 'videoNotFound':    return const LBErrorVideoNotFound();
     case 'invalidSignature': return const LBErrorInvalidSignature();
-    case 'chatRateLimited':  return const LBErrorChatRateLimited();
-    case 'guestNameTaken':    return const LBErrorGuestNameTaken();
-    case 'chatRequiresLogin': return const LBErrorChatRequiresLogin();
-    case 'notLive':           return const LBErrorNotLive();
+    case 'chatRateLimited':
+      return LBErrorChatRateLimited(backendErrorCode: backend);
+    case 'guestNameTaken':
+      return LBErrorGuestNameTaken(backendErrorCode: backend);
+    case 'chatRequiresLogin':
+      return LBErrorChatRequiresLogin(backendErrorCode: backend);
+    case 'notLive':
+      return LBErrorNotLive(backendErrorCode: backend);
     case 'sdk_version_unsupported':
-      return const LBErrorSdkVersionUnsupported();
+      return LBErrorSdkVersionUnsupported(backendErrorCode: backend);
     case 'cartAddDeduplicated':
       return const LBErrorCartAddDeduplicated();
     case 'networkError':     return LBErrorNetwork(map['message'] as String);
     case 'serverError':
-      return LBErrorServer(map['code'] as int, map['message'] as String);
+      return LBErrorServer(map['code'] as int, map['message'] as String,
+          backendErrorCode: backend);
     default:
       return LBErrorNetwork('Unknown error');
   }
@@ -2247,15 +2284,23 @@ class LBViewCartIntent {
 /// it; `isTop` remains omitted, no known consumer. The 6-field subset is
 /// still byte-identical to the existing `CHAT_HISTORY_LOADED` /
 /// `replayHistoryEventComments` comment wire shape.
+///
+/// `chat-raw-compose-flutter-core` adds the backend chat raw keys
+/// (`is_anonymous` / `host_name` / `reply_template`) and the native core's
+/// composed sentences (`composed_text` / `composed_name` / `composed_reply`),
+/// all optional, so a host can also decode `CHAT_HISTORY_LOADED` comments via
+/// [asCommentList]. They reach Dart only once the native core pin includes
+/// the `chat-raw-compose-*-core` behavior; until then the raw fields are
+/// `null` and the `composed*` getters fall back to `text` / `name` / `reply`.
 class LBComment {
   final String text;
   final String name;
   final String color;
 
   /// Admin reply. ⚠ By-design the backend passes the literal `{live_master}`
-  /// placeholder through unreplaced; host MUST substitute it with the
-  /// broadcaster name on display (parity with the native `LBComment.reply`
-  /// doc contract).
+  /// placeholder through unreplaced (parity with the native `LBComment.reply`
+  /// doc contract). For display prefer [composedReply], which the native core
+  /// has already substituted (`chat-raw-compose-flutter-core`).
   final String reply;
 
   /// Wire key `reply_color`.
@@ -2276,6 +2321,26 @@ class LBComment {
   /// the bridge hasn't populated it yet (e.g. a stale native binary).
   final String? kind;
 
+  // chat-raw-compose-flutter-core — backend `sdk-i18n-raw-data` raw keys the
+  // native core forwards on each `CHAT_HISTORY_LOADED` comment (present only
+  // when the backend sent them). `null` = the key was absent (old backend /
+  // older native core) or could not be parsed.
+
+  /// Wire key `is_anonymous`. Tolerates bool, Int 0/1 and numeric / boolean
+  /// strings; anything else → `null`.
+  final bool? isAnonymous;
+
+  /// Wire key `host_name` (broadcaster name; `""` means "use the default
+  /// broadcaster name", distinct from `null` = not sent).
+  final String? hostName;
+
+  /// Wire key `reply_template` (reply with a `{live_master}` placeholder).
+  final String? replyTemplate;
+
+  final String? _composedText;
+  final String? _composedName;
+  final String? _composedReply;
+
   const LBComment({
     this.text = '',
     this.name = '',
@@ -2284,7 +2349,28 @@ class LBComment {
     this.replyColor = '',
     this.time = '',
     this.kind,
-  });
+    this.isAnonymous,
+    this.hostName,
+    this.replyTemplate,
+    String? composedText,
+    String? composedName,
+    String? composedReply,
+  })  : _composedText = composedText,
+        _composedName = composedName,
+        _composedReply = composedReply;
+
+  /// The sentence the native core composed in the viewer's language (wire key
+  /// `composed_text`). Falls back to [text] when the key is absent (e.g. an
+  /// older native core). Flutter does no composing of its own — the phrase
+  /// table lives only in the native core.
+  String get composedText => _composedText ?? text;
+
+  /// Wire key `composed_name`; falls back to [name] when absent.
+  String get composedName => _composedName ?? name;
+
+  /// Wire key `composed_reply` (`{live_master}` already substituted by the
+  /// native core); falls back to [reply] when absent.
+  String get composedReply => _composedReply ?? reply;
 
   /// Tolerant decode: missing / null / wrong-type → `""` per field (`kind` →
   /// `null` instead, since it is itself nullable), never throws (mirrors this
@@ -2298,7 +2384,53 @@ class LBComment {
         replyColor: _asStringOr(map['reply_color'], ''),
         time: _asStringOr(map['time'], ''),
         kind: _asNullableString(map['kind']),
+        isAnonymous: _asNullableChatBool(map['is_anonymous']),
+        hostName: _asNullableChatString(map['host_name']),
+        replyTemplate: _asNullableChatString(map['reply_template']),
+        composedText: _asNullableChatString(map['composed_text']),
+        composedName: _asNullableChatString(map['composed_name']),
+        composedReply: _asNullableChatString(map['composed_reply']),
       );
+}
+
+/// chat-raw-compose-flutter-core — tolerant chat raw-field string (mirrors the
+/// native `lenientStringOrNull`): String → passthrough, integral `num` → its
+/// integer string, anything else (null / missing / double / bool / Map / List)
+/// → `null`. Never throws.
+String? _asNullableChatString(Object? value) {
+  if (value is String) return value;
+  if (value is int) return value.toString();
+  if (value is double && value == value.truncateToDouble() && value.isFinite) {
+    return value.toInt().toString();
+  }
+  return null;
+}
+
+/// chat-raw-compose-flutter-core — tolerant `is_anonymous` (mirrors the native
+/// `lenientBooleanOrNull`): bool → itself; integral `num` → `!= 0`; String →
+/// trimmed `""` → false, integer string → `!= 0`, `true` / `false`
+/// (case-insensitive) → itself; anything else → `null`. Never throws.
+bool? _asNullableChatBool(Object? value) {
+  if (value is bool) return value;
+  if (value is num) {
+    if (value is double && (!value.isFinite || value != value.truncateToDouble())) {
+      return null;
+    }
+    return value != 0;
+  }
+  if (value is String) {
+    final s = value.trim();
+    if (s.isEmpty) return false;
+    final n = int.tryParse(s);
+    if (n != null) return n != 0;
+    switch (s.toLowerCase()) {
+      case 'true':
+        return true;
+      case 'false':
+        return false;
+    }
+  }
+  return null;
 }
 
 /// Coerce a value to `List<LBComment>` (mirrors [_asProductList]). null /

@@ -738,7 +738,10 @@ class VodEndedCloseFeed {
           lbPlayerStateFromString(s),
           hasChannel: _hasChannel,
           isLive: _isLive,
-          hasNext: _hasNext,
+          // rb-flutter-vod-advance-exhausted-close: the core tags the `ended` with
+          // `advance_exhausted: true` when every `next` candidate is unplayable (it skipped
+          // them) — that is "no next" for the close decision (vod-advance-skip-unplayable-*-core).
+          hasNext: _hasNext && event.params['advance_exhausted'] != true,
           behavior: behaviorProvider(),
         );
     }
@@ -1636,6 +1639,17 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       PlayerErrorFeed((e) => LivebuyUI.playerTemplate?.handleError(e));
   String _lastServiceLink = '';
 
+  /// fix-flutter-error-screen-close-button-blocked: marks the header top-right button so the
+  /// error moment's scrim can let taps on it through (see `PlayerOverlayContext.headerCloseHitKey`).
+  final GlobalKey _headerCloseHitKey = GlobalKey(debugLabel: 'lbHeaderCloseHit');
+
+  /// rb-flutter-recommendation-resolve-real-product: the latest `onChannelChange` `goods` /
+  /// `otherGoods`, wholesale-replaced on every channel load (so a switch never leaks the
+  /// previous video's products). Read only at tap time by the「更多商品」resolver below —
+  /// no `setState` needed.
+  List<LBProduct> _channelGoods = const [];
+  List<LBProduct> _channelOtherGoods = const [];
+
   /// flutter-product-tap-diversion-wiring-reference-ui: mirrors `_lastServiceLink`'s pattern —
   /// every `onChannelChange` tick also captures `info.diversion` here, so the default
   /// `onProductTap` handler (below) can call
@@ -2145,6 +2159,8 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
             onChannelChange: (info) {
               _lastServiceLink = info.serviceLink;
               _lastDiversion = info.diversion;
+              _channelGoods = info.goods;
+              _channelOtherGoods = info.otherGoods;
               // fix-flutter-vod-ended-gate-live-endscreen / rb-flutter-vod-ended-no-next-close:
               // mirror `liveStatus == 1` (+ hasChannel) for `_vodEndedCloseGate`.
               _vodEndedCloseFeed.onChannelChange(info);
@@ -2383,6 +2399,9 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // Shared with the VOD-ended-no-next auto-close via `_closePlayer`
       // (rb-flutter-endscreen-live-empty-state).
       onCloseRequest: _closePlayer,
+      // fix-flutter-error-screen-close-button-blocked: header ✕ stays tappable through the
+      // error scrim.
+      headerCloseHitKey: _headerCloseHitKey,
       // Swipe in-place switch → notify-only (track shown id + raise config.onVideoSwitched).
       // swipe-video-switched-notify. flutter-swipe-video-load-requester-wiring-reference-ui: the
       // OLD comment here ("NO load — swipe already loaded via template forwarder") was WRONG —
@@ -2444,6 +2463,10 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // ProductSheetsOverlayView 完全不呼叫這個 seam 以外的東西，sheet stack 自己維持開啟。
       onSwitchRecommendationVideo:
           c.onSwitchRecommendationVideo ?? _switchVideo,
+      // rb-flutter-recommendation-resolve-real-product: 推薦卡卡片本體 / 加購鈕以真實商品開明細
+      // （parity iOS / Android）。
+      productResolver: (id) =>
+          resolveRecommendationProduct(_channelGoods, _channelOtherGoods, id),
       onSkip: c.onSkip ?? _controller.skipStart,
       onWatchNext: c.onWatchNext,
       onPickHot: c.onPickHot ??
@@ -2909,6 +2932,24 @@ void forwardReplayChatRevealedToTemplate(
 /// `MethodChannel` backed by a platform view), so an inline closure body at the
 /// `LivebuyPlayerCore(onChannelChange: ...)` call site would be unreachable by a
 /// unit test.
+/// rb-flutter-recommendation-resolve-real-product: productId → the channel's REAL
+/// `LBProduct` for a「更多商品」recommendation tap — `goods` first, then `otherGoods`
+/// (parity Android `resolveRecommendationProduct` / iOS `LivebuyPlayer.swift`). `null`
+/// when neither list has it (the caller then falls back to `asDisplayProduct`).
+LBProduct? resolveRecommendationProduct(
+  List<LBProduct> goods,
+  List<LBProduct> otherGoods,
+  String productId,
+) {
+  for (final p in goods) {
+    if (p.id == productId) return p;
+  }
+  for (final p in otherGoods) {
+    if (p.id == productId) return p;
+  }
+  return null;
+}
+
 void forwardChannelChangeToTemplate(
     LBPlayerChannelInfo info, DefaultPlayerTemplate? template) {
   if (template == null) return;

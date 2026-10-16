@@ -315,7 +315,13 @@ class MomentsOverlayView extends StatefulWidget {
     this.onTogglePlayPause,
     this.onSeek,
     this.liveDuration = '',
+    this.errorPassthroughKey,
   });
+
+  /// Forwarded to `ErrorScreenView.passthroughKey` (fix-flutter-error-screen-close-button-blocked):
+  /// the header top-right button's key, whose rect the error scrim lets taps through. `null`
+  /// (default) → the scrim blocks every tap, exactly as before.
+  final GlobalKey? errorPassthroughKey;
 
   @override
   State<MomentsOverlayView> createState() => _MomentsOverlayViewState();
@@ -396,6 +402,7 @@ class _MomentsOverlayViewState extends State<MomentsOverlayView> {
         error: error,
         onRetry: _handleRetry,
         onDismiss: _handleDismiss,
+        passthroughKey: widget.errorPassthroughKey,
       );
     }
     final endScreenVisible = m.endScreenVisible;

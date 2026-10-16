@@ -4,6 +4,8 @@
 // serialized snapshots via `LivebuySDK.getSdkConfig()` and the
 // `SDK_CONFIG_REFRESHED` / `SDK_CONFIG_LOAD_FAILED` event payloads.
 
+import 'backend_error_code.dart';
+
 class LBSdkVisibility {
   final bool? chat;
   final bool? productOverlay;
@@ -123,10 +125,22 @@ class LBSdkConfigLoadFailedParams {
   final bool fellBackToDefault;
   final String errorCode;
 
+  /// Raw backend `error_code` of the failed `/sdk/config` response, read from
+  /// the optional `backend_error_code` key (backend-error-code-flutter-core;
+  /// parity iOS `backend-error-code-ios-core`). The native core only adds the
+  /// key when it has a value, so this is `null` for an older backend, for
+  /// non-backend failures (network / cache corruption), for a non-String or
+  /// empty value, and for native cores without backend-error-code support
+  /// (the current pin 4.29.0 and earlier). [errorCode] keeps its existing
+  /// public string either way. The event params are forwarded generically, so
+  /// the key reaches Dart once the native pin is bumped — no bridge change.
+  final String? backendErrorCode;
+
   const LBSdkConfigLoadFailedParams({
     required this.source,
     required this.fellBackToDefault,
     required this.errorCode,
+    this.backendErrorCode,
   });
 
   factory LBSdkConfigLoadFailedParams.fromMap(Map<String, Object?> params) {
@@ -134,6 +148,7 @@ class LBSdkConfigLoadFailedParams {
       source: params['source'] as String? ?? 'unknown',
       fellBackToDefault: params['fell_back_to_default'] as bool? ?? false,
       errorCode: params['error_code'] as String? ?? 'unknown',
+      backendErrorCode: backendErrorCodeOf(params['backend_error_code']),
     );
   }
 }

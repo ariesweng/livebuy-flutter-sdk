@@ -14,7 +14,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-（目前無待發項目——`2.11.0` 已於下方發布，三套件共用版號 lockstep。）
+（目前無待發項目——`2.12.0` 已於下方發布，三套件共用版號 lockstep。）
+
+## 2.12.0 - 2026-10-16
+
+> **三套件版號 lockstep bump**（`livebuy_flutter` / `livebuy_flutter_ui` / `livebuy_flutter_reference_ui`）。原生依賴升到
+> **iOS `LivebuySDK` `4.30.0`（`~> 4.30`）／Android `tv.livebuy:livebuy` `4.30.0`**，帶入 `4.30.0` core 行為（請求 `lang` 新規則、
+> 後端 `error_code` 優先判定、advance 跳過播不了的影片，見 iOS／Android `v4.30.0` release notes）。
+> `livebuy_flutter`：後端錯誤代碼與聊天室原始欄位的 Dart 型別（加法）；`livebuy_flutter_ui`：聊天改用原生組好的句子、中獎 toast
+> 文字對齊其他平台；`livebuy_flutter_reference_ui`：修正 livebuy-flutter-sdk issue #1／#2（推薦卡真實商品、加購失敗 toast、錯誤畫面
+> 關閉、advance 全部播不了自動關閉）。公開 API 只有加法，故為 minor。**host 須三套件一起升到 `2.12.0`。**
+
+### Added
+
+- 後端錯誤代碼（`backend-error-code-flutter-core`）：`LBError` 新增 nullable `backendErrorCode`（`LBErrorServer` /
+  `LBErrorChatRateLimited` / `LBErrorSdkVersionUnsupported` / `LBErrorGuestNameTaken` / `LBErrorChatRequiresLogin` /
+  `LBErrorNotLive` 可帶值，建構子新增 named optional 參數）、`LBSdkConfigLoadFailedParams.backendErrorCode`；`AWARD_CLAIM_RESULT`
+  失敗時可帶選填 `backend_error_code`。事件鍵在後端新版上線後才會有值；`LBError` 錯誤物件上的代碼另需 plugin 原生轉送（尚未做），
+  目前一律為 `null`。
+- 聊天室原始欄位與組好的句子（`chat-raw-compose-flutter-core`）：`LBComment` 新增 nullable `isAnonymous` / `hostName` /
+  `replyTemplate`，以及 `composedText` / `composedName` / `composedReply`（讀原生 core 送的 `composed_*`，缺時退回
+  `text` / `name` / `reply`）。Flutter 不另做組字，句型表只在原生 core。新鍵在後端 `sdk-i18n-raw-data`
+  上線後才會出現；`POLL_RECEIVED` 的新鍵經統一事件以 raw map 到達。
+
+### Changed
+
+- ⚠️ **後端 `error_code` 優先判定（經原生 core `4.30.0` 繼承；只在後端新版
+  回應帶 `error_code` 時生效，後端尚未部署）**：錯誤種類不增加，但少數情況的錯誤種類會改變（例如聊天以外的請求遇到 `video_not_found` 一律為
+  `LBErrorVideoNotFound`、簽章錯誤不再被當成需要登入）。Dart 程式碼無變更。見
+  `docs/migration/backend-error-code.md` 第 5 節。
+- ⚠️ **請求 `lang` 與商家語言（經原生 core `4.30.0` 繼承）**：SDK 請求只在
+  host 指定語言或手機語言對應成功時帶 `lang`，加入購物車／加購追蹤回報不再一律帶（其餘情況由後端用商城站點語系）；商家語言另從
+  `/sdk/config` 回應的 `extensions.lang` 取得（後端 `sdk-i18n-raw-data` 尚未上線），只開播放器的 host 也可能在 `configure` 後收到
+  `LANGUAGE_CHANGED`。Dart 程式碼無變更。見 `docs/migration/sdk-i18n-raw-data.md`。
+
+- **聊天改用原生組好的句子**（`chat-composed-text-flutter-template`，`livebuy_flutter_ui`）：聊天 feed、活動 toast、回放留言的文字改讀
+  `composed_text` / `composed_name` / `composed_reply`，缺時退回原本的 `text` / `name` / `reply`（後端未上線前畫面不變）。
+- ⚠️ **中獎 toast 文字改為 `"{title} - {award.name}"`**（`livebuy_flutter_ui`）：去掉寫死的「中獎了!」，與 Android／RN 逐字相同。
+
+### Fixed（`livebuy_flutter_reference_ui`，livebuy-flutter-sdk issue #1／#2）
+
+- **商品明細「更多商品」推薦卡改用真實商品**（`rb-flutter-recommendation-resolve-real-product`，issue #1）：點推薦卡本體或加購鈕時，
+  容器從目前影片的 `goods`／`otherGoods` 依商品 id 找真實商品（找不到才用推薦卡資料），明細有規格與真實庫存，加入購物車會送出
+  `CART_ADD_REQUEST`。修正前明細沒有規格、顯示「只剩庫存 1 組」，加購被後端拒絕且失敗提示藏在明細最底部。
+- **加購失敗改顯示失敗 toast**（`rb-flutter-cart-add-failure-toast`）：紅色圓底 ✕「加入購物車失敗，請稍後再試」，明細保持開啟、再按即重試；
+  移除明細底部看不到的失敗橫幅與重試鈕（`ProductDetailSheet` 非公開元件，`addToCartFailed` 參數一併移除）。
+- **錯誤畫面右上角關閉鈕按不到**（`fix-flutter-error-screen-close-button-blocked`，issue #2）：錯誤期間右上角一律「直接關閉」且可點。
+- **advance 下全部下一支都播不了時自動關閉播放器**（`rb-flutter-vod-advance-exhausted-close`，issue #2）：讀 `VIDEO_STATE_CHANGE` 的
+  `advance_exhausted: true`（原生 core `4.30.0` 起才送出）。
+
+### Notes
+
+- 聊天室新鍵在後端 `sdk-i18n-raw-data` 上線前不會出現（`composedText` 等退回既有值）；後端上線後舊版 SDK 的聊天室 `text` 會在
+  `X-API-Sunset` 期滿後移除，自繪聊天 UI 請改讀 `composedText` / `composedName` / `composedReply`。`replayChatRevealed` 通道的原生序列化
+  尚未補新鍵（另案）。
 
 ## 2.11.0 - 2026-10-15
 

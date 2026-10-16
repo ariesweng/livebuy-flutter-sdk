@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'backend_error_code.dart';
 import 'event_listener.dart';
 import 'language_cache.dart';
 import 'lb_event.dart';
@@ -563,6 +564,13 @@ class LivebuySDK {
   /// (host treats it as「已加入購物車」). An empty-`buy_no` popup-login boundary throws
   /// [LBErrorServer] with `code == 401` (needs-login). Other numeric codes map to
   /// [LBErrorServer]; non-numeric PlatformExceptions are rethrown unchanged.
+  ///
+  /// backend-error-code-flutter-core: when the native bridge puts
+  /// `{'backend_error_code': '<code>'}` in the PlatformException `details`, the
+  /// thrown [LBErrorServer.backendErrorCode] carries it (e.g. `spec_required` /
+  /// `goods_not_found` / `goods_unavailable` / `out_of_stock` /
+  /// `cart_add_failed` / `purchase_limit_exceeded`). With the current native pin
+  /// (4.29.0) the bridge sends no details, so it is `null`.
   static Future<LBCartResult> addToCart(LBAddToCartOptions options) async {
     try {
       final raw = await _channel.invokeMethod<Map<Object?, Object?>>(
@@ -582,7 +590,8 @@ class LivebuySDK {
       }
       final code = int.tryParse(e.code);
       if (code != null) {
-        throw LBErrorServer(code, e.message ?? '');
+        throw LBErrorServer(code, e.message ?? '',
+            backendErrorCode: backendErrorCodeFromDetails(e.details));
       }
       rethrow;
     }

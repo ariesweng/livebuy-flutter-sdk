@@ -17,7 +17,8 @@
 //   • CI (flutter-bridge-build.yml) + local dev (example bootstrap) export
 //     LIVEBUY_SDK_LOCAL_PATH=<repo>/ios to compile against monorepo source.
 //   • Published consumers (no env var) resolve LivebuySDK from the distribution
-//     repo over Git. Floor 4.29.0: the bridge's `getLanguage` reads
+//     repo over Git. Floor 4.30.0 (bridge-native-pin-4-30-0-core): the drop-in auto-close on
+//     `advance_exhausted` needs the core that emits it (behavior floor). Previous floor 4.29.0: the bridge's `getLanguage` reads
 //     `Livebuy.currentLanguage`, introduced in iOS v4.29.0 (bridge-native-pin-4-29-0-core).
 //     (Previous floor 4.28.0: `configure(..., vodEndBehavior:)` / `LBVodEndBehavior`,
 //     introduced in iOS v4.28.0, vod-end-loop-flutter-core.)
@@ -30,7 +31,7 @@ let livebuySDKDependency: Package.Dependency = {
     return .package(
         name: "LivebuySDK",
         url: "https://github.com/ariesweng/livebuy-ios-sdk.git",
-        from: "4.29.0"
+        from: "4.30.0"
     )
 }()
 

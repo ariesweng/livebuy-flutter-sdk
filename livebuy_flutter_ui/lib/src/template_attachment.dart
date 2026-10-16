@@ -130,8 +130,9 @@ class TemplateAttachment {
         winReceivedCount += 1;
         final winner = _winnerFromWinReceived(event.params);
         if (winner != null) {
-          final text = '${winner.title} 中獎了!';
-          template.handleWin(text, winner);
+          // chat-composed-text-flutter-template — 去掉寫死的中文「中獎了!」，改與 Android / RN
+          // 逐字相同的 `"{title} - {award.name}"`（award.name 空時同樣輸出 `"{title} - "`）。
+          template.handleWin(winToastText(winner), winner);
         }
         return LBEventReply.acknowledge;
 
@@ -403,17 +404,22 @@ class TemplateAttachment {
   /// buckets and items without a `text` are skipped (the bridge decodes params
   /// via `StandardMessageCodec`, so values arrive dynamically typed). `win[]` is
   /// intentionally NOT routed here (personalized wins arrive via `WIN_RECEIVED`).
+  ///
+  /// chat-composed-text-flutter-template — feed 文字一律取原生 core 依五語系句型組好的
+  /// `composed_text` / `composed_name` / `composed_reply`，缺（或非字串）時退回後端
+  /// `text` / `name` / `reply`（[composedOr]）。組字在原生發事件當下已定格，item 建立後換語言
+  /// 不重組。
   void _routePollBuckets(Map<String, Object?> params) {
     for (final item in _bucket(params['user'])) {
-      final text = _str(item['text']);
+      final text = composedOr(item, 'text');
       if (text != null) template.handleJoin(text);
     }
     for (final item in _bucket(params['rush'])) {
-      final text = _str(item['text']);
+      final text = composedOr(item, 'text');
       if (text != null) template.handlePurchase(text);
     }
     for (final item in _bucket(params['push'])) {
-      final text = _str(item['text']);
+      final text = composedOr(item, 'text');
       if (text != null) {
         // event-begin pushes (eid>0 && (ek非空 || at=='begin')) surface as
         // event-join items; everything else stays a plain chat row. handlePush
@@ -421,7 +427,7 @@ class TemplateAttachment {
         // color / ct / p are forwarded so handlePush can route SYSTEM / 商品推播 notices
         // (product-push color #66F796 / event / promo) through the de-duped path.
         template.handlePush(
-          userName: _str(item['name']) ?? '',
+          userName: composedOr(item, 'name') ?? '',
           text: text,
           eid: (item['eid'] as num?)?.toInt(),
           ek: _str(item['ek']),
@@ -434,7 +440,7 @@ class TemplateAttachment {
           // chat-message-taxonomy ⑤ — `kind` 判型 wire 字串（停止 color 反推）、`reply` 被回覆
           // 引用內容（主播 / AI 回覆引用框）。核心 pollReceivedEventParams 已序列化（缺則退回 color）。
           kind: _str(item['kind']),
-          reply: _str(item['reply']),
+          reply: composedOr(item, 'reply'),
           // flutter-chat-push-id-dedupe-template — already on the wire (`core-flutter-poll-params`
           // serializes it, omit-when-nil), just never read before. Powers handlePush's own id-based
           // dedup guard.
@@ -446,6 +452,18 @@ class TemplateAttachment {
 
   /// A `String` value or null (never throws on a non-string dynamic value).
   static String? _str(Object? v) => v is String ? v : null;
+
+  /// chat-composed-text-flutter-template — 讀 poll item 的 `composed_<key>`（原生 core 組好的句子），
+  /// 缺或非字串時退回原始 `<key>`（後端值）；兩者皆無 → null。空字串視為「有值」照用（由原生決定）。
+  /// Pure / testable.
+  static String? composedOr(Map<String, Object?> item, String key) =>
+      _str(item['composed_$key']) ?? _str(item[key]);
+
+  /// chat-composed-text-flutter-template — 中獎 toast 文字，與 Android
+  /// (`"${winner.title} - ${winner.award.name}"`) / RN (`` `${title} - ${awardName}` ``) 逐字相同；
+  /// award.name 空時也不另分支（輸出 `"{title} - "`，與兩端一致）。Pure / testable.
+  static String winToastText(LBWinner winner) =>
+      '${winner.title} - ${winner.award.name}';
 
   /// Coerce a bucket param into an iterable of string-keyed maps, tolerating the
   /// dynamic shapes `StandardMessageCodec` produces (`List` of `Map`). Non-list

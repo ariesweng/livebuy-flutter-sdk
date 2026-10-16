@@ -1048,23 +1048,29 @@ class DefaultPlayerTemplate {
   /// `replyText`）。**訂正說明**：舊版純 `name`/`reply` 推導假設「主播訊息 `name` 恆為空字串」，
   /// 但真實後端資料主播列 `name` 其實是非空的真實暱稱，方向與推導相反，回放時所有主播留言都被誤判
   /// 為觀眾留言（詳見本 change 的 proposal.md）。Pure / testable。
+  ///
+  /// chat-composed-text-flutter-template — 回傳的 `replyText` 改用 [LBComment.composedReply]
+  /// （原生 core 已代入 `{live_master}`；缺時 getter 退回 `reply`）。**判型**仍看原始 `name` /
+  /// `reply`（判型規則不因顯示文字來源改變）。
   static (bool isHost, String? replyText) replayChatRow(LBComment comment) {
     final kind = comment.kind;
     if (kind != null) {
       if (kind == 'host') return (true, null);
-      if (kind == 'host_reply') return (true, comment.reply);
+      if (kind == 'host_reply') return (true, comment.composedReply);
       return (false, null);
     }
     if (comment.name.isNotEmpty) return (false, null);
-    if (comment.reply.isNotEmpty) return (true, comment.reply);
+    if (comment.reply.isNotEmpty) return (true, comment.composedReply);
     return (true, null);
   }
 
   /// Build the merged-feed chat row for one replay-history [LBComment] (helper for
-  /// [handleReplayChatRevealed]).
+  /// [handleReplayChatRevealed]). chat-composed-text-flutter-template — name / text 改用
+  /// [LBComment.composedName] / [LBComment.composedText]（缺時退回 `name` / `text`），於 row
+  /// 建立當下定格。
   static LBFeedItem _replayChatFeedItem(LBComment comment) {
     final (isHost, replyText) = replayChatRow(comment);
-    return LBFeedItem.chat(comment.name, comment.text,
+    return LBFeedItem.chat(comment.composedName, comment.composedText,
         isHost: isHost, replyText: replyText);
   }
 
