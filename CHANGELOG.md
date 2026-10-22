@@ -14,7 +14,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-（目前無待發項目——`2.12.1` 已於下方發布，三套件共用版號 lockstep。）
+（目前無待發項目——`2.12.2` 已於下方發布，三套件共用版號 lockstep。）
+
+## 2.12.2 - 2026-10-22
+
+> **三套件版號 lockstep patch**（只改 `livebuy_flutter_reference_ui`；`livebuy_flutter`／`livebuy_flutter_ui` 無內容變更、僅隨版號）。
+> 公開 API 不變，原生依賴維持 iOS `~> 4.30`／Android `4.30.0`（原生 core 自 `4.30.0` 起無變更）。
+> **驗證範圍**：`flutter-reference-ui` 的新增 resolver 與容器 widget 測試、`flutter analyze` 通過。**未經真機 release build 驗證。**
+
+### Fixed
+
+- **drop-in 容器在 `configure()` 完成前掛載不再空白到 30 秒刷新**（`rb-flutter-container-sdk-config-retry`，修
+  livebuy-flutter-sdk issue #3）：host 不 await `LivebuySDK.configure(...)` 就 `runApp`、首頁掛 `LivebuyWidget` 時，之前只查一次
+  SDKConfig、失敗就退回預設設定且首載錯誤被吞掉，整區空白要等第一次週期刷新（預設 30 秒），刷新間隔為 0 時永久空白。現在
+  `LivebuyWidget`／`LivebuyLiveEntry`／`LivebuyPlayer`／`CollapsibleLivebuyPlayer` 共用同一套重試（100／200／400／800 ms 後每秒一次、
+  最多 34 次，約 31.5 秒，與 RN 相同）：`LivebuyWidget` 取得設定後才建立並首載、啟動週期刷新，configure 完成後通常 1 秒內出現；
+  主題色在取得設定後套用商家設定。host 從未 configure 時，重試用完後退回預設設定、照原本的首載＋週期刷新路徑走（與改前的最終狀態
+  相同）。首載與刷新失敗只在 debug build 輸出 log，release 不輸出。
 
 ## 2.12.1 - 2026-10-16
 

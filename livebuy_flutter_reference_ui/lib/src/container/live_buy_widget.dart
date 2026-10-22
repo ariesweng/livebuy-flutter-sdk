@@ -30,6 +30,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart' show MaterialPageRoute;
 import 'package:flutter/widgets.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart'
@@ -42,6 +43,7 @@ import '../widget/external_live.dart' show externalLiveAwareTap;
 import '../widget/widget_model.dart' show WidgetGoods, WidgetSeeds;
 import 'live_buy_player.dart' show LivebuyPlayer, LivebuyPlayerConfig;
 import 'reference_ui_design.dart';
+import 'sdk_config_resolution.dart' show startSdkConfigResolution;
 import 'widget_data.dart';
 import '../i18n/i18n.dart';
 
@@ -51,8 +53,10 @@ export 'widget_data.dart' show WidgetContainerMode;
 /// documented built-in default. Mirrors the iOS / RN `LivebuyWidgetConfig`.
 class LivebuyWidgetConfig {
   /// The merchant SDKConfig used to build the widget template + resolve the theme.
-  /// Omitted → the container fetches it via `LivebuySDK.getSdkConfig()` (falling
-  /// back to `SDKConfig.fallback` if not configured yet).
+  /// Omitted → the container fetches it via `LivebuySDK.getSdkConfig()`, retried
+  /// while the SDK is not configured yet (rb-flutter-container-sdk-config-retry);
+  /// the list is built and loaded only once it resolves. Only if every retry fails
+  /// (≈ 31.5 s) does it fall back to `SDKConfig.fallback`.
   final SDKConfig? sdkConfig;
 
   /// Host UI options forwarded into the template + theme resolver. Default: none
@@ -162,6 +166,7 @@ class _LivebuyWidgetState extends State<LivebuyWidget> {
   bool _usingDemo = false;
   bool _loading = false;
   Timer? _refreshTimer;
+  VoidCallback? _cancelSdkConfig;
 
   Future<Map<String, Object?>> _fetchWidget(String shopId, int page) =>
       LivebuySDK.fetchWidget(shopId, page: page);
@@ -169,18 +174,26 @@ class _LivebuyWidgetState extends State<LivebuyWidget> {
   @override
   void initState() {
     super.initState();
-    _bootstrap();
+    // rb-flutter-container-sdk-config-retry: nothing is built or fetched until the SDKConfig
+    // resolves (retried while `configure()` is still in flight). Every retry failing → the
+    // pre-existing fallback path (fallback config + first load + periodic refresh), so a host
+    // that configures even later is still picked up by the refresh tick.
+    _cancelSdkConfig = startSdkConfigResolution(
+      explicit: widget.config.sdkConfig,
+      onResolved: _onSdkConfigResolved,
+      onGaveUp: () => _onSdkConfigResolved(SDKConfig.fallback),
+    );
   }
 
   @override
   void dispose() {
+    _cancelSdkConfig?.call();
     _refreshTimer?.cancel();
     super.dispose();
   }
 
-  Future<void> _bootstrap() async {
-    final cfg = widget.config.sdkConfig ?? await _safeSdkConfig();
-    if (!mounted) return;
+  void _onSdkConfigResolved(SDKConfig cfg) {
+    if (!mounted || _template != null) return;
     final template = DefaultWidgetTemplate(
       sdkConfig: cfg,
       hostOptions: widget.config.hostOptions,
@@ -192,18 +205,13 @@ class _LivebuyWidgetState extends State<LivebuyWidget> {
         hostOptions: widget.config.hostOptions,
       );
     });
-    await _firstLoad(template);
-    _startRefresh(template);
+    _loadThenRefresh(template);
   }
 
-  Future<SDKConfig> _safeSdkConfig() async {
-    try {
-      return await LivebuySDK.getSdkConfig();
-    } catch (_) {
-      // Not configured yet — render with defaults; the fetch below will fail and
-      // the list stays empty (never fake data) rather than throwing.
-      return SDKConfig.fallback;
-    }
+  Future<void> _loadThenRefresh(DefaultWidgetTemplate template) async {
+    await _firstLoad(template);
+    if (!mounted) return;
+    _startRefresh(template);
   }
 
   Future<void> _firstLoad(DefaultWidgetTemplate template) async {
@@ -234,8 +242,11 @@ class _LivebuyWidgetState extends State<LivebuyWidget> {
         setState(() => _usingDemo = true);
       }
       widget.config.onVideosChanged?.call(template.content.current.videos);
-    } catch (_) {
-      // keep the list empty on fetch failure
+    } catch (error) {
+      // keep the list empty on fetch failure (never fake data); debug builds only say why.
+      if (kDebugMode) {
+        debugPrint('[Livebuy] LivebuyWidget fetch failed; keeping list empty. $error');
+      }
     } finally {
       _loading = false;
     }
@@ -261,8 +272,11 @@ class _LivebuyWidgetState extends State<LivebuyWidget> {
         _accumulated = r.videoMaps;
         _page = r.currentPage;
         _lastPage = r.lastPage;
-      } catch (_) {
-        // keep prior content on refresh failure
+      } catch (error) {
+        // keep prior content on refresh failure; debug builds only say why.
+        if (kDebugMode) {
+          debugPrint('[Livebuy] LivebuyWidget refresh failed; keeping prior content. $error');
+        }
       } finally {
         _loading = false;
       }

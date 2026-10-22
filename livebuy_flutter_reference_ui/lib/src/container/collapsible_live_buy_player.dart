@@ -14,6 +14,7 @@ import 'live_entry_position_timing.dart'
     show LBFloatingEntryPosition, LiveEntryEdgeInset, lbLiveEntryClampDx, lbLiveEntryEdgeInset,
         normalizeFloatingPosition;
 import 'reference_ui_design.dart';
+import 'sdk_config_resolution.dart' show startSdkConfigResolution;
 
 // CollapsibleLivebuyPlayer — collapsible player presenter (Flutter, rb-flutter-collapsible-player).
 //
@@ -227,6 +228,9 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
   /// completes / if it fails.
   LBSdkTheme? _coreTheme;
 
+  /// Cancels the [_loadCoreTheme] retry loop (rb-flutter-container-sdk-config-retry).
+  VoidCallback? _cancelSdkConfig;
+
   @override
   void initState() {
     super.initState();
@@ -241,18 +245,18 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
     _syncWidgetCover();
   }
 
-  /// Fetch `sdkConfig.theme` for [resolveCollapsibleTheme] (best-effort; minimal fallback on
-  /// failure). Mirrors `_LivebuyPlayerState._loadCoreTheme()` (`live_buy_player.dart`)
-  /// verbatim — same source, same try/catch shape — so this presenter's self-resolved theme
-  /// converges on the SAME value the wrapped full-screen `LivebuyPlayer` independently
-  /// resolves for itself.
-  Future<void> _loadCoreTheme() async {
-    try {
-      final cfg = await LivebuySDK.getSdkConfig();
-      if (mounted) setState(() => _coreTheme = cfg.theme);
-    } catch (_) {
-      // Keep the minimal fallback — theme degrades gracefully, never crashes.
-    }
+  /// Fetch `sdkConfig.theme` for [resolveCollapsibleTheme] — retried while the SDK is not
+  /// configured yet (rb-flutter-container-sdk-config-retry); minimal fallback until it resolves
+  /// / if every retry fails. Mirrors `_LivebuyPlayerState._loadCoreTheme()`
+  /// (`live_buy_player.dart`) verbatim — same `startSdkConfigResolution` source — so this
+  /// presenter's self-resolved theme converges on the SAME value the wrapped full-screen
+  /// `LivebuyPlayer` independently resolves for itself.
+  void _loadCoreTheme() {
+    _cancelSdkConfig = startSdkConfigResolution(
+      onResolved: (cfg) {
+        if (mounted) setState(() => _coreTheme = cfg.theme);
+      },
+    );
   }
 
   /// The theme this presenter's floating card renders with. See [resolveCollapsibleTheme].
@@ -435,6 +439,7 @@ class _CollapsibleLivebuyPlayerState extends State<CollapsibleLivebuyPlayer> {
     // permanently paused (parity iOS onDisappear — the important edge case). Literal false:
     // unconditional on unmount. Edge-triggered, so it is a no-op when already uncovered.
     LivebuyWidgetVisibility.setWidgetsCovered(false);
+    _cancelSdkConfig?.call();
     super.dispose();
   }
 

@@ -84,6 +84,7 @@ import 'live_entry_close_gate.dart'
 import 'live_entry_dismiss_memory.dart'
     show LiveEntryDismissMemory, liveEntryInitialDismissedForId;
 import 'live_entry_position_timing.dart';
+import 'sdk_config_resolution.dart' show startSdkConfigResolution;
 import 'widget_data.dart' show lbWidgetEffectiveTap;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,8 +215,9 @@ LiveEntryState liveEntryDismiss(LiveEntryState state) => LiveEntryState(
 /// built-in default. Mirrors the iOS `LivebuyLiveEntryConfig` / Android / RN configs.
 class LivebuyLiveEntryConfig {
   /// The merchant SDKConfig used to resolve the theme. Omitted → the container fetches it
-  /// via `LivebuySDK.getSdkConfig()` (falling back to `SDKConfig.fallback` if not yet
-  /// configured). Provide it to skip the async fetch (e.g. tests).
+  /// via `LivebuySDK.getSdkConfig()`, retried while the SDK is not configured yet
+  /// (rb-flutter-container-sdk-config-retry); the minimal fallback theme shows until it
+  /// resolves. Provide it to skip the async fetch (e.g. tests).
   final SDKConfig? sdkConfig;
 
   /// Host UI options forwarded into the theme resolver. Default: none.
@@ -357,6 +359,7 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
   LiveEntryState _state = initialLiveEntryState;
   late ReferenceUITheme _theme;
   StreamSubscription<void>? _liveEndedSub;
+  VoidCallback? _cancelSdkConfig;
 
   // Drag state (parity example floating-live-draggable): anchored at the resting corner
   // `_position` (resting committed {0,0}), clamped on-screen via the reference-ui pure
@@ -418,12 +421,17 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
     // currently active" — see the `_appeared` field doc above for the full contract.
     _appeared = lbLiveEntryInitialAppeared(_timing) && _closeGraceRemainingMs() <= 0;
     _setUpEntrance();
-    // Synchronous fallback theme so build never sees null; refined async from sdkConfig.
+    // Synchronous fallback theme so build never sees null; refined from sdkConfig once it
+    // resolves (retried while `configure()` is in flight — rb-flutter-container-sdk-config-retry;
+    // every retry failing keeps this fallback theme).
     _theme = ReferenceUIThemeResolver.resolve(
       coreTheme: widget.config.sdkConfig?.theme,
       hostOptions: widget.config.hostOptions,
     );
-    _resolveTheme();
+    _cancelSdkConfig = startSdkConfigResolution(
+      explicit: widget.config.sdkConfig,
+      onResolved: _applySdkConfigTheme,
+    );
     _pollLatestLive();
     _subscribeLiveEnded();
   }
@@ -566,11 +574,11 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
     _cancelAppearTimer();
     _tearDownEntrance();
     _liveEndedSub?.cancel();
+    _cancelSdkConfig?.call();
     super.dispose();
   }
 
-  Future<void> _resolveTheme() async {
-    final cfg = widget.config.sdkConfig ?? await _safeSdkConfig();
+  void _applySdkConfigTheme(SDKConfig cfg) {
     if (!mounted) return;
     setState(() {
       _theme = ReferenceUIThemeResolver.resolve(
@@ -578,14 +586,6 @@ class _LivebuyLiveEntryState extends State<LivebuyLiveEntry>
         hostOptions: widget.config.hostOptions,
       );
     });
-  }
-
-  Future<SDKConfig> _safeSdkConfig() async {
-    try {
-      return await LivebuySDK.getSdkConfig();
-    } catch (_) {
-      return SDKConfig.fallback; // not configured yet — minimal theme
-    }
   }
 
   // live-end immediate hide: subscribe the host signal (parity iOS .lbLiveEnded /

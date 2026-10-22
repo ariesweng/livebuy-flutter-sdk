@@ -19,6 +19,7 @@ import 'channel_chrome.dart';
 import 'chat_composer_bar.dart';
 import 'live_now_poll_controller.dart';
 import 'player_error_feed.dart';
+import 'sdk_config_resolution.dart' show startSdkConfigResolution;
 import 'reference_ui_design.dart';
 import '../i18n/i18n.dart';
 
@@ -1738,6 +1739,9 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// fails. The whole `sdkConfig.theme > host options > minimal` order is preserved.
   LBSdkTheme? _coreTheme;
 
+  /// Cancels the [_loadCoreTheme] retry loop (rb-flutter-container-sdk-config-retry).
+  VoidCallback? _cancelSdkConfig;
+
   @override
   void initState() {
     super.initState();
@@ -1894,6 +1898,7 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
 
   @override
   void dispose() {
+    _cancelSdkConfig?.call();
     _vodEndedCloseGate.cancel();
     // Symmetric with the iOS-gated addObserver in initState (no-op / never added on Android).
     if (_resumeController != null) {
@@ -1936,14 +1941,15 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     }
   }
 
-  /// Fetch `sdkConfig.theme` for the theme resolver (best-effort; minimal fallback on failure).
-  Future<void> _loadCoreTheme() async {
-    try {
-      final cfg = await LivebuySDK.getSdkConfig();
-      if (mounted) setState(() => _coreTheme = cfg.theme);
-    } catch (_) {
-      // Keep the minimal fallback — theme degrades gracefully, never crashes.
-    }
+  /// Fetch `sdkConfig.theme` for the theme resolver — retried while the SDK is not configured
+  /// yet (rb-flutter-container-sdk-config-retry). The minimal fallback shows until it resolves,
+  /// and stays if every retry fails — theme degrades gracefully, never crashes.
+  void _loadCoreTheme() {
+    _cancelSdkConfig = startSdkConfigResolution(
+      onResolved: (cfg) {
+        if (mounted) setState(() => _coreTheme = cfg.theme);
+      },
+    );
   }
 
   ReferenceUITheme _resolveTheme() =>
