@@ -201,14 +201,10 @@ String get _endedLabel => ReferenceUIStrings.text('end_video_ended');
 /// 空狀態 big title (moments.jsx `240` — replaces the retired 熱門變體's small
 /// rule-flanked「直播已結束」label with a large standalone headline).
 String get _liveEndedTitle => ReferenceUIStrings.text('end_live_ended');
-// NOTE: moments.jsx's CURRENT text reads「秒後播放其他精采影片」(line 212), but this
-// is UNRELATED, pre-existing drift the design source picked up at some undocumented
-// point — NOT part of R41's scope (which only removes the 熱門變體), and NOT yet
-// reflected on iOS / Android / RN either (all three still ship「秒後自動播放下一支」,
-// verified against `EndScreenView.swift` / `.kt` / `.tsx`). Kept at the FOUR-platform
-// parity value here (byte-stable against the EXISTING `end-screen-countdown-variant`
-// golden, which this redesign does NOT touch) — re-syncing the wording is a separate,
-// documented follow-up, not this change's job.
+// NOTE: the countdown caption (`end_auto_next`) is「下一部影片將在 {seconds} 秒後播放」on all
+// four platforms and in moments.jsx — aligned to the web frontend `next_timeout` by
+// `rb-i18n-align-frontend-zh` (which also replaced moments.jsx's earlier, undocumented
+//「秒後播放其他精采影片」drift).
 String get _untitledNext => ReferenceUIStrings.text('end_untitled_next');
 String get _cancelLabel => ReferenceUIStrings.text('common_cancel');
 String get _watchNextLabel => ReferenceUIStrings.text('end_watch_now');

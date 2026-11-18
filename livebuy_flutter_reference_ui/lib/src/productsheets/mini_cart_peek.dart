@@ -50,7 +50,7 @@ import '../i18n/i18n.dart';
 // monogram (host can swap in a real image). The rest mirrors `LBPMiniCart`: the WHITE
 // card surface (rb-flutter-vod-live-product-card-restyle: was dark glass), the single-
 // line name, the price line (`已售完` when `soldOut == 1`, else `priceShow`), and the
-// top-right absolute close button (was trailing circular). NO「已加入購物車」confirmation
+// top-right absolute close button (was trailing circular). NO「加入成功」confirmation
 // line (the design's `LBPMiniCart` has none — the peek's mere appearance is the
 // "added" signal).
 //

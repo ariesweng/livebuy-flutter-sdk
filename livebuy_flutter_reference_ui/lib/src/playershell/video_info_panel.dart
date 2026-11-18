@@ -259,7 +259,7 @@ class VideoInfoPanelView extends StatelessWidget {
   /// Whether the video this panel describes is an ALREADY-FINISHED live broadcast now playing
   /// back as a replay (design R44, rb-flutter-video-info-panel-replay-copy) — drives the detail
   /// tab's publishAt-row text when [isLiveBroadcast] is `false`: `true` → 純灰字「直播回放」;
-  /// `false` (existing default) → 純灰字「點播影片」. Neither branch shows a date any more (see
+  /// `false` (existing default) → 純灰字「影片」. Neither branch shows a date any more (see
   /// [isLiveBroadcast]'s own dartdoc for the full three-state row).
   ///
   /// The host feeds the SAME broadcast-replay value that already drives several other

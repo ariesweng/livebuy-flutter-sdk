@@ -118,10 +118,10 @@ String get _activityLabelText => ReferenceUIStrings.text('win_entry_activity_lab
 // `ActivityEntry.kt`, RN `WinEntryView.tsx` / `ActivityEntryView.tsx`). Read inside the build that
 // `referenceUILocalized` re-runs, so a language switch updates the label of a mounted entry.
 
-/// Screen-reader label for `variant: win` (zh-TW「查看中獎」).
+/// Screen-reader label for `variant: win` (zh-TW「領獎」).
 String get _winA11yLabel => ReferenceUIStrings.text('win_entry_a11y');
 
-/// Screen-reader label for `variant: activity` (zh-TW「參加活動」).
+/// Screen-reader label for `variant: activity` (zh-TW「活動」).
 String get _activityA11yLabel => ReferenceUIStrings.text('win_entry_activity_a11y');
 
 /// The two uses of the SAME `WinEntryView` widget (design.md D1 — one component,

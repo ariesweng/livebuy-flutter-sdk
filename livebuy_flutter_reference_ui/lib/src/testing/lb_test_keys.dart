@@ -228,7 +228,7 @@ abstract final class LbTestKeys {
   /// 外層 scrim（點擊關閉彈窗，純 dismiss）。
   static const Key activitySheetScrim = ValueKey('lb_activity_sheet_scrim');
 
-  /// 主 CTA（三態文案：「立即參加」/「已參加」disabled /「知道了」）。
+  /// 主 CTA（「立即參加」，不論有無關鍵字）。
   static const Key activitySheetCta = ValueKey('lb_activity_sheet_cta');
 
   /// 卡底 footer「使用條款 | 隱私政策」外層共用 key。

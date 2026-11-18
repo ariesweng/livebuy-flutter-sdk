@@ -38,7 +38,7 @@ import '../i18n/i18n.dart';
 // this does NOT need a `WinClaimSheetView`-style `didUpdateWidget` reset.
 //
 // 🔴 rb-flutter-activity-sheet-cta-repeatable — the CTA is now REPEATABLE: the
-// widget no longer accepts a `joined` snapshot and [activitySheetCtaKind] no
+// widget no longer accepts a `joined` snapshot and the CTA no
 // longer has a disabled/「已參加」branch (the `joined` case is REMOVED, not just
 // unreachable — a bound-but-dead enum case/branch was judged worse than a
 // smaller two-way enum, see design.md). A keyword-present event's CTA now
@@ -86,16 +86,14 @@ import '../i18n/i18n.dart';
 // `DefaultActiveEvent` / `DefaultPlayerTemplate` (one-way data flow), and all
 // callbacks default to no-ops so demo / golden instances construct action-free.
 //
-// D3 — `event.keyword` empty (`null` or `''`, a純活動公告 with no participatable
-// keyword — the SAME "no CTA" semantics `turnkey-event-join` already applies to
-// `LBEventJoinLine`) → the「留言關鍵字【…】即可參加抽獎！」line is NOT drawn, and the
-// main CTA's semantics change from「立即參加」to a plain dismiss/acknowledge
-// (「知道了」，tapping it forwards `onClose`, NOT `onJoin` — joining a keyword-less
-// activity is not a meaningful action). See [activitySheetCtaKind] (a pure
-// function, per `docs/unit-test-discipline.md`) for the exhaustive 2-way branch
-// (🔴 rb-flutter-activity-sheet-cta-repeatable collapsed the prior 3-way branch
-// — `join` / `joined` / `acknowledge` — down to 2: `join` / `acknowledge`. The
-// keyword-present CTA is now a single always-clickable「立即參加」presentation).
+// D3 — 🔴 rb-flutter-activity-sheet-no-keyword-parity: `event.keyword` empty
+// (`null` or `''`) renders EXACTLY like a keyword-present event, matching iOS
+// `LiveActivitySheetView` / Android `ActivitySheet` / RN `ActivitySheetView`: the
+//「留言關鍵字【…】即可參加抽獎！」line is still drawn (blank brackets), and the CTA
+// is still「立即參加」forwarding `onJoin`. The former Flutter-only keyword-less
+// branch (line hidden + a「知道了」CTA forwarding `onClose`, plus its
+// `ActivitySheetCtaKind` enum and the `activity_acknowledge` string key) is
+// removed.
 //
 // D4 — the badge glyph reuses `win_glyph.dart`'s `WinTrophyGlyphPainter` (the SAME
 // ported SVG Path `WinEntryView` uses) rather than re-porting the coordinate data a
@@ -109,37 +107,6 @@ import '../i18n/i18n.dart';
 // `Row` / `Stack`. NO `ListView` / `GridView` / `SingleChildScrollView`, NO
 // `Image.network` / `NetworkImage`, NO animation / randomness — so the golden
 // baseline is deterministic.
-
-/// The 2 mutually-exclusive CTA presentations `ActivitySheetView` can show
-/// (design.md D3; 🔴 rb-flutter-activity-sheet-cta-repeatable removed the prior
-/// 3rd "already joined" presentation entirely — see that change's design.md for
-/// why the dead branch was deleted rather than kept-but-unreachable). A pure
-/// function ([activitySheetCtaKind]) derives which one applies from
-/// `event.keyword` alone — extracted so the branch is unit-testable without
-/// pumping a widget tree.
-enum ActivitySheetCtaKind {
-  /// `keyword` present — ALWAYS clickable「立即參加」, forwards [onJoin] on every
-  /// tap. 🔴 rb-flutter-activity-sheet-cta-repeatable: this is now the CTA's ONLY
-  /// keyword-present presentation — it MUST NOT ever lock into a disabled state
-  /// after a join, so the same activity stays repeatably joinable.
-  join,
-
-  /// `keyword` empty/absent (純活動公告, no participatable keyword) — plain
-  /// dismiss/acknowledge「知道了」, forwards [onClose] (NOT [onJoin] — joining a
-  /// keyword-less activity has no meaning).
-  acknowledge,
-}
-
-/// Pure function (design.md D3): derives the CTA presentation from the bound
-/// [keyword] (`null` / `''` → keyword-less). Exhaustive — every `keyword` value
-/// maps to exactly one [ActivitySheetCtaKind]. 🔴 rb-flutter-activity-sheet-cta-repeatable
-/// removed the `joined` parameter this function used to take — the CTA no
-/// longer reads any "already joined" signal, so a keyword-present event always
-/// resolves to [ActivitySheetCtaKind.join] (repeatable, never disabled).
-ActivitySheetCtaKind activitySheetCtaKind(String? keyword) {
-  if (keyword == null || keyword.isEmpty) return ActivitySheetCtaKind.acknowledge;
-  return ActivitySheetCtaKind.join;
-}
 
 /// Pure function (rb-flutter-activity-sheet-pagination, design.md D-2): given the
 /// accumulated horizontal drag distance [dx] of a just-ended swipe gesture, the
@@ -196,7 +163,6 @@ final Color _pageDotInactive = colorFromHex('#D8DBE0') ?? const Color(0xFFD8DBE0
 // MARK: - Localized copy (reference-ui string table — rb-flutter-i18n-string-table)
 
 String get _ctaJoin => ReferenceUIStrings.text('common_join_now');
-String get _ctaAcknowledge => ReferenceUIStrings.text('activity_acknowledge');
 String get _footerTerms => ReferenceUIStrings.text('common_terms');
 const String _footerSeparator = ' | ';
 String get _footerPrivacy => ReferenceUIStrings.text('common_privacy');
@@ -206,8 +172,8 @@ String get _footerPrivacy => ReferenceUIStrings.text('common_privacy');
 const double _badgeGlyphSize = 30;
 
 /// The family-2 抽獎活動彈窗 (one [LBActiveEvent] at a time). Presents the
-/// activity's title, prize name, an optional「留言關鍵字」CTA hint, a main CTA
-/// whose text/tap-target follow [activitySheetCtaKind], an optional pagination
+/// activity's title, prize name, the「留言關鍵字」CTA hint, a single「立即參加」
+/// main CTA forwarding [onJoin], an optional pagination
 /// dot row (`pageCount > 1`, rb-flutter-activity-sheet-pagination), and a
 /// footer「使用條款 | 隱私政策」mirroring `WinClaimSheetView`. 🔴
 /// rb-flutter-activity-sheet-cta-repeatable: the keyword-present CTA is ALWAYS
@@ -235,15 +201,14 @@ class ActivitySheetView extends StatefulWidget {
   /// `event` 快照本身就已經是新的一次渲染（design.md D-1）。預設 `0`。
   final int pageIndex;
 
-  /// 「立即參加」CTA 被點擊（只在 [activitySheetCtaKind] 為 [ActivitySheetCtaKind.join]
-  /// 時可達）。🔴 rb-flutter-activity-sheet-cta-repeatable：這個 CTA 是**可重複**點擊
+  /// 「立即參加」CTA 被點擊（不論 `event.keyword` 是否為空）。🔴 rb-flutter-activity-sheet-cta-repeatable：這個 CTA 是**可重複**點擊
   /// 的——每次點擊都轉發本 callback，widget 本身 MUST NOT 因為之前點過就把它鎖成
   /// disabled。容器轉發 `DefaultPlayerTemplate.activeEvent.join()` — the view-model
   /// handles dedupe, this layer does not repeat that check. Default no-op so demo /
   /// golden instances construct action-free.
   final VoidCallback? onJoin;
 
-  /// Close the sheet (scrim tap, or the keyword-less「知道了」CTA). A PURE
+  /// Close the sheet (scrim tap). A PURE
   /// dismiss (design.md D4) — MUST NOT be interpreted as "gave up the
   /// activity"; the container only clears its own local open/closed state,
   /// MUST NOT call any view-model method. Default no-op.
@@ -429,8 +394,7 @@ class _ActivitySheetViewState extends State<ActivitySheetView> {
     final theme = widget.theme;
     final event = widget.event;
     final awardName = event.award.isNotEmpty ? event.award.first.name : '';
-    final keyword = event.keyword;
-    final hasKeyword = keyword != null && keyword.isNotEmpty;
+    final keyword = event.keyword ?? '';
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -460,24 +424,22 @@ class _ActivitySheetViewState extends State<ActivitySheetView> {
             ),
           ],
         ),
-        // D3 — keyword-less (純活動公告) → the留言關鍵字 line is NOT drawn (no
-        // blank-bracket「留言關鍵字【】」placeholder).
-        if (hasKeyword) ...[
-          const SizedBox(height: 14),
-          Text(
-            ReferenceUIStrings.text('activity_keyword_cta', {'keyword': keyword}),
-            textAlign: TextAlign.center,
-            // `LBActivitySheet`'s literal `fontSize:14, fontWeight:700, height:1.5`.
-            style: TextStyle(
-              color: theme.accent,
-              fontSize: 14 * theme.fontScale,
-              fontWeight: FontWeight.bold,
-              height: 1.5,
-            ),
-          ),
-        ],
+        // D3 — always drawn, keyword-less included (blank brackets, same as
+        // iOS `keywordLabel(keyword: activity.keyword ?? "")`).
         const SizedBox(height: 14),
-        _ctaButton(keyword),
+        Text(
+          ReferenceUIStrings.text('activity_keyword_cta', {'keyword': keyword}),
+          textAlign: TextAlign.center,
+          // `LBActivitySheet`'s literal `fontSize:14, fontWeight:700, height:1.5`.
+          style: TextStyle(
+            color: theme.accent,
+            fontSize: 14 * theme.fontScale,
+            fontWeight: FontWeight.bold,
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 14),
+        _ctaButton(),
         // 分頁圓點（rb-flutter-activity-sheet-pagination）—— 僅 `pageCount > 1` 時畫，位置
         // 在 CTA 之後、footer 之前，對齊設計稿 `LBActivitySheet` 的子元素順序，也對齊
         // `WinClaimSheetView._claimCardBody()` 的既有順序（CTA → dots → footer）。
@@ -491,45 +453,27 @@ class _ActivitySheetViewState extends State<ActivitySheetView> {
     );
   }
 
-  /// The main CTA — text/tap-target follow [activitySheetCtaKind] (a pure
-  /// function of `event.keyword` alone). 🔴 rb-flutter-activity-sheet-cta-repeatable:
-  /// there is no disabled state any more — [ActivitySheetCtaKind.join] is always
-  /// clickable and always forwards [ActivitySheetView.onJoin], repeat taps
-  /// included.
-  Widget _ctaButton(String? keyword) {
+  /// The main CTA — always「立即參加」forwarding [ActivitySheetView.onJoin]
+  /// (rb-flutter-activity-sheet-no-keyword-parity). 🔴
+  /// rb-flutter-activity-sheet-cta-repeatable: there is no disabled state —
+  /// every tap, repeat taps included, forwards [ActivitySheetView.onJoin].
+  Widget _ctaButton() {
     final theme = widget.theme;
-    final kind = activitySheetCtaKind(keyword);
-    final String label;
-    final VoidCallback? tap;
-    final Color background;
-    final Color foreground;
-    switch (kind) {
-      case ActivitySheetCtaKind.join:
-        label = _ctaJoin;
-        tap = widget.onJoin;
-        background = theme.accent;
-        foreground = Colors.white;
-      case ActivitySheetCtaKind.acknowledge:
-        label = _ctaAcknowledge;
-        tap = widget.onClose;
-        background = theme.accent;
-        foreground = Colors.white;
-    }
     return GestureDetector(
       key: LbTestKeys.activitySheetCta,
       behavior: HitTestBehavior.opaque,
-      onTap: tap,
+      onTap: widget.onJoin,
       child: Container(
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: background,
+          color: theme.accent,
           borderRadius: BorderRadius.circular(12),
         ),
         padding: const EdgeInsets.symmetric(vertical: 14),
         child: Text(
-          label,
+          _ctaJoin,
           style: TextStyle(
-            color: foreground,
+            color: Colors.white,
             fontSize: 15.5 * theme.fontScale,
             fontWeight: FontWeight.w900,
           ),

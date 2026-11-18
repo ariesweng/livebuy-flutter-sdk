@@ -857,13 +857,10 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
   ///
   /// Order mirrors [_handleJoin]'s existing gating discipline (same shared
   /// [widget.joinGate] seam, consulted BEFORE any side effect):
-  ///   0. No current event, or its `keyword` empty/absent → return early. The
-  ///      real CTA is only wired to this handler when
-  ///      `activitySheetCtaKind(keyword) == .join` (keyword non-empty — CTA is
-  ///      always repeatable regardless of prior joins, see
-  ///      `rb-flutter-activity-sheet-cta-repeatable` / `activity_sheet.dart`),
-  ///      so this is defensive, same posture as [_handleJoin]'s own
-  ///      `keyword.isEmpty` guard.
+  ///   0. No current event → return early. An empty/absent `keyword` does NOT
+  ///      return early (rb-flutter-activity-sheet-no-keyword-parity): it is
+  ///      forwarded as `''`, same as iOS `FeedWinOverlayView` calling
+  ///      `model.joinEvent(eid:keyword: activity.keyword ?? "")`.
   ///   1. [widget.joinGate] (rb-flutter-event-join-gate three-tier gate: 登入 →
   ///      暱稱 → 放行) consulted with the open event's `(id, keyword)`. `true` →
   ///      the gate INTERCEPTED (raised a 登入 / 暱稱 modal) → return: MUST NOT
@@ -883,7 +880,6 @@ class _FeedWinOverlayViewState extends State<FeedWinOverlayView> {
     final event = _model.currentActiveEvent;
     if (event == null) return;
     final keyword = event.keyword ?? '';
-    if (keyword.isEmpty) return;
     if (widget.joinGate?.call(event.id, keyword) ?? false) return;
     _model.joinActiveEvent();
     setState(() => _activitySheetOpen = false);

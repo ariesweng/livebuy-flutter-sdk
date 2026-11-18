@@ -500,7 +500,7 @@ class _SheetHeader extends StatelessWidget {
 
 // MARK: - Expanded search header (`LBPSheetHeader` 展開態, parity iOS/Android)
 
-/// bgSunken 膠囊（`SearchGlyph` + TextField「搜尋商品名稱」）+ 取消 accent 文字鈕。清除（x）鈕已移除——
+/// bgSunken 膠囊（`SearchGlyph` + TextField「搜尋商品」）+ 取消 accent 文字鈕。清除（x）鈕已移除——
 /// 取消已同時收合搜尋列並清空 query，單獨的清除鈕是多餘的（rb-search-bar-cancel-only）。
 class _SearchHeader extends StatelessWidget {
   final ReferenceUITheme theme;
@@ -589,7 +589,7 @@ class _SearchHeader extends StatelessWidget {
 // MARK: - Empty state (no products / no search results)
 
 /// A centered empty-state line. [message] distinguishes「目前沒有商品」(empty list) from
-///「找不到符合『…』的商品」(search no-hit).
+///「沒有符合『…』的商品」(search no-hit).
 class _EmptyState extends StatelessWidget {
   final ReferenceUITheme theme;
   final String? message;

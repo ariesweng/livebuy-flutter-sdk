@@ -14,7 +14,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-（目前無待發項目——`2.12.2` 已於下方發布，三套件共用版號 lockstep。）
+（目前無待發項目——`2.13.0` 已於下方發布，三套件共用版號 lockstep。）
+
+## 2.13.0 - 2026-11-18
+
+> **三套件版號 lockstep minor**（只改 `livebuy_flutter_reference_ui`；`livebuy_flutter`／`livebuy_flutter_ui` 無內容變更、僅隨版號）。
+> 公開 API 不變（移除的 `ActivitySheetCtaKind`／`activitySheetCtaKind` 未自套件匯出），原生依賴維持 iOS `~> 4.30`／Android `4.30.0`
+> （原生 core 自 `4.30.0` 起無變更）。host 的 UI 測試若寫死 drop-in 顯示文字需更新。
+> **驗證範圍**：`flutter-reference-ui` 字串表與 parity 測試、受影響的 golden、`flutter analyze` 通過。**未經真機驗證。**
+
+### Changed
+
+- **drop-in 文案對齊網頁版用字**（五語系字串表，只改值；key 與佔位符不變）：網頁前端在同一畫面已有譯文時改用網頁版用字，並套用
+  翻譯組回覆，與 iOS／Android `4.31.0` 相同。
+  - 繁中／簡中 11 個 key，例如結束畫面「下一部影片將在 {seconds} 秒後播放」「立即播放」、聊天室「最新留言」、暱稱撞名「暱稱已存在」、
+    規格提示「請選擇規格」、商品搜尋「搜尋商品」。
+  - 英文／馬來文／印尼文／簡中 94 個值：「直播」馬來／印尼文改 `Langsung`、簡中「留言」改「评论」、暱稱馬來文改 `nama samaran`、
+    有網頁對應的文字大小寫跟網頁版。
+  - 翻譯組回覆後 44 個值：主播標籤「主持人」→「直播主」（en `Streamer`、ms-MY `Penstrim`、id-ID `Streamer`）、加入購物車提示
+    「加入成功」、中獎／活動入口朗讀文字「領獎」「活動」、領獎確認提醒句、商品列表標題 en `Sales Products`、補貨按鈕 en
+    `Restock Update`／`Update Activated`、使用條款 ms-MY `Syarat Penggunaan` 等。
+- SDK 自身譯文 4 條：聯繫商家確認句、加入購物車失敗提示改用全形標點；庫存剩餘、已加入聊天室的馬來文改為較自然的說法。
+- **抽獎活動彈窗在活動沒有留言關鍵字時對齊 iOS／Android／RN**（`rb-flutter-activity-sheet-no-keyword-parity`）：照樣顯示
+  「留言關鍵字【】即可參加抽獎！」，主按鈕一律「立即參加」，按下後照常走登入／暱稱檢查並參加活動。原本只關閉彈窗的「知道了」按鈕
+  與字串 key `activity_acknowledge` 已移除。
 
 ## 2.12.2 - 2026-10-22
 

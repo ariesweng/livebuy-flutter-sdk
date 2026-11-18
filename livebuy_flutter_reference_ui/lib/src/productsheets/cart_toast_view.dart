@@ -22,7 +22,7 @@ import '../i18n/i18n.dart';
 /// `rgba(20,20,24,0.86)` — the dark glass pill fill (`LBPCartToast`), parity iOS/Android/RN. */
 const Color _glassFill = Color(0xDB141418);
 
-/// The confirmation label (design default 「已加入購物車」).
+/// The confirmation label (design default 「加入成功」).
 String get _defaultLabel => ReferenceUIStrings.text('cart_added_toast');
 
 /// The failure label (rb-flutter-cart-add-failure-toast, design `LBPCartToast variant='error'`).
@@ -35,7 +35,7 @@ const Color _danger = Color(0xFFEB6E5F);
 const double _checkSize = 24;
 
 /// The add-to-cart success toast: a dark-glass pill with an accent-ringed checkmark + a
-/// confirmation label (「已加入購物車」). Pure presentation — the container drives presentation +
+/// confirmation label (「加入成功」). Pure presentation — the container drives presentation +
 /// auto-dismiss; this widget only paints + springs the checkmark in on appear.
 class CartToastView extends StatelessWidget {
   const CartToastView({
@@ -53,7 +53,7 @@ class CartToastView extends StatelessWidget {
   /// The resolved reference-ui theme (FIRST, always). The accent drives the checkmark ring.
   final ReferenceUITheme theme;
 
-  /// The confirmation label (design default 「已加入購物車」, in the CURRENT reference-ui
+  /// The confirmation label (design default 「加入成功」, in the CURRENT reference-ui
   /// language — resolved at read time when omitted / null, rb-flutter-i18n-string-table).
   String get label => _label ?? (isError ? _errorLabel : _defaultLabel);
   final String? _label;

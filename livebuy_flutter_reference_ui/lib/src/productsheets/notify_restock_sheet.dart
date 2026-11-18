@@ -404,7 +404,7 @@ class NotifyRestockSheet extends StatelessWidget {
   // button (design `screens.jsx` `NotifyRestockSheet` footer = `LBPButton
   // kind="outline"`; parity iOS/Android), reflecting `noticeEnabled`:
   //   • not subscribed → transparent fill + 1.5pt accent border + bell + 「補貨通知我」(accent).
-  //   • subscribed     → accent fill + bell + 「已開啟補貨通知」(white).
+  //   • subscribed     → accent fill + bell + 「已開啟通知」(white).
   // Tapping the CTA forwards `onToggleNotice` (a no-op for demo / golden). It sits
   // above a top hairline (design `borderTop`). RESTOCK-NOTIFY ONLY — no AWAIT switch.
 

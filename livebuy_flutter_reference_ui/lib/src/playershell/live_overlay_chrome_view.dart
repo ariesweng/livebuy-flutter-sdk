@@ -529,7 +529,7 @@ class LiveOverlayChromeView extends StatelessWidget {
   // ── LBLiveHostCaption — centered host caption overlay ────────────────────
 
   /// Centered white-on-dark host caption (`LBLiveHostCaption`). Translucent dark
-  /// card with a "主持人" label + the host caption copy (2-line clamp).
+  /// card with a "直播主" label + the host caption copy (2-line clamp).
   Widget _hostCaptionOverlay() {
     return Container(
       width: double.infinity,
@@ -781,7 +781,7 @@ final Color _introducingBadgeFill =
 
 // Localized copy — reference-ui string table (rb-flutter-i18n-string-table; keys match iOS
 // `LiveOverlayChromeView` + `LBPGestureHint`).
-/// Host caption label ("主持人").
+/// Host caption label ("直播主").
 String get _hostCaptionLabel => ReferenceUIStrings.text('live_host_caption');
 
 /// Narrate-tag copy shown on the pinned card ("介紹中").

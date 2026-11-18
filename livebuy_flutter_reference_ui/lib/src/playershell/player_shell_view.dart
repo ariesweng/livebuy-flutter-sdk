@@ -2294,7 +2294,7 @@ class _PlayerShellViewState extends State<PlayerShellView> {
                   // 語意不同，不衝突（見 `VideoInfoPanelView.isLiveBroadcast` 自身 dartdoc）。
                   isLiveBroadcast: m.isLive,
                   // isFinishedLiveReplay 文案分流（design R44，rb-flutter-video-info-panel-replay-copy）：
-                  // 已結束直播回放時 publishAt-row 顯示「直播回放」而非「點播影片」。餵入既有
+                  // 已結束直播回放時 publishAt-row 顯示「直播回放」而非「影片」。餵入既有
                   // `PlayerShellModel.isFinishedLiveReplay`（與 `m.isLive` 既有互斥不變量，見該 getter
                   // 自身 doc comment）——本 change 不新增 / 修改任何 view-model 欄位。
                   isFinishedLiveReplay: m.isFinishedLiveReplay,

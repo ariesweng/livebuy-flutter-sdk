@@ -41,7 +41,7 @@ String get _body => ReferenceUIStrings.text('variant_prompt_body');
 String get _primaryLabel => ReferenceUIStrings.text('variant_prompt_ok');
 
 /// The family-3「請選規格」acknowledge modal (`LBPAlertModal`). Renders a centered card
-/// (title「請選規格」/ body「請先選擇商品規格，再加入購物車。」/ single full-width primary
+/// (title「請選擇規格」/ body「請先選擇商品規格，再加入購物車。」/ single full-width primary
 /// 「我知道了」) over a black-0.55 scrim. The「我知道了」CTA and a scrim tap both call `onDismiss`
 /// (the container's local dismiss latch, mirroring the cart-needs-login gate) so the variant chips
 /// become reachable. Renders correctly with a null action (golden / preview safe).
