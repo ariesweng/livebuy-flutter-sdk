@@ -12,6 +12,7 @@ import 'default_error_state.dart';
 import 'default_goods_tracking.dart';
 import 'default_identity_label.dart';
 import 'default_info_tab.dart';
+import 'default_live_bid.dart';
 import 'default_moment_state.dart';
 import 'default_notice_tab.dart';
 import 'default_operation_rail.dart';
@@ -678,6 +679,32 @@ class DefaultPlayerTemplate {
 
   final AddToCartRequester _addToCartRequester;
 
+  // live-bid-flutter-template — 搶購下標與得標視窗（parity iOS / Android / RN）。
+
+  /// 搶購下標 delegate（預設 [defaultBidRequester] → `LivebuySDK.placeBid`）。
+  final BidRequester _bidRequester;
+
+  /// 得標確認 delegate（預設 [defaultBidConfirmRequester] → `LivebuySDK.confirmBidWin`，fire-and-forget）。
+  final BidConfirmRequester _bidConfirmRequester;
+
+  /// 「恭喜搶購成功」視窗 view-model（自己的 ChangeNotifier；host / reference-ui 以
+  /// `ListenableBuilder` 綁定）。由 [TemplateAttachment] 的 `BID_WON` 經 [handleBidWon] 餵入。
+  final DefaultBidWon bidWon = DefaultBidWon();
+
+  /// 最近一次搶購下標結果；null = 這次嘗試 / 這個明細還沒有結果。純欄位、無 notify（同
+  /// [addToCartFailed]：template 非 ChangeNotifier，reference-ui 在 `await addToCart()` 後讀取）。
+  LBBidOutcome? _bidOutcome;
+
+  /// 最近一次搶購下標結果（`LBBidOutcomePlaced` / `LBBidOutcomeFailed(code)`）或 null。每次新的
+  /// [addToCart]、開啟商品明細、換片時重設為 null。
+  LBBidOutcome? get bidOutcome => _bidOutcome;
+
+  /// 開啟中商品的商品層 `limitNum`，供選規格時回退（[effectiveLimitNum]）。
+  int _openProductLimitNum = 0;
+
+  /// 搶購模式 = 搶購場直播中（`header.isFlashSale && header.isLive`）。
+  bool get isBidMode => header.isFlashSale && header.isLive;
+
   /// The shop id used to build route-B `LBAddToCartOptions` (host-supplied — the
   /// Flutter bridge `LBProduct` has no shopId; the host knows it from its
   /// `channel`). Empty until [setShopId] is called; an empty shopId still builds
@@ -783,6 +810,9 @@ class DefaultPlayerTemplate {
     TogglePlayPauseRequester? togglePlayPauseRequester,
     VodSeekRequester? seekRequester,
     VodSeekRequester? seekByRequester,
+    // live-bid-flutter-template — 搶購下標 / 得標確認 delegates（預設接 core）。
+    BidRequester? bidRequester,
+    BidConfirmRequester? bidConfirmRequester,
     // chat-history-video-switch-cache-flutter — optional override seam (design.md D3).
     // Defaults to the process-level `VideoFeedSnapshotCache.shared` singleton; tests inject an
     // independent instance to avoid cross-test bleed.
@@ -827,6 +857,9 @@ class DefaultPlayerTemplate {
         // MUST NOT build HTTP in the template (mirrors goodsTracking setAwait).
         _addToCartRequester =
             addToCartRequester ?? ((opts) => LivebuySDK.addToCart(opts)),
+        // live-bid-flutter-template — 下標不需要 host 的 shopId，預設直接接 core。
+        _bidRequester = bidRequester ?? defaultBidRequester,
+        _bidConfirmRequester = bidConfirmRequester ?? defaultBidConfirmRequester,
         // Default delegates the toggle to the core SDK endpoint (fire-and-forget);
         // the host may override to route through its own player ref. Tests inject
         // a capturing fake.
@@ -952,6 +985,9 @@ class DefaultPlayerTemplate {
     qtyStepper.clear();
     miniCart.dismissMiniCart();
     cartCTA.resetForSession();
+    // live-bid-flutter-template — 換片清空得標視窗與下標結果（同一支影片重新餵 channel 不會走到這裡）。
+    bidWon.clear();
+    _bidOutcome = null;
   }
 
   // chat-history-dedupe-template — cursor-based backlog 分流 (取代會誤殺後台刻意重送之真實通知的內容指紋
@@ -1621,6 +1657,9 @@ class DefaultPlayerTemplate {
     // (channel-flash-sale-flag-template-flutter). 與 isLive / isFinishedLiveReplay
     // 獨立、互不影響。Default false.
     bool isFlashSale = false,
+    // 直播管家搶購場需要商品關鍵字 — host-fed raw passthrough of `channel.saleKeywordRequired`
+    // (live-bid-flutter-template；接法同 isFlashSale)。Default false.
+    bool saleKeywordRequired = false,
   }) =>
       header.setChrome(
         title: title,
@@ -1630,6 +1669,7 @@ class DefaultPlayerTemplate {
         isLive: isLive,
         isFinishedLiveReplay: isFinishedLiveReplay,
         isFlashSale: isFlashSale,
+        saleKeywordRequired: saleKeywordRequired,
       );
 
   /// VOD playback progress (VOD-2) — host echoes a progress snapshot
@@ -1812,13 +1852,28 @@ class DefaultPlayerTemplate {
     _addToCartNeedsLogin = false;
     // cart-add-loading-state-flutter: 開新詳情清除 stale in-flight（與 needs-login 並列）。
     _addToCartInFlight = false;
-    productSheet.openDetail(product, _currentOtherGoods);
+    // live-bid-flutter-template — 點商品（含同一商品重點）都清掉上一次的下標結果。
+    _bidOutcome = null;
+    _openProductLimitNum = product.limitNum;
+    final bidMode = isBidMode;
+    productSheet.openDetail(
+      product,
+      _currentOtherGoods,
+      LBDetailBidContext(
+          bidMode: bidMode, saleKeywordRequired: header.saleKeywordRequired),
+    );
     variantPicker.reset(product.specOptions, product.specifications);
-    // No spec chosen yet → bounds derive from the product stock (D3).
+    // live-bid-flutter-template — parity iOS `openProductDetail` / Android `handleProductTap`:
+    // 無規格群組、只有一個規格的商品，variantPicker 會自動解析出該規格；限購與數量上限的庫存都以
+    // 已解析的規格為準（沒有則商品層），soldOut 仍取商品層。
+    final selected = variantPicker.selectedSpec;
+    final limit = effectiveLimitNum(product.limitNum, selected, bidMode);
+    productSheet.updateLimitNum(limit);
     qtyStepper.recomputeBounds(
-      stock: product.stock,
+      stock: selected?.stock ?? product.stock,
       soldOut: product.soldOut,
       resetQty: true,
+      limit: limit,
     );
   }
 
@@ -1843,7 +1898,10 @@ class DefaultPlayerTemplate {
     final spec = variantPicker.selectedSpec;
     final stock = spec?.stock ?? detail.stock;
     final soldOut = (spec != null && spec.stock <= 0) ? 1 : detail.soldOut;
-    qtyStepper.recomputeBounds(stock: stock, soldOut: soldOut);
+    // live-bid-flutter-template — 規格層限購優先，否則商品層；非搶購場直播中為 0。
+    final limit = effectiveLimitNum(_openProductLimitNum, spec, isBidMode);
+    productSheet.updateLimitNum(limit);
+    qtyStepper.recomputeBounds(stock: stock, soldOut: soldOut, limit: limit);
   }
 
   /// qty-stepper intents (host binds `LBPQtyStepper` ±). Clamp inside the model.
@@ -1912,6 +1970,9 @@ class DefaultPlayerTemplate {
   /// increments the cart-CTA count (two state mutations → the host's listeners
   /// fire, coalesced per the existing ChangeNotifier fan-in); on failure sets
   /// [addToCartFailed] WITHOUT touching the count. MUST NOT build HTTP itself.
+  ///
+  /// live-bid-flutter-template — 搶購場直播中（[isBidMode]）通過全部守門後改走 [_placeBid]（下標，
+  /// 不打 addcart）；商品明細 `buyButtonHidden` 時不動作。
   Future<void> addToCart() async {
     _addToCartFailed = false;
     _addToCartNeedsLogin = false;
@@ -1919,6 +1980,10 @@ class DefaultPlayerTemplate {
     final detail = productSheet.detail;
     if (detail == null) return; // no open detail — nothing to add.
     if (hostOwnsCart) return; // route A took over — no route-B delegation.
+    // live-bid-flutter-template — 有明細、且非 hostOwnsCart 時才重設下標結果（parity iOS / Android / RN）。
+    _bidOutcome = null;
+    // live-bid-flutter-template — 直播管家搶購場商品沒關鍵字 → 隱藏購買鈕，不呼叫任何 requester。
+    if (detail.buyButtonHidden) return;
 
     // flutter-add-to-cart-login-gate-template：全域「加購前必須登入」政策開啟且未登入 →
     // 本地攔截，完全不委派 requester。刻意排在 hostOwnsCart 之後（host 接管時 SDK 完全不該
@@ -1944,6 +2009,8 @@ class DefaultPlayerTemplate {
     }
     // Gate: out of stock (qty max == 0) → block.
     if (qtyStepper.max == 0) return;
+    // live-bid-flutter-template — 搶購場直播中改為下標。
+    if (isBidMode) return _placeBid(detail);
 
     // cart-add-loading-state-flutter: 通過全部 guards → 即將委派 requester。在第一個 `await` 之前
     // 同步設 in-flight true（reference-ui `final f = addToCart()` 回來時可立即讀以顯示 loading）。
@@ -2005,6 +2072,55 @@ class DefaultPlayerTemplate {
       _addToCartInFlight = false;
     }
   }
+
+  /// live-bid-flutter-template — 搶購下標（parity iOS / Android / RN）。不打 addcart、不動 mini-cart /
+  /// 購物車計數 / [addToCartFailed]。成功 → [LBBidOutcomePlaced] 並關閉商品明細；防重複 → 結果不變；
+  /// 401 → [addToCartNeedsLogin]；其他 → [LBBidOutcomeFailed]（帶 `backendErrorCode`）。任何結果都
+  /// 結束 [addToCartInFlight]。
+  Future<void> _placeBid(LBProductDetailState detail) async {
+    _addToCartInFlight = true; // 第一個 await 之前同步設好（同加購路徑）。
+    final specId = variantPicker.selectedSpecificationId;
+    final request = LBBidRequest(
+      goodsId: int.tryParse(detail.productId),
+      num: qtyStepper.qty,
+      specificationId: specId == null ? null : int.tryParse(specId),
+      videoId: _currentVideoId,
+    );
+    try {
+      await _bidRequester(request);
+      _bidOutcome = const LBBidOutcomePlaced();
+      productSheet.clearDetail();
+    } catch (e) {
+      _applyBidRejection(classifyBidRejection(e));
+    }
+    _addToCartInFlight = false;
+  }
+
+  void _applyBidRejection(BidRejection rejection) {
+    switch (rejection.kind) {
+      case BidRejectionKind.deduplicated:
+        break; // 同一商品規格的下標仍在進行中 — 結果不變。
+      case BidRejectionKind.needsLogin:
+        _addToCartNeedsLogin = true;
+      case BidRejectionKind.failed:
+        _bidOutcome = LBBidOutcomeFailed(rejection.code);
+    }
+  }
+
+  /// live-bid-flutter-template — core `BID_WON`（`ordered` 或 `failed`）由 [TemplateAttachment] 轉入。
+  /// 沒有非空字串 `buying_id` 忽略；同 `buying_id` 不重複。
+  void handleBidWon(Map<String, Object?> params) {
+    final item = LBBidWonItem.fromParams(params);
+    if (item != null) bidWon.record(item);
+  }
+
+  /// 「確定」：以全部 `buying_id` 呼叫確認 requester 一次（videoId 取 [currentVideoId]，無則 `''`），
+  /// 並清空關閉得標視窗。確認失敗不會讓 items 回來。
+  void confirmBidWin() =>
+      bidWon.confirm((ids) => _bidConfirmRequester(_currentVideoId ?? '', ids));
+
+  /// 「取消」：清空關閉得標視窗，不確認。
+  void dismissBidWon() => bidWon.clear();
 
   // Layout well-known keys (Task 6.7)
 

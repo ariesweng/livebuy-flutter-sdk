@@ -374,6 +374,13 @@ class TemplateAttachment {
         );
         return LBEventReply.acknowledge;
 
+      case LBEvent.bidWon:
+        // live-bid-flutter-template — 得標（`ordered` / `failed`）→「恭喜搶購成功」視窗狀態。
+        // 通知型事件：只觀察、不修改 params；回 `acknowledge`（`result: false`），不攔截 host 的
+        // listener（drop-in 包裝 listener 照常自己處理同一事件）。
+        template.handleBidWon(event.params);
+        return LBEventReply.acknowledge;
+
       default:
         // Every other event is owned by the host's primary listener.
         return LBEventReply.passthrough;

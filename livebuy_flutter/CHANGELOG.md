@@ -6,6 +6,56 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.14.0 - 2026-11-21
+
+> **三套件版號 lockstep minor，源碼面無 BREAKING（只加不減）。** 原生依賴升至 iOS `~> 4.32`／`Package.swift` `from: "4.32.0"`／
+> Android `4.32.0`（`bridge-native-pin-4-32-0-core`；plugin 呼叫的新原生 API 只存在於 `4.32.0`）。
+> 🔴 下標需要後端 `sdk-live-bid`；發版當下（2026-11-21）正式機尚未部署，部署前搶購場直播中下標會失敗（drop-in 顯示「搶購失敗，請稍後再試」）。
+> **驗證範圍**：`flutter test`、`flutter analyze`、新增 golden 通過；plugin 原生碼已對已發佈 `4.32.0` 編譯（Android apk、iOS plugin target）。
+> **未經真機實測。**
+
+### Added（`livebuy_flutter`）
+
+- **搶購下標模式**（`live-bid-flutter-core`，對齊 iOS／Android core 的 `live-bid`）：
+  - `LivebuySDK.placeBid(videoId:, goodsId:, specificationId:, num:)` → `LBBidResult`；`LivebuySDK.confirmBidWin(videoId, buyingIds)`
+    → `List<LBBidConfirmItem>`。錯誤轉換同 `addToCart`（防重複 → `LBErrorCartAddDeduplicated`、未登入 → `LBErrorServer` 401、
+    後端失敗帶 `backendErrorCode`）。
+  - `LBProduct.saleKeyword`、`LBSpec.saleKeyword`（缺值為 `''`）。
+  - `LBCartAddRequest.cartOrigin`／`buyingId`／`shopCartSynced`（缺 key 為 `null`）。
+  - 通知型事件 `BID_PLACE_RESULT`、`BID_WON` 由原生 core 派發、整包透傳（無 typed model，欄位見 `placeBid`／`confirmBidWin` 的說明）。
+  - 聊天室「關鍵字＋數量」自動下標、得標自動取單都在原生 core 內，Dart 端不需處理。
+  - 需要 `4.32.0` 原生 core（原生依賴已升，見上方說明）。
+- **搶購場商品欄位**（`flash-sale-goods-fields-flutter-core`，對齊 iOS／Android core）：
+  - `LBProduct`、`LBSpec` 新增 `buyingNum`（本人已搶購數，`> 0` 時可顯示「正在等待結果...」）、`totalBuyingNum`（全場合計）、
+    `limitNum`（每人限購，`0` 為不限）；缺值或非數字為 `0`。
+  - `LBPlayerChannelInfo.saleKeywordRequired`（`/sdk/video` 的 `sale_keyword_required`，缺值為 `false`）：為 `true` 時，
+    `saleKeyword` 為空的商品應隱藏加購鈕（同網頁）。
+  - 這些欄位在直播中改變時會重新送出 `channelChange`／`momentStateChange`。
+  - 同樣需要 `4.32.0` 原生 core。
+
+### Added（`livebuy_flutter_ui`）
+
+- **搶購下標**（`live-bid-flutter-template`，對齊 iOS／Android view-model）：搶購場直播中 `addToCart()` 改呼叫下標（預設接
+  `LivebuySDK.placeBid`），結果寫入 `bidOutcome`；商品明細新增 `bidWaiting`、`limitNum`、`buyButtonHidden`，有限購時數量上限為
+  `min(庫存, limitNum)`（無群組單一規格時用該規格的限購）；直播管家搶購場沒有搶購關鍵字的商品隱藏購買鈕；得標視窗狀態 `bidWon`，
+  `confirmBidWin()` 確認全部後關閉、`dismissBidWon()` 只關閉。非搶購場、非直播中行為不變。
+
+### Added（`livebuy_flutter_reference_ui`）
+
+- **搶購下標畫面**（`rb-flutter-flash-sale-bid`，同 iOS／Android `4.32.0`）：商品明細與加購面板「正在等待結果...」紅色橫幅、
+  「每人限購 N 組」且「＋」到上限不可按、隱藏購買鈕（底部列全空時不畫、只剩分享時靠左）；下標結果 toast（成功「已加入搶購」、
+  失敗依錯誤代碼）；得標視窗「恭喜搶購成功」（商家 logo 或商店圖示、多筆左右滑＋分頁圓點、「確定」確認全部、「取消」只關閉、
+  點背景不關閉）；8 個新字串 key（五語系）。drop-in 把 `saleKeywordRequired` 帶給 view-model。
+
+### Changed（`livebuy_flutter_reference_ui`）
+
+- 領獎確認視窗商品提醒句 `win_submit_note_product` 的 en、id-ID 改用網頁版原句
+  `*The prize will be automatically added as pending checkout items.`（`rb-i18n-win-note-product-follow-frontend`）。
+
+### Fixed（`livebuy_flutter_reference_ui`）
+
+- 商品明細大圖所在白卡的上內距 0 → 6，與 iOS／Android／RN 一致（`rb-flutter-detail-card-top-padding`）。
+
 ## 2.13.0 - 2026-11-18
 
 > **三套件版號 lockstep minor**（只改 `livebuy_flutter_reference_ui`；`livebuy_flutter`／`livebuy_flutter_ui` 無內容變更、僅隨版號）。

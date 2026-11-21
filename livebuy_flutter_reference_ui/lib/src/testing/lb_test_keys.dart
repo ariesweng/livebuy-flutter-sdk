@@ -276,6 +276,16 @@ abstract final class LbTestKeys {
   static const Key minicartPeek = ValueKey('lb_minicart_peek');
   static const Key minicartPeekClose = ValueKey('lb_minicart_peek_close');
   static const Key cartToast = ValueKey('lb_cart_toast');
+
+  // Flash-sale bid (rb-flutter-flash-sale-bid) — same strings as iOS `LBAccessibilityID` /
+  // Android `LBTestTags` / RN `LBTestIDs`.
+  /// 「正在等待結果... ／ 搶購中」banner on the product-detail / add-to-cart sheet.
+  static const Key bidWaitingBanner = ValueKey('lb_bid_waiting_banner');
+  /// 「恭喜搶購成功」bid-won popup card (`BidWonModalView`).
+  static const Key bidWonModal = ValueKey('lb_bid_won_modal');
+  static const Key bidWonConfirm = ValueKey('lb_bid_won_confirm');
+  static const Key bidWonCancel = ValueKey('lb_bid_won_cancel');
+  static const Key bidWonPaginationDots = ValueKey('lb_bid_won_pagination_dots');
   static const Key sheetHeaderClose = ValueKey('lb_sheet_header_close');
 
   /// The sheet-header close button's「返回」variant (rb-flutter-product-detail-

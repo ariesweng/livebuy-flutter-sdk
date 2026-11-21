@@ -2972,6 +2972,10 @@ void forwardChannelChangeToTemplate(
     // it a real value until now; `deriveHeaderChromeFields` above already surfaces it verbatim
     // from `info.isFlashSale`.
     isFlashSale: chrome.isFlashSale,
+    // rb-flutter-flash-sale-bid: feeds the view-model's `buyButtonHidden` (直播管家搶購場、商品沒設
+    // 搶購關鍵字) — `handleHeaderChrome(saleKeywordRequired:)` (live-bid-flutter-template) had no
+    // drop-in caller until now; `deriveHeaderChromeFields` surfaces it verbatim from `info`.
+    saleKeywordRequired: chrome.saleKeywordRequired,
   );
   bool enabledFor(LBSideRailKind kind) =>
       template.operationRail.items.firstWhere((i) => i.kind == kind).enabled;

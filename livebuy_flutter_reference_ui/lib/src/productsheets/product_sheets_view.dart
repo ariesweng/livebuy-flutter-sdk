@@ -30,6 +30,9 @@ import 'select_variant_prompt_modal.dart';
 import 'notify_restock_sheet.dart';
 import 'product_zoom_overlay.dart';
 import 'cart_toast_view.dart';
+import 'bid_won_modal_view.dart';
+import 'flash_sale_bid.dart';
+import '../playershell/player_header_bar_view.dart' show PlayerHeaderBarView;
 import 'cart_loading_floor.dart';
 import '../safearea/lb_safe_area.dart';
 
@@ -218,18 +221,26 @@ ProductSheetKind sheetKindFor(ProductSheetPresentation mode) {
 /// `VerticalDragGestureRecognizer` underneath. This predicate is what lets `PlayerShellView`
 /// gate its swipe-to-switch-video action off in that case (see `PlayerShellView.allowsSwipeNav`
 /// / this change's design.md for the full mechanism). Unit-testable without a widget.
+///
+/// rb-flutter-flash-sale-bid: a SIXTH input, [bidWonPresented] (the「恭喜搶購成功」popup,
+/// `BidWonModalView`), parity iOS / Android `anyProductSheetPresented(bidWonPresented:)` / RN
+/// `onSheetsPresentedChange`. Defaulted `false` so existing five-signal call sites keep their
+/// meaning. The same aggregate also hides the start screen's「略過介紹」button (the container
+/// forwards it to the moments layer as `sheetsPresented`).
 bool anyProductSheetPresented({
   required bool listPresented,
   required bool detailPresented,
   required bool zoomPresented,
   required bool cartLoginGatePresented,
   required bool variantPromptPresented,
+  bool bidWonPresented = false,
 }) =>
     listPresented ||
     detailPresented ||
     zoomPresented ||
     cartLoginGatePresented ||
-    variantPromptPresented;
+    variantPromptPresented ||
+    bidWonPresented;
 
 /// The family-3 product-sheets container. Binds the relevant template
 /// `ChangeNotifier`s (`productOverlay` + `cartCTA` + `productSheet` + `variantPicker`
@@ -450,6 +461,10 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
 
   /// rb-flutter-cart-add-failure-toast: whether the visible toast is the FAILURE variant.
   bool _cartToastIsError = false;
+
+  /// rb-flutter-flash-sale-bid: label override for the visible toast (bid「已加入搶購」/ bid failure
+  /// copy); `null` → `CartToastView`'s own default for [_cartToastIsError].
+  String? _cartToastLabel;
   int _lastCartCount = -1;
   Timer? _cartToastTimer;
 
@@ -552,11 +567,12 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
 
   /// Show the cart toast (success or failure) and auto-dismiss it ~1.8s later. Runs outside
   /// build (ChangeNotifier callback / after an awaited add), so `setState` is safe.
-  void _flashCartToast({required bool isError}) {
+  void _flashCartToast({required bool isError, String? label}) {
     _cartToastTimer?.cancel();
     setState(() {
       _cartToastVisible = true;
       _cartToastIsError = isError;
+      _cartToastLabel = label;
     });
     _cartToastTimer = Timer(const Duration(milliseconds: 1800), () {
       if (mounted) setState(() => _cartToastVisible = false);
@@ -607,6 +623,10 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
         t.qtyStepper,
         t.miniCart,
         t.goodsTracking,
+        // rb-flutter-flash-sale-bid: `DefaultBidWon` is a ChangeNotifier — a `BID_WON` (or 確定 /
+        // 取消 / 換片) re-runs `_buildContent`, which mounts / unmounts the popup AND re-reports the
+        // presented aggregate below.
+        t.bidWon,
       ],
     ];
 
@@ -634,6 +654,7 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
       zoomPresented: _zoomedDetail != null,
       cartLoginGatePresented: _cartGatePresentedNow(),
       variantPromptPresented: m.needsVariantSelection && !_variantPromptDismissed,
+      bidWonPresented: m.bidWonPresented,
     ));
 
     _reportCartGatePresentedIfChanged(_cartGatePresentedNow());
@@ -779,6 +800,15 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
             ),
           ),
 
+        // 「恭喜搶購成功」bid-won popup (rb-flutter-flash-sale-bid, parity iOS / Android / RN) — centered
+        // modal over the sheet stack and the other modals, below the toast. Bound to
+        // `DefaultPlayerTemplate.bidWon`. 確定 → `confirmBidWin()` (confirm all listed wins once +
+        // close); 取消 → `dismissBidWon()` (close only). Its scrim does not close it. The merchant
+        // logo goes through the SAME gate as the header avatar, so demo / golden (`live == false`)
+        // shows the glyph only.
+        if (m.bidWonPresented && m.bidWonItems.isNotEmpty)
+          Positioned.fill(child: _buildBidWonModal(theme, m)),
+
         // 加購成功提示 toast — the LAST Stack child (topmost), bottom-centered over the player
         // frame. Wrapped in IgnorePointer so it never eats taps (iOS `allowsHitTesting(false)`
         // parity); the下層 sheet / 手勢 stays interactive. Default-hidden (not in the Stack) →
@@ -791,11 +821,29 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
               // safe-area inset (zero → the literal 96 it always was).
               padding: EdgeInsets.only(
                   bottom: 96 + lbChromeSafeInsets(MediaQuery.of(context)).bottom),
-              child: IgnorePointer(child: CartToastView(theme: theme, isError: _cartToastIsError)),
+              child: IgnorePointer(
+                  child: CartToastView(
+                      theme: theme, label: _cartToastLabel, isError: _cartToastIsError)),
             ),
           ),
       ],
     );
+  }
+
+  /// The bid-won popup. Re-reads `header.shopLogo` on a header notify (the logo can arrive after the
+  /// popup is up) — a local `ListenableBuilder` so header ticks do not rebuild the whole stack.
+  Widget _buildBidWonModal(ReferenceUITheme theme, ProductSheetsModel m) {
+    Widget modal() => BidWonModalView(
+          theme: theme,
+          items: m.bidWonItems,
+          shopLogoUrl:
+              PlayerHeaderBarView.resolveShopLogoUrl(live: widget.live, urlString: m.shopLogo),
+          onConfirm: m.confirmBidWin,
+          onCancel: m.dismissBidWon,
+        );
+    final t = widget.template;
+    if (t == null) return modal();
+    return ListenableBuilder(listenable: t.header, builder: (context, _) => modal());
   }
 
   /// Pick the sheet for `detail` by ENTRY (`_actionMode`) via the pure [sheetKindFor]
@@ -1085,6 +1133,9 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
       _variantPromptDismissed = false;
     });
     final future = _model.addToCart();
+    // rb-flutter-flash-sale-bid: the template resets `bidOutcome` in this synchronous prefix whenever
+    // it handles the attempt; remember it so only a NEW outcome flashes (see shouldFlashBidOutcome).
+    final bidOutcomeBefore = _model.bidOutcome;
     // 同步前綴已跑完 → 真的送出請求才顯示 loading（guard 阻擋 → inFlight 仍 false）。
     if (_model.addToCartInFlight) _showCartLoading();
     if (mounted) setState(() {});
@@ -1101,6 +1152,15 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     // stays open; tapping 加入購物車 again retries). Replaces the bottom-of-scroll banner users could
     // not see (livebuy-flutter-sdk issue #1).
     if (mounted && _model.addToCartFailed) _flashCartToast(isError: true);
+    // rb-flutter-flash-sale-bid (parity iOS `.onChange(of: model.bidOutcome)`): a bid result flashes
+    // the shared toast — placed「已加入搶購」(success; the view-model closed the detail), failed →
+    // error copy by `error_code` (the detail stays open, so its `limitNum` is still readable). A
+    // value already present on mount is never flashed — only attempts made here are read.
+    final bidOutcome = _model.bidOutcome;
+    if (mounted && bidOutcome != null && shouldFlashBidOutcome(bidOutcomeBefore, bidOutcome)) {
+      final content = BidToastContent.resolve(bidOutcome, _model.detail?.limitNum ?? 0);
+      _flashCartToast(isError: content.isError, label: content.text);
+    }
     // Re-read the template's transient flags (needs-login gate) after the async result. They are
     // plain fields on the template (no ChangeNotifier of their own), so an explicit rebuild is
     // required for them to surface — parity with the gate's reactive present.

@@ -438,6 +438,52 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
                 }
             }
 
+        // MARK: - Flash-sale bid (live-bid-flutter-core)
+        //
+        // Thin forwarding to the native core (`Livebuy.placeBid` / `Livebuy.confirmBidWin`,
+        // iOS live-bid-ios-core). Error wire is the same as addToCart: in-flight dedupe →
+        // `cart_add_deduplicated`; serverError → String(code) (+ `backend_error_code` details);
+        // anything else → `LB_ERROR`.
+        // NOTE: not compile-verified in this repo — needs a native pin that ships live-bid.
+
+        case "placeBid":
+            guard let videoId = args?["videoId"] as? String,
+                  let goodsId = args?["goodsId"] as? Int,
+                  let num = args?["num"] as? Int else {
+                return result(FlutterError(code: "LB_ERROR", message: "placeBid requires videoId, goodsId, num", details: nil))
+            }
+            let specificationId = args?["specificationId"] as? Int
+            Task {
+                do {
+                    let bid = try await Livebuy.placeBid(
+                        videoId: videoId, goodsId: goodsId,
+                        specificationId: specificationId, num: num)
+                    DispatchQueue.main.async {
+                        result(flutterBidResultBody(bid))
+                    }
+                } catch {
+                    let flutterError = flutterBidFlutterError(error)
+                    DispatchQueue.main.async { result(flutterError) }
+                }
+            }
+
+        case "confirmBidWin":
+            guard let videoId = args?["videoId"] as? String else {
+                return result(FlutterError(code: "LB_ERROR", message: "confirmBidWin requires videoId", details: nil))
+            }
+            let buyingIds: [Int] = args?["buyingIds"] as? [Int] ?? []
+            Task {
+                do {
+                    let items = try await Livebuy.confirmBidWin(videoId: videoId, buyingIds: buyingIds)
+                    DispatchQueue.main.async {
+                        result(items.map(flutterBidConfirmItemBody))
+                    }
+                } catch {
+                    let flutterError = flutterBidFlutterError(error)
+                    DispatchQueue.main.async { result(flutterError) }
+                }
+            }
+
         // addcart-track ④ — token 平台結帳前回報 cart token (POST /sdk/video/addcart/track).
         case "reportCartTrack":
             guard let shopId = args?["shopId"] as? String,
@@ -640,14 +686,15 @@ final class LivebuyPlayerViewFactory: NSObject, FlutterPlatformViewFactory {
     }
 }
 
-// player-channel-chrome-bridge-core-flutter: the 18-field channel-chrome projection
+// player-channel-chrome-bridge-core-flutter: the 19-field channel-chrome projection
 // (channel-type-bridge-core-flutter added the 10th, `type`; product-list-bridge-core-flutter
 // added the 11th, `goods`; channel-shop-intro-bridge-core-flutter added the 12th,
 // `shopIntro`; guest-comment-channel-bridge-core-flutter added the 13th,
 // `guestComment`; channel-diversion-bridge-core-flutter added the 14th, `diversion`;
 // rb-flutter-other-goods-channel-bridge-core added the 15th, `otherGoods`;
 // channel-flash-sale-flag-core-flutter added the 16th, `isFlashSale`;
-// channel-notice-bridge-core-flutter added the 17th/18th, `notice`/`sysNotice`)
+// channel-notice-bridge-core-flutter added the 17th/18th, `notice`/`sysNotice`;
+// flash-sale-goods-fields-flutter-core added the 19th, `saleKeywordRequired`)
 // compared as ONE value by the dedupe check below (not a single channel id — see
 // the piggyback block in `onStateChange` for why). Mirrors
 // `react-native/ios/LivebuyRNBridge.swift`'s `ChannelInfoSnapshot` shape (fields here,
@@ -701,6 +748,10 @@ private struct ChannelChromeSnapshot: Equatable {
     // `serviceLink`/`shopName`/`shopLogo` above). `true` iff the upstream `sale_type == 2`;
     // always present on the wire, independent of `type`/`liveStatus`.
     let isFlashSale: Bool
+    // flash-sale-goods-fields-flutter-core: raw top-level `channel.saleKeywordRequired`
+    // passthrough (same shape as `isFlashSale`). Part of the dedupe value so a flip alone
+    // re-emits `channelChange`.
+    let saleKeywordRequired: Bool
     // channel-notice-bridge-core-flutter: raw `channel.notice` / `channel.sysNotice`
     // free-text announcement passthrough — TOP-LEVEL `LBChannel` fields (same shape as
     // `isFlashSale` above, NOT nested under `channel.shop`). Populated at channel-load
@@ -726,6 +777,7 @@ private struct ChannelChromeSnapshot: Equatable {
         diversion = channel.diversion
         otherGoods = channel.otherGoods.map(GoodsFingerprint.init)
         isFlashSale = channel.isFlashSale
+        saleKeywordRequired = channel.saleKeywordRequired
         notice = channel.notice
         sysNotice = channel.sysNotice
     }
@@ -734,7 +786,8 @@ private struct ChannelChromeSnapshot: Equatable {
 /// Lightweight `Equatable` fingerprint of an `LBProduct`'s dedupe-relevant scalar
 /// fields, used ONLY for `ChannelChromeSnapshot`'s whole-value dedupe comparison
 /// (product-list-bridge-core-flutter). Covers `id`/`name`/`price`/`stock`/`soldOut`/
-/// `narrateStatus`/`beginTime`/`endTime` — the fields most likely to change between
+/// `narrateStatus`/`beginTime`/`endTime` (plus, since flash-sale-goods-fields-flutter-core,
+/// `buyingNum`/`totalBuyingNum`/`limitNum` and their spec-level counterparts) — the fields most likely to change between
 /// two channel-load snapshots (a mid-stream re-fetch adding/removing/updating
 /// products) — NOT a full field-by-field mirror of `LBProduct` (nested
 /// `specifications`/`specOptions`/`photos` are intentionally excluded; see design.md
@@ -748,6 +801,15 @@ private struct GoodsFingerprint: Equatable {
     let narrateStatus: Int
     let beginTime: Int?
     let endTime: Int?
+    // flash-sale-goods-fields-flutter-core: flash-sale counts change mid-live (a viewer's
+    // bid lands, the session total grows) while every field above stays the same, so they
+    // are part of the dedupe value — otherwise `channelChange` / `momentStateChange` would
+    // swallow the update. Spec-level counts ride along in `specCounts` (the rest of
+    // `specifications` stays excluded, see above).
+    let buyingNum: Int
+    let totalBuyingNum: Int
+    let limitNum: Int
+    let specCounts: [SpecCountsFingerprint]
 
     init(_ product: LBProduct) {
         id = product.id
@@ -758,6 +820,26 @@ private struct GoodsFingerprint: Equatable {
         narrateStatus = product.narrateStatus
         beginTime = product.beginTime
         endTime = product.endTime
+        buyingNum = product.buyingNum
+        totalBuyingNum = product.totalBuyingNum
+        limitNum = product.limitNum
+        specCounts = product.specifications.map(SpecCountsFingerprint.init)
+    }
+}
+
+/// flash-sale-goods-fields-flutter-core: spec-level flash-sale counts, used ONLY inside
+/// `GoodsFingerprint` for dedupe (`LBSpec` is not `Equatable`).
+private struct SpecCountsFingerprint: Equatable {
+    let id: String
+    let buyingNum: Int
+    let totalBuyingNum: Int
+    let limitNum: Int
+
+    init(_ spec: LBSpec) {
+        id = spec.id
+        buyingNum = spec.buyingNum
+        totalBuyingNum = spec.totalBuyingNum
+        limitNum = spec.limitNum
     }
 }
 
@@ -865,7 +947,7 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
     private var lastSubtitleChannelId: String?
 
     // player-channel-chrome-bridge-core-flutter: last channel-chrome snapshot we
-    // emitted a `channelChange` payload for (ALL 18 projected fields, not just
+    // emitted a `channelChange` payload for (ALL 19 projected fields, not just
     // channel id — an upcoming→live `liveStatus` flip keeps the same id but IS a
     // real change this event must still carry). Independent of
     // `lastSubtitleChannelId` above — the two piggybacks do not share dedupe state.
@@ -968,6 +1050,9 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
                         // channel-flash-sale-flag-core-flutter: raw top-level
                         // `channel.isFlashSale` passthrough (NOT `ch.shop.isFlashSale`).
                         "isFlashSale": ch.isFlashSale,
+                        // flash-sale-goods-fields-flutter-core: raw top-level
+                        // `channel.saleKeywordRequired` passthrough.
+                        "saleKeywordRequired": ch.saleKeywordRequired,
                         // channel-notice-bridge-core-flutter: raw top-level
                         // `channel.notice` / `channel.sysNotice` passthrough (NOT
                         // `ch.shop.notice` / `ch.shop.sysNotice`).
@@ -1269,6 +1354,13 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
             "isAwait": product.isAwait,
             "isAwaitNotice": product.isAwaitNotice,
             "diversionUrl": product.diversionUrl,
+            // live-bid-flutter-core: flash-sale keyword (camelCase, always present, possibly "").
+            "saleKeyword": product.saleKeyword,
+            // flash-sale-goods-fields-flutter-core: flash-sale counts (camelCase, always
+            // present, 0 when none).
+            "buyingNum": product.buyingNum,
+            "totalBuyingNum": product.totalBuyingNum,
+            "limitNum": product.limitNum,
             "specifications": product.specifications.map { spec in
                 [
                     "id": spec.id,
@@ -1280,6 +1372,12 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
                     "originalPriceShow": spec.originalPriceShow,
                     "stock": spec.stock,
                     "photos": spec.photos,
+                    // live-bid-flutter-core: spec-level flash-sale keyword ("" when none).
+                    "saleKeyword": spec.saleKeyword,
+                    // flash-sale-goods-fields-flutter-core: spec-level counts (0 when none).
+                    "buyingNum": spec.buyingNum,
+                    "totalBuyingNum": spec.totalBuyingNum,
+                    "limitNum": spec.limitNum,
                 ]
             },
             "specOptions": product.specOptions.map { opt in
@@ -1698,6 +1796,39 @@ func flutterPutBackendErrorCode(_ code: String?, into payload: inout [String: An
     payload[flutterBackendErrorCodeKey] = code
 }
 
+// MARK: - live-bid-flutter-core — bid wire helpers
+
+/// `placeBid` reply dict (`{buyingId, goodsId, specificationId, num}`), decoded by Dart
+/// `LBBidResult.fromMap`.
+func flutterBidResultBody(_ bid: LBBidResult) -> [String: Any] {
+    ["buyingId": bid.buyingId, "goodsId": bid.goodsId,
+     "specificationId": bid.specificationId, "num": bid.num]
+}
+
+/// One `confirmBidWin` reply item; `errorCode` omitted on success (Dart reads it as null).
+func flutterBidConfirmItemBody(_ item: LBBidConfirmItem) -> [String: Any] {
+    var body: [String: Any] = ["buyingId": item.buyingId]
+    if let code = item.errorCode { body["errorCode"] = code }
+    return body
+}
+
+/// Error wire shared by `placeBid` / `confirmBidWin` (same mapping as `addToCart`). Build it
+/// inside the `catch`, before the main-queue hop (see `flutterBackendErrorCode(of:)`).
+func flutterBidFlutterError(_ error: Error) -> FlutterError {
+    let details = flutterBackendErrorDetails(for: error)
+    if let lbError = error as? LBError {
+        if case .cartAddDeduplicated = lbError {
+            return FlutterError(code: "cart_add_deduplicated",
+                                message: "Bid already in flight for this product.", details: nil)
+        }
+        if case .serverError(let code, let message) = lbError {
+            return FlutterError(code: String(code), message: message, details: details)
+        }
+        return FlutterError(code: "LB_ERROR", message: lbError.localizedDescription, details: details)
+    }
+    return FlutterError(code: "LB_ERROR", message: error.localizedDescription, details: details)
+}
+
 /// `replayChatRevealed` comment dict: the 7 existing keys + raw keys `is_anonymous` /
 /// `host_name` / `reply_template` (omitted when nil, as in the core's `CHAT_HISTORY_LOADED`
 /// comments) + `composed_text` / `composed_name` / `composed_reply` (always present; equal to
@@ -1770,7 +1901,15 @@ private func flutterLBProductFromArgs(_ map: [String: Any]) -> LBProduct? {
         // add-product-video-id-core-flutter: reverse path for simulate* test
         // hooks; missing key → nil (same "as? String" tolerant convention as
         // the other optional fields above).
-        videoId: map["videoId"] as? String)
+        videoId: map["videoId"] as? String,
+        // live-bid-flutter-core: reverse path for simulate* hooks; missing → "".
+        // Native init declares `saleKeyword` after `videoId`.
+        saleKeyword: map["saleKeyword"] as? String ?? "",
+        // flash-sale-goods-fields-flutter-core: reverse path for simulate* hooks; missing /
+        // non-number → 0. Native init declares these three last (after `saleKeyword`).
+        buyingNum: (map["buyingNum"] as? NSNumber)?.intValue ?? 0,
+        totalBuyingNum: (map["totalBuyingNum"] as? NSNumber)?.intValue ?? 0,
+        limitNum: (map["limitNum"] as? NSNumber)?.intValue ?? 0)
 }
 
 private func flutterLBWinnerFromArgs(_ map: [String: Any]) -> LBWinner? {
@@ -1798,7 +1937,12 @@ private func flutterLBSpecFromArgs(_ map: [String: Any]) -> LBSpec? {
         originalPrice: flutterOriginalPrice(map["originalPrice"]),
         originalPriceShow: map["originalPriceShow"] as? String ?? "",
         stock: (map["stock"] as? NSNumber)?.intValue ?? 0,
-        photos: map["photos"] as? [String] ?? [])
+        photos: map["photos"] as? [String] ?? [],
+        saleKeyword: map["saleKeyword"] as? String ?? "",
+        // flash-sale-goods-fields-flutter-core: missing / non-number → 0.
+        buyingNum: (map["buyingNum"] as? NSNumber)?.intValue ?? 0,
+        totalBuyingNum: (map["totalBuyingNum"] as? NSNumber)?.intValue ?? 0,
+        limitNum: (map["limitNum"] as? NSNumber)?.intValue ?? 0)
 }
 
 private func flutterLBHotItemFromArgs(_ map: [String: Any]) -> LBHotItem? {

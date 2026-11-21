@@ -38,7 +38,12 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show isFinishedLiveR
 /// `handleHeaderChrome(isFlashSale:)` parameter this derivation now actually feeds —
 /// rb-flutter-flash-sale-live-signal-wiring). Independent of `isLive` /
 /// `isFinishedLiveReplay` — a flash-sale channel can be live, VOD, or a finished replay, and
-/// this field does not gate or interact with either. Returns a record — a one-off
+/// this field does not gate or interact with either. `saleKeywordRequired` ←
+/// `info.saleKeywordRequired` verbatim raw passthrough (rb-flutter-flash-sale-bid; the field is on
+/// `LBPlayerChannelInfo` since flash-sale-goods-fields-flutter-core, and live-bid-flutter-template
+/// added the `handleHeaderChrome(saleKeywordRequired:)` parameter it feeds) — lets the view-model
+/// hide the buy button for a 直播管家 flash-sale product with no keyword (parity iOS / Android
+/// `ingestChannel`, RN `deriveHeaderChromeFields`). Returns a record — a one-off
 /// structural value with no identity/methods, matching this file's existing
 /// `({int eid, String keyword})?` convention rather than a new named class.
 ({
@@ -49,6 +54,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show isFinishedLiveR
   bool isLive,
   bool isFinishedLiveReplay,
   bool isFlashSale,
+  bool saleKeywordRequired,
 }) deriveHeaderChromeFields(LBPlayerChannelInfo info) => (
       title: info.title,
       hostName: info.shopName,
@@ -57,6 +63,7 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart' show isFinishedLiveR
       isLive: info.liveStatus == 1,
       isFinishedLiveReplay: isFinishedLiveReplay(info.type, info.liveStatus),
       isFlashSale: info.isFlashSale,
+      saleKeywordRequired: info.saleKeywordRequired,
     );
 
 /// Derive the side-rail「聯繫商家」enabled flag from the channel's serviceLink

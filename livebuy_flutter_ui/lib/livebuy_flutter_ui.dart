@@ -11,6 +11,7 @@ export 'src/default_error_state.dart';
 export 'src/default_goods_tracking.dart';
 export 'src/default_identity_label.dart';
 export 'src/default_info_tab.dart';
+export 'src/default_live_bid.dart';
 export 'src/default_moment_state.dart';
 export 'src/default_notice_tab.dart';
 export 'src/default_operation_rail.dart';

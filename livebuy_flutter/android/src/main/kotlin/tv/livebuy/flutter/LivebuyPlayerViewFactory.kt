@@ -182,6 +182,9 @@ class LivebuyFlutterPlayerView(
                     // channel-flash-sale-flag-core-flutter: raw top-level
                     // `channel.isFlashSale` passthrough (NOT `ch.shop.isFlashSale`).
                     isFlashSale = ch.isFlashSale,
+                    // flash-sale-goods-fields-flutter-core: raw top-level
+                    // `channel.saleKeywordRequired` passthrough.
+                    saleKeywordRequired = ch.saleKeywordRequired,
                     // channel-notice-bridge-core-flutter: raw top-level
                     // `channel.notice` / `channel.sysNotice` passthrough (NOT
                     // `ch.shop.notice` / `ch.shop.sysNotice`).
@@ -930,6 +933,14 @@ private fun productToMap(product: LBProduct): Map<String, Any?> {
         "beginTime" to product.beginTime,
         "endTime" to product.endTime,
         "diversionUrl" to product.diversionUrl,
+        // live-bid-flutter-core: flash-sale keyword (camelCase, always present, possibly "").
+        "saleKeyword" to product.saleKeyword,
+        // flash-sale-goods-fields-flutter-core: flash-sale counts (camelCase, always present,
+        // 0 when none). Also part of the `channelChange` / `momentStateChange` dedupe value,
+        // since those snapshots compare these wire maps structurally.
+        "buyingNum" to product.buyingNum,
+        "totalBuyingNum" to product.totalBuyingNum,
+        "limitNum" to product.limitNum,
         "specifications" to product.specifications.map { spec ->
             mapOf(
                 "id" to spec.id,
@@ -941,6 +952,12 @@ private fun productToMap(product: LBProduct): Map<String, Any?> {
                 "originalPriceShow" to spec.originalPriceShow,
                 "stock" to spec.stock,
                 "photos" to spec.photos,
+                // live-bid-flutter-core: spec-level flash-sale keyword ("" when none).
+                "saleKeyword" to spec.saleKeyword,
+                // flash-sale-goods-fields-flutter-core: spec-level counts (0 when none).
+                "buyingNum" to spec.buyingNum,
+                "totalBuyingNum" to spec.totalBuyingNum,
+                "limitNum" to spec.limitNum,
             )
         },
         "specOptions" to product.specOptions.map { opt ->
@@ -1046,6 +1063,13 @@ private fun lbProductFrom(map: Map<*, *>?): LBProduct? {
         // hooks; missing key → null (same "as? String" tolerant convention as
         // the other optional fields above).
         videoId = map["videoId"] as? String,
+        // live-bid-flutter-core: reverse path for simulate* hooks; missing → "".
+        saleKeyword = map["saleKeyword"] as? String ?: "",
+        // flash-sale-goods-fields-flutter-core: reverse path for simulate* hooks; missing /
+        // non-number → 0.
+        buyingNum = (map["buyingNum"] as? Number)?.toInt() ?: 0,
+        totalBuyingNum = (map["totalBuyingNum"] as? Number)?.toInt() ?: 0,
+        limitNum = (map["limitNum"] as? Number)?.toInt() ?: 0,
     )
 }
 
@@ -1078,6 +1102,10 @@ private fun lbSpecFrom(map: Map<*, *>?): LBSpec? {
         originalPriceShow = map["originalPriceShow"] as? String ?: "",
         stock = (map["stock"] as? Number)?.toInt() ?: 0,
         photos = flutterStringList(map["photos"]),
+        saleKeyword = map["saleKeyword"] as? String ?: "",
+        buyingNum = (map["buyingNum"] as? Number)?.toInt() ?: 0,
+        totalBuyingNum = (map["totalBuyingNum"] as? Number)?.toInt() ?: 0,
+        limitNum = (map["limitNum"] as? Number)?.toInt() ?: 0,
     )
 }
 

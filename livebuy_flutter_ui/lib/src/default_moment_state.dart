@@ -488,6 +488,10 @@ class DefaultPlayerHeaderState extends ChangeNotifier {
   // `_isFinishedLiveReplay` — a flash-sale channel can be live, VOD, or a replay;
   // this flag does NOT gate or interact with either. Default false.
   bool _isFlashSale = false;
+  // live-bid-flutter-template — 直播管家搶購場「商品需要關鍵字」flag, host-fed raw passthrough
+  // (source: `LBPlayerChannelInfo.saleKeywordRequired` ← `channel.saleKeywordRequired`). 接法同
+  // `_isFlashSale`。Default false.
+  bool _saleKeywordRequired = false;
 
   bool get isSubscribed => _isSubscribed;
   int get viewerCount => _viewerCount;
@@ -513,6 +517,11 @@ class DefaultPlayerHeaderState extends ChangeNotifier {
   /// （channel-flash-sale-flag-template-flutter；Flutter-only，其餘三端 template 層尚未落地，
   /// 各自獨立處理不在本 change 範圍）。
   bool get isFlashSale => _isFlashSale;
+
+  /// 直播管家搶購場需要商品關鍵字 flag — host-fed raw passthrough of
+  /// `channel.saleKeywordRequired`（live-bid-flutter-template，parity iOS / Android / RN）。為 true 且
+  /// 商品 `saleKeyword` 為空時，商品明細 `buyButtonHidden` 為 true。不綁直播狀態。Default `false`.
+  bool get saleKeywordRequired => _saleKeywordRequired;
 
   /// Host-pill title (= `channel.title`). Empty until channel loads (D3).
   String get title => _title;
@@ -551,6 +560,9 @@ class DefaultPlayerHeaderState extends ChangeNotifier {
     // 搶購中 flag — host-fed raw passthrough of `channel.isFlashSale`. 與 isLive /
     // isFinishedLiveReplay 為獨立軸，互不影響。Default false（源碼相容）。
     bool isFlashSale = false,
+    // 直播管家搶購場需要商品關鍵字 — host-fed raw passthrough of `channel.saleKeywordRequired`
+    // (live-bid-flutter-template). Default false（源碼相容）。
+    bool saleKeywordRequired = false,
   }) {
     if (title == _title &&
         hostName == _hostName &&
@@ -558,7 +570,8 @@ class DefaultPlayerHeaderState extends ChangeNotifier {
         shareUrl == _shareUrl &&
         isLive == _isLive &&
         isFinishedLiveReplay == _isFinishedLiveReplay &&
-        isFlashSale == _isFlashSale) {
+        isFlashSale == _isFlashSale &&
+        saleKeywordRequired == _saleKeywordRequired) {
       return;
     }
     _title = title;
@@ -568,6 +581,7 @@ class DefaultPlayerHeaderState extends ChangeNotifier {
     _isLive = isLive;
     _isFinishedLiveReplay = isFinishedLiveReplay;
     _isFlashSale = isFlashSale;
+    _saleKeywordRequired = saleKeywordRequired;
     notifyListeners();
   }
 

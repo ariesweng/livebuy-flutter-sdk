@@ -4,14 +4,15 @@ package tv.livebuy.flutter
 // Android bridge's `channelChange` EventChannel emit. MIRRORS the iOS bridge's private
 // `ChannelChromeSnapshot` struct + emit logic (identical logic; a separate copy because the iOS
 // Swift source is not on this module's classpath) — parallels this same package's
-// `SubtitleChannelBridge` structure, but the dedupe key here covers the FULL 18-field projection
+// `SubtitleChannelBridge` structure, but the dedupe key here covers the FULL 19-field projection
 // (channel-type-bridge-core-flutter added the 10th, `type`; product-list-bridge-core-flutter
 // added the 11th, `goods`; channel-shop-intro-bridge-core-flutter added the 12th, `shopIntro`;
 // guest-comment-channel-bridge-core-flutter added the 13th, `guestComment`;
 // channel-diversion-bridge-core-flutter added the 14th, `diversion`;
 // rb-flutter-other-goods-channel-bridge-core added the 15th, `otherGoods`;
 // channel-flash-sale-flag-core-flutter added the 16th, `isFlashSale`;
-// channel-notice-bridge-core-flutter added the 17th/18th, `notice`/`sysNotice`),
+// channel-notice-bridge-core-flutter added the 17th/18th, `notice`/`sysNotice`;
+// flash-sale-goods-fields-flutter-core added the 19th, `saleKeywordRequired`),
 // NOT a single channel id: a channel can flip `liveStatus` (upcoming →
 // live, the 30s preview poll) while keeping the same id, and that IS a real change this event
 // must still carry.
@@ -24,7 +25,7 @@ package tv.livebuy.flutter
 object ChannelChromeBridge {
 
     /**
-     * The 18 fields projected from a loaded `LBChannel` onto the `channelChange` wire payload.
+     * The 19 fields projected from a loaded `LBChannel` onto the `channelChange` wire payload.
      * Compared AS A WHOLE by [shouldEmit] — not just [liveStatus] or a channel id — so that any
      * single field change (most notably an upcoming→live `liveStatus` flip on the SAME channel)
      * is not silently dropped by a narrower id-only dedupe key. Unlike the iOS bridge's mirrored
@@ -67,6 +68,12 @@ object ChannelChromeBridge {
         // [serviceLink] / [shopName] / [shopLogo] above). `true` iff the upstream
         // `sale_type == 2`; always present on the wire, independent of [type] / [liveStatus].
         val isFlashSale: Boolean,
+        // flash-sale-goods-fields-flutter-core: raw top-level `channel.saleKeywordRequired`
+        // passthrough (same shape as [isFlashSale]). Part of the whole-snapshot dedupe, so a
+        // flip alone re-emits `channelChange`. (Flash-sale counts `buyingNum` /
+        // `totalBuyingNum` / `limitNum` need nothing here: they are inside the wire maps in
+        // [goods] / [otherGoods], which structural `equals()` already compares.)
+        val saleKeywordRequired: Boolean,
         // channel-notice-bridge-core-flutter: raw `channel.notice` / `channel.sysNotice`
         // free-text announcement passthrough — TOP-LEVEL `LBChannel` fields (same shape as
         // [isFlashSale] above, NOT nested under `channel.shop`). Populated at channel-load
@@ -78,7 +85,7 @@ object ChannelChromeBridge {
 
     /**
      * Dedupe gate: should we (re-)emit `channelChange` for [current], given the [last] snapshot we
-     * emitted (`null` on the very first emit → always true)? Re-emits whenever ANY of the 18
+     * emitted (`null` on the very first emit → always true)? Re-emits whenever ANY of the 19
      * projected fields differs from the last emitted snapshot.
      */
     fun shouldEmit(current: Snapshot, last: Snapshot?): Boolean = current != last
@@ -105,6 +112,7 @@ object ChannelChromeBridge {
         "diversion" to snapshot.diversion,
         "otherGoods" to snapshot.otherGoods,
         "isFlashSale" to snapshot.isFlashSale,
+        "saleKeywordRequired" to snapshot.saleKeywordRequired,
         "notice" to snapshot.notice,
         "sysNotice" to snapshot.sysNotice,
     )

@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:livebuy_flutter/livebuy_flutter.dart';
 
+import 'default_live_bid.dart';
+
 // product-sheet-stack-template — Default template 商品 sheet-stack view-models
 // (behaviour / view-model layer; NO pixels).
 //
@@ -141,6 +143,17 @@ class LBProductDetailState {
   /// 時為空清單。
   final List<LBProductRecommendation> recommendations;
 
+  /// 搶購場直播中且商品 `buyingNum > 0`（觀眾已下標、等待結果）時為 true（live-bid-flutter-template）。
+  final bool bidWaiting;
+
+  /// 有效每人限購（搶購場直播中：已選規格 `limitNum > 0` 優先，否則商品層；非搶購場直播中為 0）。
+  /// 選規格後由 template 重算（live-bid-flutter-template）。
+  final int limitNum;
+
+  /// 直播管家搶購場需要關鍵字（`saleKeywordRequired`）而商品 `saleKeyword` 為空 → 隱藏購買鈕；
+  /// 不綁直播狀態（live-bid-flutter-template）。
+  final bool buyButtonHidden;
+
   const LBProductDetailState({
     required this.productId,
     required this.name,
@@ -153,7 +166,38 @@ class LBProductDetailState {
     this.specifications = const [],
     this.specOptions = const [],
     this.recommendations = const [],
+    this.bidWaiting = false,
+    this.limitNum = 0,
+    this.buyButtonHidden = false,
   });
+
+  /// Copy with a new [limitNum] (選規格後重算限購用); every other field unchanged.
+  LBProductDetailState withLimitNum(int limitNum) => LBProductDetailState(
+        productId: productId,
+        name: name,
+        priceShow: priceShow,
+        originalPriceShow: originalPriceShow,
+        price: price,
+        stock: stock,
+        soldOut: soldOut,
+        photos: photos,
+        specifications: specifications,
+        specOptions: specOptions,
+        recommendations: recommendations,
+        bidWaiting: bidWaiting,
+        limitNum: limitNum,
+        buyButtonHidden: buyButtonHidden,
+      );
+}
+
+/// 開啟商品明細時的搶購上下文（live-bid-flutter-template）：[bidMode] = 搶購場直播中
+/// （`header.isFlashSale && header.isLive`），[saleKeywordRequired] = `header.saleKeywordRequired`。
+/// 預設皆 false = 一般場（明細的三個搶購欄位維持預設值）。
+@immutable
+class LBDetailBidContext {
+  final bool bidMode;
+  final bool saleKeywordRequired;
+  const LBDetailBidContext({this.bidMode = false, this.saleKeywordRequired = false});
 }
 
 /// product-detail view-model — the latest `diversion==0` product mapped from
@@ -172,8 +216,15 @@ class DefaultProductSheet extends ChangeNotifier {
   /// [LBProductDetailState.recommendations] via [recommendationsFromOtherGoods]
   /// (expose-other-goods-recommendations-template). Always notifies (a fresh
   /// productTap is a real open even if the same id).
+  ///
+  /// [bid] (live-bid-flutter-template) derives [LBProductDetailState.bidWaiting] /
+  /// `limitNum`（商品層，選規格後由 [updateLimitNum] 重算）/ `buyButtonHidden`.
   @internal
-  void openDetail(LBProduct product, [List<LBProduct> otherGoods = const []]) {
+  void openDetail(
+    LBProduct product, [
+    List<LBProduct> otherGoods = const [],
+    LBDetailBidContext bid = const LBDetailBidContext(),
+  ]) {
     _detail = LBProductDetailState(
       productId: product.id,
       name: product.name,
@@ -187,7 +238,19 @@ class DefaultProductSheet extends ChangeNotifier {
       specifications: List.of(product.specifications),
       specOptions: List.of(product.specOptions),
       recommendations: recommendationsFromOtherGoods(otherGoods, product.id),
+      bidWaiting: bid.bidMode && product.buyingNum > 0,
+      limitNum: effectiveLimitNum(product.limitNum, null, bid.bidMode),
+      buyButtonHidden: isBuyButtonHidden(product, bid.saleKeywordRequired),
     );
+    notifyListeners();
+  }
+
+  /// 選規格後重算有效限購（live-bid-flutter-template）。沒有明細或值相同 → no-op；有變更才通知。
+  @internal
+  void updateLimitNum(int limitNum) {
+    final detail = _detail;
+    if (detail == null || detail.limitNum == limitNum) return;
+    _detail = detail.withLimitNum(limitNum);
     notifyListeners();
   }
 
@@ -550,15 +613,19 @@ class DefaultQtyStepper extends ChangeNotifier {
   /// `qty` into the new range (D3). [resetQty] true (a freshly-opened product)
   /// resets `qty` to `min`; false (a spec switch) keeps `qty` but clamps it.
   /// Notifies only on a real change.
+  ///
+  /// [limit] (live-bid-flutter-template) — 有效每人限購；`> 0` 時 `max = min(stock, limit)`，
+  /// 否則照舊為 stock。
   @internal
   void recomputeBounds({
     required int stock,
     required int soldOut,
     bool resetQty = false,
+    int limit = 0,
   }) {
     final out = soldOut == 1 || stock <= 0;
     final min = out ? 0 : 1;
-    final max = out ? 0 : stock;
+    final max = out ? 0 : (limit > 0 && limit < stock ? limit : stock);
     var qty = resetQty ? min : _state.qty;
     if (qty < min) qty = min;
     if (qty > max) qty = max;

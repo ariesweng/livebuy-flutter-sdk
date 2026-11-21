@@ -568,6 +568,62 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                 }
             }
 
+            // live-bid-flutter-core — flash-sale bid, thin forwarding to the native core
+            // (`LivebuySDK.placeBid` / `LivebuySDK.confirmBidWin`, live-bid-android-core). Error wire
+            // is the same as addToCart: in-flight dedupe → `cart_add_deduplicated`; ServerError →
+            // code.toString() (+ `backend_error_code` details); anything else → `LB_ERROR`.
+            // NOTE: not compile-verified in this repo — needs a native pin that ships live-bid.
+            "placeBid" -> {
+                val videoId: String = call.argument("videoId")
+                    ?: return result.error("LB_ERROR", "placeBid requires videoId", null)
+                val goodsId: Int = (call.argument<Number?>("goodsId"))?.toInt()
+                    ?: return result.error("LB_ERROR", "placeBid requires goodsId", null)
+                val num: Int = (call.argument<Number?>("num"))?.toInt()
+                    ?: return result.error("LB_ERROR", "placeBid requires num", null)
+                val specificationId: Int? = (call.argument<Number?>("specificationId"))?.toInt()
+                pluginScope.launch {
+                    try {
+                        val bid = LivebuySDK.placeBid(
+                            videoId = videoId,
+                            goodsId = goodsId,
+                            specificationId = specificationId,
+                            num = num,
+                        )
+                        val out = mapOf(
+                            "buyingId" to bid.buyingId,
+                            "goodsId" to bid.goodsId,
+                            "specificationId" to bid.specificationId,
+                            "num" to bid.num,
+                        )
+                        mainHandler.post { result.success(out) }
+                    } catch (t: Throwable) {
+                        postBidError(result, t, "placeBid failed")
+                    }
+                }
+            }
+
+            "confirmBidWin" -> {
+                val videoId: String = call.argument("videoId")
+                    ?: return result.error("LB_ERROR", "confirmBidWin requires videoId", null)
+                // live-bid-parity-align-flutter-core: 64-bit ids (backend bigint) — toLong, not toInt.
+                val buyingIds: List<Long> =
+                    (call.argument<List<Number>?>("buyingIds"))?.map { it.toLong() } ?: emptyList()
+                pluginScope.launch {
+                    try {
+                        val items = LivebuySDK.confirmBidWin(videoId = videoId, buyingIds = buyingIds)
+                        val out = items.map { item ->
+                            val m = mutableMapOf<String, Any?>("buyingId" to item.buyingId)
+                            // errorCode omitted on success (Dart reads it as null).
+                            item.errorCode?.let { m["errorCode"] = it }
+                            m
+                        }
+                        mainHandler.post { result.success(out) }
+                    } catch (t: Throwable) {
+                        postBidError(result, t, "confirmBidWin failed")
+                    }
+                }
+            }
+
             // addcart-track ④ — token 平台結帳前回報 cart token (POST /sdk/video/addcart/track).
             "reportCartTrack" -> {
                 val shopId: String = call.argument("shopId")
@@ -651,6 +707,24 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
             }
 
             else -> result.notImplemented()
+        }
+    }
+
+    /**
+     * live-bid-flutter-core — error wire shared by `placeBid` / `confirmBidWin` (same mapping as
+     * `addToCart`). The backend code is read here, before posting (the core's `object` error
+     * subtypes are singletons whose code reflects the latest response).
+     */
+    private fun postBidError(result: Result, t: Throwable, fallback: String) {
+        val details = BackendErrorCodeBridge.detailsFor(t)
+        when (t) {
+            is LBError.CartAddDeduplicated -> mainHandler.post {
+                result.error("cart_add_deduplicated", "Bid already in flight for this product.", null)
+            }
+            is LBError.ServerError -> mainHandler.post {
+                result.error(t.code.toString(), t.message, details)
+            }
+            else -> mainHandler.post { result.error("LB_ERROR", t.message ?: fallback, details) }
         }
     }
 

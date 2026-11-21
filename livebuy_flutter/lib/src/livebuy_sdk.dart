@@ -599,6 +599,163 @@ class LivebuySDK {
     }
   }
 
+  // MARK: - Flash-sale bid (live-bid-flutter-core)
+
+  /// Place a flash-sale bid (搶購場下標, live-bid-flutter-core; parity iOS
+  /// `Livebuy.placeBid(videoId:goodsId:specificationId:num:)` / Android
+  /// `LivebuySDK.placeBid(videoId, goodsId, specificationId, num)`). The native core
+  /// calls `POST /sdk/video/bid` and resolves with [LBBidResult]. Pass
+  /// [specificationId] only for a product with named specifications (omitted →
+  /// no `specification_id` is sent). It does not call addcart, does not use the
+  /// 30 s add-to-cart dedupe window and sends no `goods_cart` stat.
+  ///
+  /// Behaviour (all in the native core; Dart only forwards):
+  /// - **Login required.** A guest call sends no request: the native core
+  ///   dispatches `AUTH_REQUIRED` (`trigger_action: 'bid_place'`, `video_id`,
+  ///   `retry_token`) and this throws [LBErrorServer] with `code == 401`. After
+  ///   the viewer logs in, [retryPendingAction] with that token re-places the bid.
+  /// - **In-flight dedupe.** While a bid for the same `(videoId, goodsId,
+  ///   specificationId)` is still pending, a second call throws
+  ///   [LBErrorCartAddDeduplicated] without sending a request.
+  /// - Backend failure → [LBErrorServer] whose [LBError.backendErrorCode] carries
+  ///   the raw backend `error_code` (e.g. `out_of_stock`,
+  ///   `purchase_limit_exceeded`) when the backend sent one. Non-numeric native
+  ///   errors (`LB_ERROR`, e.g. not configured) are rethrown as the raw
+  ///   [PlatformException].
+  ///
+  /// Once the request was sent, the native core also dispatches the notification
+  /// event [LBEvent.bidPlaceResult] (`BID_PLACE_RESULT`) — for this call and for
+  /// the bids the core places itself when a viewer's chat message matches a
+  /// product's `saleKeyword` + quantity (e.g. `A紅+2`). Its params reach your
+  /// [LBEventListener] unchanged (no typed model, read the raw map):
+  ///
+  /// | key | type | when |
+  /// |---|---|---|
+  /// | `status` | String | always: `placed` (success) or `failed` |
+  /// | `video_id` | String | always |
+  /// | `product_id` | String | always |
+  /// | `specification_id` | String | always (`''` when there is no specification) |
+  /// | `num` | int | always |
+  /// | `is_keyword` | bool | always (`true` for a chat-keyword bid) |
+  /// | `buying_id` | String | `placed` only |
+  /// | `backend_error_code` | String | `failed`, when the backend sent one |
+  /// | `limit_num` / `buying_num` | int | `failed` with `purchase_limit_exceeded` |
+  ///
+  /// Keys without a value are omitted. No `BID_PLACE_RESULT` is dispatched when no
+  /// request was sent (guest, in-flight dedupe, SDK not configured).
+  ///
+  /// After the shop marks a win, the native Player orders it automatically and
+  /// dispatches `CART_ADD_REQUEST` (`cart_origin: 'bid_won'`, see
+  /// [LBCartAddRequest.cartOrigin]) followed by [LBEvent.bidWon] (`BID_WON`) —
+  /// see [confirmBidWin] for its params.
+  static Future<LBBidResult> placeBid({
+    required String videoId,
+    required int goodsId,
+    int? specificationId,
+    required int num,
+  }) async {
+    final args = <String, Object?>{
+      'videoId': videoId,
+      'goodsId': goodsId,
+      'num': num,
+    };
+    if (specificationId != null) args['specificationId'] = specificationId;
+    try {
+      final raw = await _channel.invokeMethod<Map<Object?, Object?>>('placeBid', args);
+      return LBBidResult.fromMap(raw ?? const {});
+    } on PlatformException catch (e) {
+      throw _typedBidError(e);
+    }
+  }
+
+  /// Confirm flash-sale wins after the viewer has seen them (得標確認,
+  /// live-bid-flutter-core; parity iOS `Livebuy.confirmBidWin(videoId:buyingIds:)`
+  /// / Android `LivebuySDK.confirmBidWin(videoId, buyingIds)`). The native core
+  /// calls `POST /sdk/video/bidconfirm`, which only marks the records as read
+  /// (the back office then stops the LINE / Telegram unread reminders). The SDK
+  /// never calls it by itself and it dispatches no event.
+  ///
+  /// Call it only after `BID_WON` arrived (the SDK has ordered the win already);
+  /// confirming first makes the order step fail for 168+EC shops. `BID_WON`'s
+  /// `buying_id` is a String — pass it as is: [buyingIds] accepts `int` and
+  /// numeric `String` values (live-bid-parity-align-flutter-core, parity with the
+  /// iOS / Android String overloads). Other values, and strings that are not a
+  /// plain integer, are skipped; when nothing is left no request is sent and `[]`
+  /// is returned.
+  ///
+  /// Resolves with one [LBBidConfirmItem] per backend item (same order); a
+  /// per-item failure (e.g. `bid_not_found`) does not throw. A guest call sends
+  /// no request and throws [LBErrorServer] `code == 401` (no `AUTH_REQUIRED`).
+  /// A failed request throws [LBErrorServer] (with [LBError.backendErrorCode]
+  /// when the backend sent one) or the raw [PlatformException] for non-numeric
+  /// native errors.
+  ///
+  /// `BID_WON` params (notification event, reaches your [LBEventListener]
+  /// unchanged; no typed model):
+  ///
+  /// | key | type | when |
+  /// |---|---|---|
+  /// | `status` | String | always: `ordered` or `failed` |
+  /// | `video_id` / `buying_id` / `product_id` / `name` | String | always |
+  /// | `specification_id` | String | always (`''` when there is no specification) |
+  /// | `num` | int | always |
+  /// | `shop_cart_synced` | bool | `ordered` only |
+  /// | `buy_no` | String | `ordered`, when the order number is not empty |
+  /// | `backend_error_code` | String | `failed`, when there is one |
+  ///
+  /// An `ordered` `BID_WON` always follows its `CART_ADD_REQUEST`
+  /// (`cart_origin: 'bid_won'`); a `failed` one has no `CART_ADD_REQUEST`. Each
+  /// `buying_id` is reported once per video.
+  static Future<List<LBBidConfirmItem>> confirmBidWin(
+    String videoId,
+    List<Object> buyingIds,
+  ) async {
+    final ids = normalizeBuyingIds(buyingIds);
+    if (ids.isEmpty) return const [];
+    try {
+      final raw = await _channel.invokeListMethod<Object?>('confirmBidWin', {
+        'videoId': videoId,
+        'buyingIds': ids,
+      });
+      return (raw ?? const [])
+          .whereType<Map>()
+          .map((e) => LBBidConfirmItem.fromMap(Map<Object?, Object?>.from(e)))
+          .toList();
+    } on PlatformException catch (e) {
+      throw _typedBidError(e);
+    }
+  }
+
+  /// `int` values kept; `String` values kept only when they are a plain integer
+  /// (`^[+-]?\d+$`); everything else skipped. Order preserved.
+  @visibleForTesting
+  static List<int> normalizeBuyingIds(List<Object> buyingIds) {
+    final out = <int>[];
+    for (final id in buyingIds) {
+      if (id is int) {
+        out.add(id);
+      } else if (id is String && RegExp(r'^[+-]?\d+$').hasMatch(id)) {
+        final parsed = int.tryParse(id);
+        if (parsed != null) out.add(parsed);
+      }
+    }
+    return out;
+  }
+
+  /// Same mapping as [addToCart]: `cart_add_deduplicated` →
+  /// [LBErrorCartAddDeduplicated]; a numeric code → [LBErrorServer] (with the
+  /// `backend_error_code` from `details`); anything else stays the raw
+  /// [PlatformException].
+  static Object _typedBidError(PlatformException e) {
+    if (e.code == 'cart_add_deduplicated') return const LBErrorCartAddDeduplicated();
+    final code = int.tryParse(e.code);
+    if (code != null) {
+      return LBErrorServer(code, e.message ?? '',
+          backendErrorCode: backendErrorCodeFromDetails(e.details));
+    }
+    return e;
+  }
+
   /// Report a cart token for a `track.mode == 'token'` platform (addcart-track ④,
   /// `POST /sdk/video/addcart/track`). Call BEFORE checkout when an
   /// [LBCartResult.track] (or CART_ADD_REQUEST `track`) carries `mode == 'token'`;

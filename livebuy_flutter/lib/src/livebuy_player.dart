@@ -143,6 +143,16 @@ Map<String, dynamic> _productToMap(LBProduct p) => {
       // native `flutterLBProductFromArgs` (iOS) / `lbProductFrom` (Android)
       // so `simulateProductTap` can drive an other_goods換片 test scenario.
       'videoId': p.videoId,
+      // live-bid-flutter-core: flash-sale keyword (camelCase, always present,
+      // possibly ""). Round-trips through native `flutterLBProductFromArgs` /
+      // `lbProductFrom`.
+      'saleKeyword': p.saleKeyword,
+      // flash-sale-goods-fields-flutter-core: flash-sale counts (camelCase,
+      // always present, 0 when none). Round-trips through native
+      // `flutterLBProductFromArgs` / `lbProductFrom`.
+      'buyingNum': p.buyingNum,
+      'totalBuyingNum': p.totalBuyingNum,
+      'limitNum': p.limitNum,
     };
 
 /// Test-only accessor for [_productToMap] (the bridge serialization used by

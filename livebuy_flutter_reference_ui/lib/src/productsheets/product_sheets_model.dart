@@ -9,7 +9,9 @@ import 'package:livebuy_flutter_ui/livebuy_flutter_ui.dart'
         LBProductRecommendation,
         LBVariantGroup,
         LBQtyState,
-        LBMiniCartPeek;
+        LBMiniCartPeek,
+        LBBidOutcome,
+        LBBidWonItem;
 
 // ProductSheetsModel — family-3 product sheet-stack read-only snapshot bridge
 // (Flutter).
@@ -283,6 +285,33 @@ class ProductSheetsModel {
   /// loading（spinner +「加入中…」、鎖 stepper/規格）。容器以 320ms 防閃爍 floor derive 後傳入 CTA。
   /// 與 [addToCartFailed] / [addToCartNeedsLogin] 正交。For demo instances false.
   bool get addToCartInFlight => template?.addToCartInFlight ?? false;
+
+  // -- Flash-sale bid (rb-flutter-flash-sale-bid, parity iOS / Android / RN ProductSheetsModel) --
+
+  /// The latest flash-sale bid result (`DefaultPlayerTemplate.bidOutcome`, live-bid-flutter-template)
+  /// or `null`. A plain template field (no notify) — the container reads it around
+  /// `await addToCart()`. For demo instances `null`.
+  LBBidOutcome? get bidOutcome => template?.bidOutcome;
+
+  /// Wins listed in the「恭喜搶購成功」popup (`DefaultPlayerTemplate.bidWon.items`). For demo
+  /// instances empty.
+  List<LBBidWonItem> get bidWonItems => template?.bidWon.items ?? const [];
+
+  /// Whether the「恭喜搶購成功」popup is presented (`DefaultPlayerTemplate.bidWon.isPresented`).
+  /// For demo instances `false`.
+  bool get bidWonPresented => template?.bidWon.isPresented ?? false;
+
+  /// The merchant logo URL string (`DefaultPlayerTemplate.header.shopLogo`) for the bid-won popup;
+  /// the view resolves it through the header logo gate. For demo instances `''`.
+  String get shopLogo => template?.header.shopLogo ?? '';
+
+  /// 「確定」→ `DefaultPlayerTemplate.confirmBidWin()` (confirm every listed win once + close).
+  /// No-op for demo instances.
+  void confirmBidWin() => template?.confirmBidWin();
+
+  /// 「取消」→ `DefaultPlayerTemplate.dismissBidWon()` (close only, no confirm). No-op for demo
+  /// instances.
+  void dismissBidWon() => template?.dismissBidWon();
 
   // -- Surface 3: MiniCartPeek ← mini-cart peek -------------------------------
 

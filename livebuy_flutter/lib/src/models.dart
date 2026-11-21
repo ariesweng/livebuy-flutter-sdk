@@ -448,6 +448,20 @@ class LBProduct {
   /// sourced from `LBChannel.goods[]`. Lets a host jump-to-video for a
   /// recommended product that belongs to a different video.
   final String? videoId;
+  /// 搶購關鍵字（`sale_keyword`，live-bid-flutter-core，parity iOS / Android
+  /// `LBProduct.saleKeyword`）——觀眾在聊天室打「關鍵字＋數量」下標用。後端只在搶購場
+  /// （`is_flash_sale`）的 `/sdk/video/goods` 帶；缺值 / null → `''`。有規格的商品，下標
+  /// 關鍵字為「商品關鍵字＋規格關鍵字」（見 [LBSpec.saleKeyword]）。關鍵字比對與自動下標由
+  /// 原生 core 完成，Dart 端只是唯讀資料。Wire key 為 camelCase `saleKeyword`。
+  final String saleKeyword;
+  /// 本人對這個商品已搶購／已購數量（`buying_num`，flash-sale-goods-fields-flutter-core，
+  /// parity iOS / Android `LBProduct.buyingNum`）。後端只在搶購場直播中帶；缺值 → `0`。
+  /// `> 0` 時網頁在選規格面板顯示「正在等待結果...」。Wire key 為 camelCase `buyingNum`。
+  final int buyingNum;
+  /// 全場已搶購合計（`total_buying_num`）。只在搶購場直播中帶；缺值 → `0`。
+  final int totalBuyingNum;
+  /// 每人限購數量（`limit_num`）。只在搶購場直播中且有設限購時帶；`0` 代表不限購。
+  final int limitNum;
 
   const LBProduct({
     required this.id,
@@ -482,6 +496,10 @@ class LBProduct {
     this.specifications = const [],
     this.specOptions = const [],
     this.videoId,
+    this.saleKeyword = '',
+    this.buyingNum = 0,
+    this.totalBuyingNum = 0,
+    this.limitNum = 0,
   });
 
   factory LBProduct.fromMap(Map<Object?, Object?> map) => LBProduct(
@@ -527,8 +545,21 @@ class LBProduct {
         // (缺鍵/null → null，比照既有 optional String 欄位如 `brief` 的直接
         // cast 寫法；native 只在 other_goods[] 項目送出此 key，goods[] 省略).
         videoId: map['videoId'] as String?,
+        // live-bid-flutter-core: explicit type check (missing / null / drifted type → '';
+        // never throws, so one odd value cannot fail the whole product).
+        saleKeyword: _asStringOrEmpty(map['saleKeyword']),
+        // flash-sale-goods-fields-flutter-core: num → toInt; missing / null /
+        // non-number → 0 (never throws, so one odd value cannot fail the product).
+        buyingNum: _asIntOrZero(map['buyingNum']),
+        totalBuyingNum: _asIntOrZero(map['totalBuyingNum']),
+        limitNum: _asIntOrZero(map['limitNum']),
       );
 }
+
+/// `value` when it is a `String`, otherwise `''` (missing / null / other type).
+/// Unlike [_asString] it never stringifies a number — used for free-text fields
+/// whose drifted type should read as "no value" (live-bid-flutter-core).
+String _asStringOrEmpty(Object? value) => value is String ? value : '';
 
 /// 商品規格選項 (`LBProduct.specifications[]`). Per `shared/data-models.md`
 /// §LBSpec. Distinct from the reduced [LBBridgeSpec] (used for `simulate*`
@@ -543,6 +574,15 @@ class LBSpec {
   final String originalPriceShow;
   final int stock;
   final List<String> photos;
+  /// 規格層搶購關鍵字（`sale_keyword`，live-bid-flutter-core，parity iOS / Android
+  /// `LBSpec.saleKeyword`），接在 [LBProduct.saleKeyword] 後面使用；缺值 / null → `''`
+  /// （空字串的規格不能用關鍵字下標）。Wire key 為 camelCase `saleKeyword`。
+  final String saleKeyword;
+  /// 規格層的 `buying_num`／`total_buying_num`／`limit_num`（flash-sale-goods-fields-flutter-core），
+  /// 語意同 [LBProduct.buyingNum]／[LBProduct.totalBuyingNum]／[LBProduct.limitNum]（缺值 → `0`）。
+  final int buyingNum;
+  final int totalBuyingNum;
+  final int limitNum;
 
   const LBSpec({
     required this.id,
@@ -554,6 +594,10 @@ class LBSpec {
     this.originalPriceShow = '',
     this.stock = 0,
     this.photos = const [],
+    this.saleKeyword = '',
+    this.buyingNum = 0,
+    this.totalBuyingNum = 0,
+    this.limitNum = 0,
   });
 
   factory LBSpec.fromMap(Map<Object?, Object?> map) => LBSpec(
@@ -566,6 +610,10 @@ class LBSpec {
         originalPriceShow: (map['originalPriceShow'] as String?) ?? '',
         stock: (map['stock'] as num?)?.toInt() ?? 0,
         photos: _asStringList(map['photos']),
+        saleKeyword: _asStringOrEmpty(map['saleKeyword']),
+        buyingNum: _asIntOrZero(map['buyingNum']),
+        totalBuyingNum: _asIntOrZero(map['totalBuyingNum']),
+        limitNum: _asIntOrZero(map['limitNum']),
       );
 
   Map<String, Object?> toMap() => {
@@ -578,6 +626,10 @@ class LBSpec {
         'originalPriceShow': originalPriceShow,
         'stock': stock,
         'photos': photos,
+        'saleKeyword': saleKeyword,
+        'buyingNum': buyingNum,
+        'totalBuyingNum': totalBuyingNum,
+        'limitNum': limitNum,
       };
 }
 
@@ -1221,6 +1273,11 @@ class LBFeaturedGood {
 ///                     the upstream `sale_type == 2`; always present on the
 ///                     wire, independent of [type] / [liveStatus]. Default
 ///                     `false` when absent (channel-flash-sale-flag-core-flutter).
+///   • [saleKeywordRequired] — raw `channel.saleKeywordRequired` passthrough
+///                     (TOP-LEVEL, same shape as [isFlashSale]). `true` when a
+///                     product without a `saleKeyword` should hide its buy
+///                     button. Default `false` when absent
+///                     (flash-sale-goods-fields-flutter-core).
 ///   • [notice]      — raw `channel.notice` free-text announcement passthrough
 ///                     (a TOP-LEVEL `LBChannel` field, NOT nested under `shop`).
 ///                     "" when absent/no active announcement. Populated at
@@ -1334,6 +1391,15 @@ class LBPlayerChannelInfo {
   /// reference-ui/template-layer concern.
   final bool isFlashSale;
 
+  /// flash-sale-goods-fields-flutter-core: raw `channel.saleKeywordRequired`
+  /// passthrough (`/sdk/video` top-level `sale_keyword_required`, parity iOS /
+  /// Android `LBChannel.saleKeywordRequired`) — a TOP-LEVEL `LBChannel` field, same
+  /// shape as [isFlashSale]. `true` for a 直播管家 flash-sale session, where a product
+  /// whose `saleKeyword` is empty should hide its add-to-cart / bid button (same as
+  /// the web). Default `false` when absent. Raw passthrough only — hiding the button
+  /// is a reference-ui/template-layer concern.
+  final bool saleKeywordRequired;
+
   /// channel-notice-bridge-core-flutter: raw `channel.notice` free-text
   /// announcement passthrough — a TOP-LEVEL `LBChannel` field (same shape as
   /// [isFlashSale], unlike [shopIntro] / [serviceLink] / [shopName] / [shopLogo],
@@ -1370,6 +1436,7 @@ class LBPlayerChannelInfo {
     this.guestComment = 1,
     this.diversion = 0,
     this.isFlashSale = false,
+    this.saleKeywordRequired = false,
     this.notice = '',
     this.sysNotice = '',
   });
@@ -1415,6 +1482,9 @@ class LBPlayerChannelInfo {
         // num 0/1 (defensive, per the SDK-wide "bool fields tolerate Int 0/1"
         // convention); missing/null/any other type → false.
         isFlashSale: _asBoolOr(map['isFlashSale'], false),
+        // flash-sale-goods-fields-flutter-core: same `_asBoolOr` tolerance as
+        // `isFlashSale` (bool or num 0/1; missing/null/other type → false).
+        saleKeywordRequired: _asBoolOr(map['saleKeywordRequired'], false),
         // channel-notice-bridge-core-flutter: mirrors the existing `shopIntro`
         // tolerant cast exactly (missing/null/non-string → '').
         notice: (map['notice'] as String?) ?? '',
@@ -2075,6 +2145,74 @@ class LBCartResult {
   }
 }
 
+// MARK: - Flash-sale bid (live-bid-flutter-core)
+
+/// Result of [LivebuySDK.placeBid] (live-bid-flutter-core, parity iOS / Android
+/// `LBBidResult`).
+///
+/// [buyingId] identifies this flash-sale bid: `BID_WON.buying_id`,
+/// `CART_ADD_REQUEST.buying_id` and [LivebuySDK.confirmBidWin] all refer to it.
+/// Bidding again on the same product / specification makes the backend add to
+/// the quantity and return the same [buyingId].
+class LBBidResult {
+  final int buyingId;
+  final int goodsId;
+
+  /// `0` when the product has no named specification.
+  final int specificationId;
+
+  /// Quantity of this bid.
+  final int num;
+
+  const LBBidResult({
+    required this.buyingId,
+    required this.goodsId,
+    required this.specificationId,
+    required this.num,
+  });
+
+  /// Decodes the native bridge reply `{buyingId, goodsId, specificationId, num}`.
+  /// Numeric values are coerced to `int`; a missing or non-numeric value → `0`.
+  factory LBBidResult.fromMap(Map<Object?, Object?> map) => LBBidResult(
+        buyingId: _asIntOrZero(map['buyingId']),
+        goodsId: _asIntOrZero(map['goodsId']),
+        specificationId: _asIntOrZero(map['specificationId']),
+        num: _asIntOrZero(map['num']),
+      );
+
+  Map<String, Object?> toMap() => {
+        'buyingId': buyingId,
+        'goodsId': goodsId,
+        'specificationId': specificationId,
+        'num': num,
+      };
+}
+
+/// One item of [LivebuySDK.confirmBidWin]'s result (live-bid-flutter-core,
+/// parity iOS / Android `LBBidConfirmItem`). [errorCode] `null` means success
+/// (including "already confirmed"); otherwise it is the raw backend string,
+/// e.g. `bid_not_found`.
+class LBBidConfirmItem {
+  final int buyingId;
+  final String? errorCode;
+
+  const LBBidConfirmItem({required this.buyingId, this.errorCode});
+
+  /// Decodes one bridge item `{buyingId, errorCode?}`. The native bridge omits
+  /// `errorCode` on success; a missing / null / non-String value → `null`.
+  factory LBBidConfirmItem.fromMap(Map<Object?, Object?> map) {
+    final rawCode = map['errorCode'];
+    return LBBidConfirmItem(
+      buyingId: _asIntOrZero(map['buyingId']),
+      errorCode: rawCode is String ? rawCode : null,
+    );
+  }
+
+  Map<String, Object?> toMap() => {'buyingId': buyingId, 'errorCode': errorCode};
+}
+
+int _asIntOrZero(Object? value) => value is num ? value.toInt() : 0;
+
 // MARK: - Typed event-payload accessors (event-payload-typed-accessors-flutter-core)
 //
 // `LBEventListener` (event_listener.dart) flattens every event's payload into
@@ -2124,6 +2262,13 @@ class LBCartResult {
 /// [num] (`cart-add-request-num-flutter-core`) is the quantity added in this
 /// request — the same value passed into `addToCart`'s `num` parameter, not
 /// something echoed back by the addcart response.
+///
+/// `live-bid`: every `CART_ADD_REQUEST` from a native core that supports flash-sale
+/// bids carries [cartOrigin] (`normal` / `award` / `bid_won`). When a flash-sale win
+/// is ordered automatically by the native core, one `CART_ADD_REQUEST` with
+/// `cart_origin == 'bid_won'` is dispatched first (with [buyingId] and
+/// [shopCartSynced]), then `BID_WON(status: 'ordered')`. If [shopCartSynced] is
+/// `true`, the shop's cart already has the item — do not add it again.
 class LBCartAddRequest {
   /// Current video short code (`video_id`, required — `fromMap` returns `null`
   /// if this key is missing).
@@ -2192,6 +2337,25 @@ class LBCartAddRequest {
   /// it is purely informational quantity, not a billing signal.
   final int? num;
 
+  /// Where this add-to-cart came from (`cart_origin`, live-bid-flutter-core,
+  /// parity iOS / Android `cartOrigin`): `'normal'` (a regular add-to-cart),
+  /// `'award'` (a product-type prize) or `'bid_won'` (a won flash-sale bid
+  /// that the native core ordered automatically). Params from an older native
+  /// core have no such key → `null` (NOT `''`).
+  final String? cartOrigin;
+
+  /// Flash-sale bid id (`buying_id`) — **only** present when
+  /// [cartOrigin] == `'bid_won'`; the same value as `BID_WON`'s `buying_id`.
+  /// Any other origin omits the key → `null` (NOT `''`).
+  final String? buyingId;
+
+  /// Whether the shop's own cart already holds this item (`shop_cart_synced`) —
+  /// **only** present on a won-bid add-to-cart. `true` (直播管家 / 168money)
+  /// means the host should ignore this event and NOT add the item to its own
+  /// cart again (168money's [buyNo] is `''`). A missing key → `null`, which is
+  /// distinct from an explicit `false`.
+  final bool? shopCartSynced;
+
   const LBCartAddRequest({
     required this.videoId,
     this.productId = '',
@@ -2203,6 +2367,9 @@ class LBCartAddRequest {
     this.track,
     this.awardWinnerId,
     this.num,
+    this.cartOrigin,
+    this.buyingId,
+    this.shopCartSynced,
   });
 
   /// Parses `CART_ADD_REQUEST`'s `params` into typed fields in one call. Pure
@@ -2222,6 +2389,12 @@ class LBCartAddRequest {
     // Named `rawNum`, not `num`, to avoid reading like Dart's built-in `num`
     // type right next to the field of the same name.
     final rawNum = map['num'];
+    // live-bid-flutter-core: explicit type checks — a missing key, an explicit
+    // null or a drifted type all read as `null` ("not a won-bid add-to-cart"),
+    // never `''` / `false`, and never fail the whole payload.
+    final rawCartOrigin = map['cart_origin'];
+    final rawBuyingId = map['buying_id'];
+    final rawShopCartSynced = map['shop_cart_synced'];
     return LBCartAddRequest(
       videoId: videoId,
       productId: _asString(map['product_id']),
@@ -2233,6 +2406,9 @@ class LBCartAddRequest {
       track: rawTrack is Map<Object?, Object?> ? LBCartTrack.fromMap(rawTrack) : null,
       awardWinnerId: rawAwardWinnerId is String ? rawAwardWinnerId : null,
       num: rawNum is int ? rawNum : null,
+      cartOrigin: rawCartOrigin is String ? rawCartOrigin : null,
+      buyingId: rawBuyingId is String ? rawBuyingId : null,
+      shopCartSynced: rawShopCartSynced is bool ? rawShopCartSynced : null,
     );
   }
 }

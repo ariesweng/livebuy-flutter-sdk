@@ -13,6 +13,7 @@ import '../reference_ui_theme.dart';
 import '../share_glyph.dart';
 import '../testing/lb_test_keys.dart';
 import 'cart_spinner.dart';
+import 'flash_sale_bid.dart';
 import 'product_row.dart';
 import 'resolved_price_display.dart';
 import 'resolved_product_photo.dart';
@@ -675,6 +676,23 @@ class ProductDetailSheet extends StatelessWidget {
   bool get _showsStockCaption =>
       showsStockCaption(normalizeShowStock(showStock), _isSoldOut);
 
+  /// The qty-row hint (rb-flutter-flash-sale-bid, design `LBPQtyHint`): sold out > 每人限購 > 庫存.
+  /// Only its `limit` case is read by `_qtyRow`; the stock branch keeps reading
+  /// [_showsStockCaption] (the same predicate [QtyHint.resolve] delegates to).
+  QtyHint get _qtyHint => QtyHint.resolve(
+        isSoldOut: _isSoldOut,
+        showStock: normalizeShowStock(showStock),
+        limitNum: detail.limitNum,
+      );
+
+  /// Footer slots (rb-flutter-flash-sale-bid): `detail.buyButtonHidden` drops the CTA; with no slot
+  /// left the whole footer (incl. its top separator) is omitted.
+  ProductSheetFooterSlots get _footerSlots => ProductSheetFooterSlots.resolve(
+        isDetailPresentation: !_isAddToCart,
+        isLive: isLive,
+        buyButtonHidden: detail.buyButtonHidden,
+      );
+
   @override
   Widget build(BuildContext context) => referenceUILocalized(() => _buildLocalized(context));
 
@@ -829,8 +847,12 @@ class ProductDetailSheet extends StatelessWidget {
     if (_isAddToCart) {
       // `.addToCart`（精簡購買）：與改動前逐字相同——design 的 AddToCartSheet 本身沒有灰底
       // 分層，這個分支的存在理由是「維持原樣」，MUST NOT 套用 `_bgSunken` / `_whiteCard`。
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
+      //
+      // rb-flutter-flash-sale-bid（design `AddToCartSheet`，parity iOS `addToCartBodyContent`）：
+      // `detail.bidWaiting` 時在 padded body 上方畫滿版等待橫幅（上方間距 4），body 上內距由 6 改
+      // 為 12；`bidWaiting == false` 時走下方原本的單一 Padding，結構不變。
+      final addToCartBody = Padding(
+        padding: EdgeInsets.fromLTRB(16, detail.bidWaiting ? 12 : 6, 16, 12),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -845,6 +867,16 @@ class ProductDetailSheet extends StatelessWidget {
           ],
         ),
       );
+      if (!detail.bidWaiting) return addToCartBody;
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 4),
+          BidWaitingBanner(theme: theme),
+          addToCartBody,
+        ],
+      );
     }
 
     // `.detail`（完整瀏覽）：外層灰底，內容拆成獨立白卡（design.md D1/D2）。
@@ -856,9 +888,9 @@ class ProductDetailSheet extends StatelessWidget {
     // (the reported bug), but the identical seam appears below 商品介紹 when 更多商品 is
     // hidden/empty, or below 白卡 1 when BOTH are hidden. The fix removes that outer wrapper
     // and moves the SAME 12pt INSIDE the LAST VISIBLE white card's OWN background instead —
-    // mirrors this file's existing 白卡 1 "bottom padding is 0 at the TOP because it touches
-    // the scroll area's own top edge" convention (see the comment on 白卡 1 below), applied
-    // symmetrically to the BOTTOM edge, so the last on-screen pixel row is white, not grey.
+    // mirrors this file's existing 白卡 1 convention of keeping the edge spacing INSIDE the
+    // white card's own background (its 6pt top inset is white, not grey — see the comment on
+    // 白卡 1 below), applied to the BOTTOM edge, so the last on-screen pixel row is white.
 
     final showsIntroCard = showsProductIntro && description.isNotEmpty;
     final showsRecsCard =
@@ -874,13 +906,20 @@ class ProductDetailSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // rb-flutter-flash-sale-bid：「正在等待結果...」橫幅在捲動內容最上方、滿版（design
+          // `ProductDetailSheet`：`{bidWaiting && <LBPBidWaitingBanner />}` 在第一張白卡之前；parity
+          // iOS `detailBodyContent`）。`bidWaiting == false` → 不畫，結構不變。
+          if (detail.bidWaiting) BidWaitingBanner(theme: theme),
           // 白卡 1：縮圖～收藏鈕（168 大圖 → Sale 徽章 → 商品名 → 價格列 → brief → 規格
           // chips → 數量列 → 收藏鈕），對齊設計第一個 `theme.surface.bg` 內容卡
-          // （`padding: '0 16px 16px'` — 頂部 0，因為這張卡緊貼捲動區域最頂端）。底部改為
+          // （`padding: '0 16px 16px'`，卡片本身緊貼捲動區域最頂端／橫幅下緣）。上內距 6
+          // （rb-flutter-detail-card-top-padding，parity iOS `detailThumbBlock.padding(.top, 6)`／
+          // Android `top = 6.dp`／RN `paddingTop: 6`）：這 6 畫在白卡內部（白底），不是卡外的
+          // 灰色間隔；有沒有等待結果橫幅都一樣是 6。底部改為
           // `card1IsLastVisible ? 28 : 16`——本卡是最後可見白卡時多吸收 12pt trailing gap
           // （見上方 TRAILING BOTTOM GAP FIX comment），其餘情況維持原本的 16。
           _whiteCard(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, card1IsLastVisible ? 28 : 16),
+            padding: EdgeInsets.fromLTRB(16, 6, 16, card1IsLastVisible ? 28 : 16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1359,7 +1398,19 @@ class ProductDetailSheet extends StatelessWidget {
           ),
         ),
         const Spacer(),
-        if (_showsStockCaption) ...[
+        // rb-flutter-flash-sale-bid：每人限購取代庫存文字（design `LBPQtyHint`，售完 > 限購 > 庫存，
+        // parity iOS `QtyHint.resolve`）。`limitNum == 0`（非搶購場）時下方 `_showsStockCaption`
+        // 分支與改動前完全相同；限購文字沿用庫存文字的樣式與 12 間距（同一 collection-if 內一起出現）。
+        if (_qtyHint.kind == QtyHintKind.limit) ...[
+          Text(
+            ReferenceUIStrings.text('bid_limit', {'num': _qtyHint.num}),
+            style: TextStyle(
+              color: _textDim,
+              fontSize: 12 * theme.fontScale,
+            ),
+          ),
+          const SizedBox(width: 12),
+        ] else if (_showsStockCaption) ...[
           Text(
             _stockCaption,
             style: TextStyle(
@@ -1455,6 +1506,10 @@ class ProductDetailSheet extends StatelessWidget {
   // (now inline in the body) is UNAFFECTED by `isLive`.
 
   Widget _footer() {
+    // rb-flutter-flash-sale-bid: no slot left (`.addToCart` / live `.detail` with
+    // `buyButtonHidden`) → no footer at all, separator included (design `!(live && buyButtonHidden)`).
+    final slots = _footerSlots;
+    if (slots.isEmpty) return const SizedBox.shrink();
     return DecoratedBox(
       decoration: BoxDecoration(
         border: Border(top: BorderSide(color: _stroke, width: 1)),
@@ -1468,11 +1523,13 @@ class ProductDetailSheet extends StatelessWidget {
             // AddToCartSheet). `.detail` keeps the 分享鈕 slot; it further hides while
             // `isLive` (rb-flutter-live-hide-product-share). 收藏鈕 no longer lives here
             // (moved to the body, `_favButtonInline`).
-            if (!_isAddToCart && !isLive) ...[
-              _shareButton(),
-              const SizedBox(width: 12),
-            ],
-            Expanded(child: _addToCartButton()),
+            // rb-flutter-flash-sale-bid: slots decided by [ProductSheetFooterSlots.resolve] (same
+            // result as the former `!_isAddToCart && !isLive` rule for 分享). The 12 gap exists only
+            // when BOTH slots draw; with the CTA hidden the Row (full sheet width, start-aligned)
+            // leaves 分享 on the left and the top separator spans the full width.
+            if (slots.share) _shareButton(),
+            if (slots.share && slots.cta) const SizedBox(width: 12),
+            if (slots.cta) Expanded(child: _addToCartButton()),
           ],
         ),
       ),
