@@ -12,7 +12,8 @@ package tv.livebuy.flutter
 // rb-flutter-other-goods-channel-bridge-core added the 15th, `otherGoods`;
 // channel-flash-sale-flag-core-flutter added the 16th, `isFlashSale`;
 // channel-notice-bridge-core-flutter added the 17th/18th, `notice`/`sysNotice`;
-// flash-sale-goods-fields-flutter-core added the 19th, `saleKeywordRequired`),
+// flash-sale-goods-fields-flutter-core added the 19th, `saleKeywordRequired`;
+// channel-shop-id-bridge-core-flutter added the 20th, `shopId`),
 // NOT a single channel id: a channel can flip `liveStatus` (upcoming →
 // live, the 30s preview poll) while keeping the same id, and that IS a real change this event
 // must still carry.
@@ -25,7 +26,7 @@ package tv.livebuy.flutter
 object ChannelChromeBridge {
 
     /**
-     * The 19 fields projected from a loaded `LBChannel` onto the `channelChange` wire payload.
+     * The 20 fields projected from a loaded `LBChannel` onto the `channelChange` wire payload.
      * Compared AS A WHOLE by [shouldEmit] — not just [liveStatus] or a channel id — so that any
      * single field change (most notably an upcoming→live `liveStatus` flip on the SAME channel)
      * is not silently dropped by a narrower id-only dedupe key. Unlike the iOS bridge's mirrored
@@ -48,6 +49,12 @@ object ChannelChromeBridge {
         val type: Int,
         val goods: List<Map<String, Any?>>,
         val shopIntro: String,
+        // channel-shop-id-bridge-core-flutter: the channel's merchant id (`channel.shop.id`,
+        // `LBShop.id` is a `String`). Part of the whole-snapshot dedupe so a shopId-only change
+        // re-emits `channelChange`. Lets the Flutter drop-in use the playing video's shop as the
+        // add-to-cart `shopId` (parity with the Android TemplateAttachment wiring's
+        // `channel.shop.id`) instead of the `configure` shop id.
+        val shopId: String,
         val guestComment: Int,
         // channel-diversion-bridge-core-flutter: raw `channel.diversion` passthrough — the
         // Flutter reference-ui container's default `onProductTap` needs this to call
@@ -85,7 +92,7 @@ object ChannelChromeBridge {
 
     /**
      * Dedupe gate: should we (re-)emit `channelChange` for [current], given the [last] snapshot we
-     * emitted (`null` on the very first emit → always true)? Re-emits whenever ANY of the 19
+     * emitted (`null` on the very first emit → always true)? Re-emits whenever ANY of the 20
      * projected fields differs from the last emitted snapshot.
      */
     fun shouldEmit(current: Snapshot, last: Snapshot?): Boolean = current != last
@@ -108,6 +115,7 @@ object ChannelChromeBridge {
         "type" to snapshot.type,
         "goods" to snapshot.goods,
         "shopIntro" to snapshot.shopIntro,
+        "shopId" to snapshot.shopId,
         "guestComment" to snapshot.guestComment,
         "diversion" to snapshot.diversion,
         "otherGoods" to snapshot.otherGoods,

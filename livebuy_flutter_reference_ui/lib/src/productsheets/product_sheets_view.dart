@@ -19,6 +19,7 @@ import 'product_sheets_model.dart';
 // Surface widgets — landed by the parallel Surfaces agents. The container fixes the
 // call-site shapes; the file names match the imports EXACTLY (no shim files).
 import 'product_list_sheet.dart';
+import 'product_list_keyboard_avoidance.dart';
 import 'product_detail_sheet.dart';
 // `ProductRecommendationDisplay.asDisplayProduct` extension (rb-flutter-product-detail-
 // recommendations §5) — Dart extension methods require an explicit import to be in scope.
@@ -671,7 +672,11 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
               child: const ColoredBox(color: Color(0x73000000)),
             ),
           ),
-          Align(
+          // 鍵盤避讓（rb-flutter-product-list-keyboard-avoid）：搜尋框聚焦、鍵盤升起時 drawer 依
+          // 「還沒被 host / Tier B 容器處理的鍵盤重疊量」上移，拖高過的 drawer 頂端夾在上方安全區
+          // 以下；無鍵盤時邊距為零、排版不變。見 `product_list_keyboard_avoidance.dart`。
+          ProductListKeyboardAvoider(
+            child: Align(
             alignment: Alignment.bottomCenter,
             child: ProductListSheet(
               theme: theme,
@@ -710,6 +715,7 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
               onOpenCart: _handleOpenCart,
               onClose: widget.onDismissList,
             ),
+          ),
           ),
         ],
 

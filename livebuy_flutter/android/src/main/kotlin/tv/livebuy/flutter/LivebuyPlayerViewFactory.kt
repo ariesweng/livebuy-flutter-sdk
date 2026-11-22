@@ -169,6 +169,9 @@ class LivebuyFlutterPlayerView(
                     // channel-shop-intro-bridge-core-flutter: shop introduction text.
                     // May legitimately be "" (merchant left it blank).
                     shopIntro = ch.shop.intro,
+                    // channel-shop-id-bridge-core-flutter: the channel's merchant
+                    // id (`LBShop.id`, String) — add-to-cart `shopId` source.
+                    shopId = ch.shop.id,
                     // guest-comment-channel-bridge-core-flutter: raw permission flag
                     // passthrough — does NOT compute `chatEnabled` here.
                     guestComment = ch.guestComment,

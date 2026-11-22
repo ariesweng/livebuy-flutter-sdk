@@ -694,7 +694,8 @@ final class LivebuyPlayerViewFactory: NSObject, FlutterPlatformViewFactory {
 // rb-flutter-other-goods-channel-bridge-core added the 15th, `otherGoods`;
 // channel-flash-sale-flag-core-flutter added the 16th, `isFlashSale`;
 // channel-notice-bridge-core-flutter added the 17th/18th, `notice`/`sysNotice`;
-// flash-sale-goods-fields-flutter-core added the 19th, `saleKeywordRequired`)
+// flash-sale-goods-fields-flutter-core added the 19th, `saleKeywordRequired`;
+// channel-shop-id-bridge-core-flutter added the 20th, `shopId`)
 // compared as ONE value by the dedupe check below (not a single channel id — see
 // the piggyback block in `onStateChange` for why). Mirrors
 // `react-native/ios/LivebuyRNBridge.swift`'s `ChannelInfoSnapshot` shape (fields here,
@@ -712,6 +713,10 @@ private struct ChannelChromeSnapshot: Equatable {
     let shareUrl: String
     let type: Int
     let shopIntro: String
+    // channel-shop-id-bridge-core-flutter: the channel's merchant id
+    // (`channel.shop.id`, `LBShop.id` is a `String`). Part of the dedupe value so a
+    // shopId-only change re-emits `channelChange`.
+    let shopId: String
     // guest-comment-channel-bridge-core-flutter: raw `channel.guestComment`
     // permission flag. Fail-open default `1` is applied on the Dart side
     // (`_asGuestComment`) — this native struct just carries the native SDK's
@@ -773,6 +778,7 @@ private struct ChannelChromeSnapshot: Equatable {
         type = channel.type
         goods = channel.goods.map(GoodsFingerprint.init)
         shopIntro = channel.shop.intro
+        shopId = channel.shop.id
         guestComment = channel.guestComment
         diversion = channel.diversion
         otherGoods = channel.otherGoods.map(GoodsFingerprint.init)
@@ -947,7 +953,7 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
     private var lastSubtitleChannelId: String?
 
     // player-channel-chrome-bridge-core-flutter: last channel-chrome snapshot we
-    // emitted a `channelChange` payload for (ALL 19 projected fields, not just
+    // emitted a `channelChange` payload for (ALL 20 projected fields, not just
     // channel id — an upcoming→live `liveStatus` flip keeps the same id but IS a
     // real change this event must still carry). Independent of
     // `lastSubtitleChannelId` above — the two piggybacks do not share dedupe state.
@@ -1035,6 +1041,12 @@ final class LivebuyFlutterPlayerView: NSObject, FlutterPlatformView {
                         // channel-shop-intro-bridge-core-flutter: shop introduction
                         // text. May legitimately be "" (merchant left it blank).
                         "shopIntro": ch.shop.intro,
+                        // channel-shop-id-bridge-core-flutter: the channel's merchant
+                        // id (`LBShop.id`, String). Lets the Flutter drop-in use the
+                        // playing video's shop as add-to-cart `shopId` (parity with
+                        // iOS `DefaultPlayerTemplate` `player?.channel?.shop.id`)
+                        // instead of the `configure` shop id.
+                        "shopId": ch.shop.id,
                         // guest-comment-channel-bridge-core-flutter: raw permission
                         // flag passthrough — does NOT compute `chatEnabled` here.
                         "guestComment": ch.guestComment,

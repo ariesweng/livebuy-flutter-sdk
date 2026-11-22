@@ -1766,6 +1766,13 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
     // is the existing public method (`player-loading-cover-background-template-flutter`); reset
     // to '' falls back to the existing solid `#0C0C10` brand backdrop, never a wrong photo.
     LivebuyUI.playerTemplate?.applyLoadingCover('');
+    // rb-flutter-add-to-cart-channel-shop-id-wiring — same singleton-staleness family: the
+    // channel shop id fed by `forwardChannelChangeToTemplate` outlives this player session in the
+    // process-global template, so a NEW player instance would otherwise add to the PREVIOUS
+    // video's shop until its own `onChannelChange` arrives. Clear it ('' → view-model falls back
+    // to setShopId / configure), matching iOS／Android where every player instance starts with a
+    // fresh template.
+    LivebuyUI.playerTemplate?.handleChannelShopId('');
     _controller = LivebuyPlayerController();
     // fix-flutter-viewcart-unwired-provider: `LivebuyUI.playerControllerProvider` is read by
     // `LivebuyUI.install()`'s `viewCartRequester` (→ `DefaultPlayerTemplate.openCart()`, the
@@ -3101,6 +3108,12 @@ void forwardChannelChangeToTemplate(
     systemNotice: info.sysNotice,
     notice: info.notice,
   );
+  // rb-flutter-add-to-cart-channel-shop-id-wiring：把當前頻道商家 id（core
+  // `LBPlayerChannelInfo.shopId`，缺值為 `''`）原樣餵給 view-model，預設加購以它優先
+  // （頻道 → setShopId → configure，parity iOS／Android `channel.shop.id`、RN
+  // `rb-rn-add-to-cart-channel-shop-id-wiring`）。不推導、不過濾：空字串照傳，由 view-model
+  // 視為「沒有」再 fallback；每次回呼都餵，換片時新頻道的值覆寫舊值（只覆寫快取、不發通知）。
+  template.handleChannelShopId(info.shopId);
 }
 
 /// flutter-moment-products-wiring-reference-ui — forwards the LIVE-updating product state

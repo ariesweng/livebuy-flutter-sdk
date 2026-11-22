@@ -28,9 +28,44 @@ import 'default_live_bid.dart';
 /// Host-wired delegate for the route-B add-to-cart call. Injectable so the host
 /// wires the closure that calls its `LivebuySDK.addToCart(LBAddToCartOptions)`
 /// (route B → `LBCartResult`); the template MUST NOT build HTTP itself (mirrors
-/// `GoodsTrackingSetter` delegating `setAwaitGoods`). Default is an inert no-op
-/// throwing stub supplied by the template ctor — see [DefaultPlayerTemplate].
+/// `GoodsTrackingSetter` delegating `setAwaitGoods`). Default is
+/// [makeDefaultAddToCartRequester] over `LivebuySDK.addToCart`, supplied by the
+/// template ctor — see [DefaultPlayerTemplate].
 typedef AddToCartRequester = Future<LBCartResult> Function(LBAddToCartOptions options);
+
+/// flutter-add-to-cart-channel-shop-id-template — 加購 `shopId` 取值順序（純函式）。
+///
+/// 依序回傳第一個非空白的值：當前頻道商家 id（[channelShopId]，parity iOS／Android
+/// `channel.shop.id`）→ host 經 `setShopId` 餵入的值（[hostShopId]）→ `configure` 的商家 id
+/// （[configuredShopId]，即 `LivebuySDK.currentShopId`）。三者皆為 `null`／空字串／純空白時
+/// 回傳 `null`。非空白的值原樣回傳（不 trim）。
+String? resolveAddToCartShopId({
+  String? channelShopId,
+  String? hostShopId,
+  String? configuredShopId,
+}) {
+  for (final candidate in [channelShopId, hostShopId, configuredShopId]) {
+    if (candidate != null && candidate.trim().isNotEmpty) return candidate;
+  }
+  return null;
+}
+
+/// flutter-add-to-cart-channel-shop-id-template — 預設加購 requester 的 factory。
+///
+/// 回傳的 requester 在 `options.shopId` 為空白時丟 [StateError]、**不**呼叫 [addToCart]
+/// （parity Android wiring 空 shopId → FAILURE 不呼叫 core、RN 預設 requester reject）；
+/// template 的 `addToCart()` 把它歸為一般失敗（`addToCartFailed`）。否則把 options 原樣交給
+/// [addToCart]。template 預設以 `LivebuySDK.addToCart` 建立；測試注入 fake。
+AddToCartRequester makeDefaultAddToCartRequester(
+  Future<LBCartResult> Function(LBAddToCartOptions options) addToCart,
+) {
+  return (options) async {
+    if (options.shopId.trim().isEmpty) {
+      throw StateError('addToCart requires a shopId (channel, setShopId or configure)');
+    }
+    return addToCart(options);
+  };
+}
 
 // ── 1. product-detail ─────────────────────────────────────────────────────────
 

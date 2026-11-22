@@ -6,6 +6,38 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.15.0 - 2026-11-22
+
+> **三套件版號 lockstep minor，源碼面無 BREAKING（只加不減）。** 原生依賴維持 iOS `~> 4.32`／`Package.swift` `from: "4.32.0"`／
+> Android `4.32.0`（只改 plugin bridge 原生碼）。
+> **驗證範圍**：`flutter test`、`flutter analyze` 通過（三套件）；plugin Android 單元測試通過、iOS plugin target 對已發佈 `4.32.0` 編譯通過。
+> **未經模擬器或真機實測。**
+
+### Added（`livebuy_flutter`）
+
+- `LBPlayerChannelInfo.shopId`：當前頻道的商家 id（`channel-shop-id-bridge-core-flutter`；iOS／Android bridge 的 `channelChange` 帶出
+  `shopId`，字串或數字皆可，缺值為空字串）。供 drop-in 加入購物車使用播放中影片的商家。
+
+### Added（`livebuy_flutter_ui`）
+
+- `DefaultPlayerTemplate.handleChannelShopId(String? shopId)` 與 getter `channelShopId`：餵入當前頻道商家 id
+  （`flutter-add-to-cart-channel-shop-id-template`）。與 host 用的 `setShopId` 分開存，頻道資料不會蓋掉 host 設的值。
+- 頂層純函式 `resolveAddToCartShopId`、`makeDefaultAddToCartRequester`。
+
+### Changed（`livebuy_flutter_ui`）
+
+- ⚠️ **預設加購的商家 id 依序取**：當前頻道商家 id（非空）→ `setShopId` → `configure()` 的 `shopId`，與 iOS／Android 改用播放中影片的商家
+  一致。三者都沒有時，預設 requester 不呼叫 core、直接失敗（同 Android／RN；之前以空 `shopId` 呼叫 core）。host 自己注入的 requester
+  照舊被呼叫（空 `shopId` 也一樣），`hostOwnsCart` 不變。`setShopId('   ')` 這種純空白值現在視為未設定。
+
+### Fixed（`livebuy_flutter_reference_ui`）
+
+- **drop-in 播放器加入購物車改用播放中影片的商家 id**（`rb-flutter-add-to-cart-channel-shop-id-wiring`）：之前一律用 `configure()` 的商家 id，
+  platform key 播別家商店影片時會送錯商店。現在每次收到頻道資料時把商家 id 交給 view-model；開新的播放器時先清掉上一次的值，避免關掉 A 店
+  影片再開 B 店時、B 的頻道資料到之前加購送到 A 店。
+- **商品清單搜尋時鍵盤蓋住清單**（`rb-flutter-product-list-keyboard-avoid`，iOS 與 Android 皆有）：鍵盤升起時清單往上移，購物車按鈕停在鍵盤
+  上緣；拖高過的清單頂端不會跑出螢幕；鍵盤升起時搜尋框不失焦。host 已用 `Scaffold(resizeToAvoidBottomInset: true)` 避開時不會重複上移。
+
 ## 2.14.0 - 2026-11-21
 
 > **三套件版號 lockstep minor，源碼面無 BREAKING（只加不減）。** 原生依賴升至 iOS `~> 4.32`／`Package.swift` `from: "4.32.0"`／

@@ -1260,6 +1260,10 @@ class LBFeaturedGood {
 ///   • [shopIntro]   — shop introduction text (`channel.shop.intro`). May
 ///                     legitimately be "" when a merchant left the store intro
 ///                     blank (`channel-shop-intro-bridge-core-flutter`).
+///   • [shopId]      — the channel's merchant id (`channel.shop.id`). "" when
+///                     absent (older native binary). Lets the drop-in use the
+///                     playing video's shop as the add-to-cart `shopId`
+///                     (`channel-shop-id-bridge-core-flutter`).
 ///   • [guestComment] — raw `channel.guest_comment` permission flag (`0` =
 ///                     restrict comment submission to logged-in members,
 ///                     non-`0` = guests allowed). Fail-open default `1` when
@@ -1362,6 +1366,15 @@ class LBPlayerChannelInfo {
   /// treat an empty value as evidence the bridge is broken.
   final String shopIntro;
 
+  /// channel-shop-id-bridge-core-flutter: the channel's merchant id
+  /// (`channel.shop.id`, wire key `shopId`). Kept as a `String` (parity with
+  /// `LBShop.id` on iOS / Android and the SDK-wide "ids are strings"
+  /// convention). "" when absent (older native binary). Lets the drop-in use
+  /// the playing video's shop as the add-to-cart `shopId` (parity iOS
+  /// `DefaultPlayerTemplate`'s `player?.channel?.shop.id` / Android
+  /// TemplateAttachment's `channel.shop.id`) instead of the `configure` shop id.
+  final String shopId;
+
   /// guest-comment-channel-bridge-core-flutter: raw `channel.guest_comment`
   /// permission flag (`0` = restrict comment submission to logged-in
   /// members, non-`0` = guests allowed). Default `1` (fail-open) when
@@ -1433,6 +1446,7 @@ class LBPlayerChannelInfo {
     this.goods = const [],
     this.otherGoods = const [],
     this.shopIntro = '',
+    this.shopId = '',
     this.guestComment = 1,
     this.diversion = 0,
     this.isFlashSale = false,
@@ -1470,6 +1484,10 @@ class LBPlayerChannelInfo {
         // rules (missing/null/non-List → `[]`; non-Map entries skipped).
         otherGoods: _asProductList(map['otherGoods']),
         shopIntro: (map['shopIntro'] as String?) ?? '',
+        // channel-shop-id-bridge-core-flutter: a String passes through; a num
+        // is tolerated defensively and turned into its decimal string;
+        // missing / null / anything else → '' (see `_asShopId`).
+        shopId: _asShopId(map['shopId']),
         // guest-comment-channel-bridge-core-flutter: a NEW, dedicated helper —
         // NOT `_asLiveStatus` — because that helper's `-1` fallback would be
         // the wrong polarity for this field's SDK-wide-established "缺欄時
@@ -1490,6 +1508,23 @@ class LBPlayerChannelInfo {
         notice: (map['notice'] as String?) ?? '',
         sysNotice: (map['sysNotice'] as String?) ?? '',
       );
+}
+
+/// Coerce a wire `shopId` to a String (channel-shop-id-bridge-core-flutter).
+/// Both native bridges emit `LBShop.id` as a String; a num is tolerated
+/// defensively (in case a numeric id ever reaches the wire) and turned into its
+/// decimal string (an integral double such as `42.0` → `"42"`; a non-finite num
+/// → ''). Missing / null / anything else → ''.
+String _asShopId(Object? value) {
+  if (value is String) return value;
+  if (value is int) return value.toString();
+  if (value is double) {
+    if (!value.isFinite) return '';
+    return value == value.truncateToDouble()
+        ? value.toInt().toString()
+        : value.toString();
+  }
+  return '';
 }
 
 /// Coerce `diversion` to Int. Absent / unparseable → `0` (in-app product panel — the more

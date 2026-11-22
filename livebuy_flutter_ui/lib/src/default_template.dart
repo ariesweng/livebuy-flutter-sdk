@@ -707,9 +707,19 @@ class DefaultPlayerTemplate {
 
   /// The shop id used to build route-B `LBAddToCartOptions` (host-supplied — the
   /// Flutter bridge `LBProduct` has no shopId; the host knows it from its
-  /// `channel`). Empty until [setShopId] is called; an empty shopId still builds
-  /// the options (core injects auth) but the host should set it.
+  /// `channel`). Empty until [setShopId] is called. Since
+  /// flutter-add-to-cart-channel-shop-id-template it is the SECOND source of the
+  /// add-to-cart shopId (after the channel shop id fed via [handleChannelShopId]).
   String _shopId = '';
+
+  /// flutter-add-to-cart-channel-shop-id-template — 當前頻道商家 id（`LBPlayerChannelInfo.shopId`），
+  /// 由 host／容器經 [handleChannelShopId] 餵入。與 host 的 [setShopId] 分開存放，容器餵入時
+  /// 不會覆寫 host 設的值。刻意不在 [handleVideoSwitch] 重設（換片事件與頻道資料先後無保證；
+  /// 每次頻道資料都會帶 `shopId`，覆寫即可保證不沿用前一支的值）。
+  String _channelShopId = '';
+
+  /// 目前快取的頻道商家 id（供測試 / host 檢視）。未餵入時為空字串。
+  String get channelShopId => _channelShopId;
 
   // `channel.start` non-empty drives the StartScreen splash phase (D2). It is
   // NOT carried by VIDEO_STATE_CHANGE, so the host supplies it via
@@ -855,8 +865,10 @@ class DefaultPlayerTemplate {
         // delegates to the core SDK endpoint; the host may override to route
         // through its own player ref. Tests inject a capturing / throwing fake.
         // MUST NOT build HTTP in the template (mirrors goodsTracking setAwait).
+        // flutter-add-to-cart-channel-shop-id-template — 預設 requester 在 shopId 為空白時
+        // 丟錯、不呼叫 core（parity Android／RN）；host 注入的 requester 不受影響。
         _addToCartRequester =
-            addToCartRequester ?? ((opts) => LivebuySDK.addToCart(opts)),
+            addToCartRequester ?? makeDefaultAddToCartRequester(LivebuySDK.addToCart),
         // live-bid-flutter-template — 下標不需要 host 的 shopId，預設直接接 core。
         _bidRequester = bidRequester ?? defaultBidRequester,
         _bidConfirmRequester = bidConfirmRequester ?? defaultBidConfirmRequester,
@@ -1882,6 +1894,12 @@ class DefaultPlayerTemplate {
   /// other channel-derived fields (header chrome / info-tab).
   void setShopId(String shopId) => _shopId = shopId;
 
+  /// flutter-add-to-cart-channel-shop-id-template — host／容器在每次頻道資料到達時餵入當前頻道
+  /// 商家 id（來源 core `LBPlayerChannelInfo.shopId`，缺值為空字串）。每次呼叫覆寫前值；
+  /// `null` 存成空字串，空白視為「沒有」。只快取、不發通知（同 [setOtherGoods]）；下次加購時
+  /// 優先於 [setShopId] 與 `LivebuySDK.currentShopId`（parity iOS／Android `channel.shop.id`）。
+  void handleChannelShopId(String? shopId) => _channelShopId = shopId ?? '';
+
   /// Host picked variant option [optionIndex] in group [groupIndex]. Updates the
   /// selection and re-clamps qty to the newly-resolved spec's stock (D2 / D3).
   void selectVariant(int groupIndex, int optionIndex) {
@@ -2026,7 +2044,16 @@ class DefaultPlayerTemplate {
     // (the same "auto-fallback to the configured shop" idiom already used by
     // `live_buy_player.dart`'s live-now pill) so an un-set `_shopId` still resolves
     // to the real configured shop by the time a host can actually reach this CTA.
-    final effectiveShopId = _shopId.isNotEmpty ? _shopId : (LivebuySDK.currentShopId ?? '');
+    // flutter-add-to-cart-channel-shop-id-template — 取值順序改為：頻道商家 id
+    // （[handleChannelShopId]，parity iOS／Android `channel.shop.id`）→ [setShopId] →
+    // `LivebuySDK.currentShopId`，每次加購時讀取。皆無時 options 帶空字串：預設 requester
+    // 不呼叫 core、歸為失敗；host 注入的 requester 照舊收到 options（不改其行為）。
+    final effectiveShopId = resolveAddToCartShopId(
+          channelShopId: _channelShopId,
+          hostShopId: _shopId,
+          configuredShopId: LivebuySDK.currentShopId,
+        ) ??
+        '';
     final options = LBAddToCartOptions(
       shopId: effectiveShopId,
       goodsId: int.tryParse(detail.productId),
