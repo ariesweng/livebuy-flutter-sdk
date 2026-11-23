@@ -31,7 +31,8 @@ await LivebuySDK.configure(const LBConfigOptions(
   apiKey: 22081105395545,
   secret: '<your-secret>',
   shopId: 'Pw8PJ99J',           // required — per-shop /sdk/config scope
-  autoPipOnIntercept: true,
+  // autoPipOnIntercept defaults to false on Flutter. If you pass true, call
+  // LivebuySDK.resumeAfterIntercept() when the user returns to the player.
 ));
 
 // Merchant-configured settings — available after configure() resolves.

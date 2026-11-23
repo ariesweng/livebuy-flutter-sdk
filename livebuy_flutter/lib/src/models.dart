@@ -27,7 +27,17 @@ class LBConfigOptions {
   final String shopId;
   final LBLocaleCode? lang;
   final LBUser? user;
-  /// Auto-enter PiP when a navigation interceptor event is taken over by the listener. Default true.
+  /// Auto-enter PiP when a navigation interceptor event (`PRODUCT_CLICK` /
+  /// `AUTH_REQUIRED` / `INFO_CUSTOMER_SERVICE`) is taken over by the listener.
+  /// Default `false` on Flutter (resume-after-intercept-flutter-core; native
+  /// iOS / Android default to `true`).
+  ///
+  /// The Flutter plugin cannot wait for Dart's answer, so the native side
+  /// treats every such event as intercepted as soon as a Dart listener is
+  /// registered — even when Dart only opens an in-app sheet. With `true`, each
+  /// product tap therefore enters PiP (or, where PiP is unavailable, pauses the
+  /// player). Hosts that turn it on SHALL call
+  /// [LivebuySDK.resumeAfterIntercept] when the user comes back to the player.
   final bool autoPipOnIntercept;
   /// API major version sent as `X-API-Version` header by the native SDK.
   /// Default `1`. Invalid (0 / negative) values fall back to `1` natively
@@ -149,7 +159,7 @@ class LBConfigOptions {
     required this.shopId,
     this.lang,
     this.user,
-    this.autoPipOnIntercept = true,
+    this.autoPipOnIntercept = false,
     this.apiVersion = 1,
     this.configFetchTimeoutMs = 5000,
     this.enableConversionAttribution = false,

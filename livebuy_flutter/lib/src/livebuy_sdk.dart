@@ -328,6 +328,20 @@ class LivebuySDK {
     return _channel.invokeMethod('clearUser');
   }
 
+  /// Call when the host returns to the player after handling an intercepted
+  /// `PRODUCT_CLICK` / `AUTH_REQUIRED` / `INFO_CUSTOMER_SERVICE` with
+  /// [LBConfigOptions.autoPipOnIntercept] set to `true`. Acts on the player
+  /// whose auto-PiP that interception most recently triggered: leaves PiP if it
+  /// is running, or resumes playback if the auto-PiP fallback paused it. A
+  /// pause the viewer made is never resumed. No-op when no interception
+  /// triggered auto-PiP or that player has been released. Forwards to native
+  /// iOS `Livebuy.resumeAfterIntercept()` / Android
+  /// `LivebuySDK.resumeAfterIntercept()` (core 4.33.0+).
+  /// (resume-after-intercept-flutter-core)
+  static Future<void> resumeAfterIntercept() {
+    return _channel.invokeMethod('resumeAfterIntercept');
+  }
+
   /// Set the GUEST's LIVE-comment display name. Unlike [setUser] this is NOT a
   /// login: identity stays Guest (no `AUTH_REQUIRED` replay, `isGuest` stays
   /// true), it only sets the nickname shown on the user's own LIVE comments.

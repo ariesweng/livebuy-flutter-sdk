@@ -6,6 +6,39 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.17.0 - 2026-11-23
+
+> **三套件版號 lockstep minor，源碼面無 BREAKING（只加不減）。** `livebuy_flutter`：新增 `resumeAfterIntercept()`、
+> `autoPipOnIntercept` 預設改為 `false`、原生依賴升到 iOS `~> 4.33`／`Package.swift` `from: "4.33.0"`／Android `4.33.0`；
+> `livebuy_flutter_ui`、`livebuy_flutter_reference_ui`：無內容變更、僅隨版號。**host 須三套件一起升到 `2.17.0`。**
+> **驗證範圍**（來源 change 驗收時）：`flutter/` `flutter test`、`flutter analyze` 通過；Android `flutter build apk --debug` 解析 `4.33.0`、iOS example
+> 對 `v4.33.0` podspec `pod install` 與模擬器建置通過，經獨立驗收。**未經真機實測。**
+
+### ⚠️ 升級後行為差異：`autoPipOnIntercept` 預設改為 `false`
+
+- **原本沒有傳 `autoPipOnIntercept` 的 host**：升級後宿主攔截商品點擊（`PRODUCT_CLICK`）、登入（`AUTH_REQUIRED`）、客服
+  （`INFO_CUSTOMER_SERVICE`）時，播放器**不再自動進子母畫面，也不再因無法進子母畫面而被暫停**，維持原樣。
+- 明確傳 `autoPipOnIntercept: true` 或 `false` 的 host：行為不變。
+- 原因：Flutter plugin 只要註冊了 Dart listener，就會把上述同步攔截事件一律回報為「已攔截」，舊預設 `true` 會讓每次點商品都
+  進子母畫面或暫停播放器、回來後也不會恢復。原生 iOS／Android 自身預設不變（仍為 `true`）。
+- **想保留舊行為（攔截時自動進子母畫面）的遷移方式**：
+  1. `LivebuySDK.configure(LBConfigOptions(..., autoPipOnIntercept: true))` 明確傳 `true`；
+  2. 宿主處理完攔截、回到播放器時呼叫 `await LivebuySDK.resumeAfterIntercept();`，讓播放器退出子母畫面或恢復被暫停的播放。
+
+### Added
+
+- `LivebuySDK.resumeAfterIntercept()`：宿主處理完被攔截的 `PRODUCT_CLICK`／`AUTH_REQUIRED`／`INFO_CUSTOMER_SERVICE`、回到播放器時呼叫，
+  讓播放器退出子母畫面，或恢復被自動子母畫面 fallback 暫停的播放；觀眾自己按的暫停不會被恢復。轉呼叫原生 iOS `Livebuy.resumeAfterIntercept()`／
+  Android `LivebuySDK.resumeAfterIntercept()`（`resume-after-intercept-flutter-core`）。
+
+### Changed
+
+- **行為改變：`LBConfigOptions.autoPipOnIntercept` 預設由 `true` 改為 `false`**（見上方專節；iOS／Android plugin 收到缺值時也改當成 `false`）。
+- 原生依賴升到 `4.33.0`：iOS podspec `~> 4.33`、`Package.swift` `from: "4.33.0"`、Android `tv.livebuy:livebuy:4.33.0`（新入口只存在於 4.33.0）。
+- ⚠️ **以 CocoaPods 消費的 host**，Podfile 中 `LivebuySDK` 的 podspec URL **必須**改指 `v4.33.0`（或更新）的 release——
+  仍指向舊 release 的 podspec 時，`pod install` 會因不滿足 `~> 4.33` 而失敗。
+- 範例 App 改用新預設（不再顯式傳 `false`），自訂商品頁返回時呼叫 `resumeAfterIntercept()`。
+
 ## 2.16.0 - 2026-11-23
 
 > **三套件版號 lockstep minor，無 BREAKING（`livebuy_flutter_ui` 只新增公開 API）。** 原生依賴維持 iOS `~> 4.32`／

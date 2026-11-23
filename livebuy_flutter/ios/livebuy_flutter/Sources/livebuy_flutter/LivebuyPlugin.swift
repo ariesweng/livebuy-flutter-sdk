@@ -61,7 +61,8 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
             let displayName = args?["displayName"] as? String
             let avatarUrl = args?["avatarUrl"] as? String
             let externalUserId = args?["externalUserId"] as? String
-            let autoPip = args?["autoPipOnIntercept"] as? Bool ?? true
+            // resume-after-intercept-flutter-core: missing → false, matching the Dart default.
+            let autoPip = args?["autoPipOnIntercept"] as? Bool ?? false
             let apiVersion = args?["apiVersion"] as? Int ?? 1
             let configFetchTimeoutMs = args?["configFetchTimeoutMs"] as? Int ?? 5000
             let enableConversionAttribution = args?["enableConversionAttribution"] as? Bool ?? false
@@ -154,6 +155,11 @@ public final class LivebuyPlugin: NSObject, FlutterPlugin {
 
         case "clearUser":
             Livebuy.clearUser()
+            result(nil)
+
+        // resume-after-intercept-flutter-core: global restore after an intercepted navigation.
+        case "resumeAfterIntercept":
+            Livebuy.resumeAfterIntercept()
             result(nil)
 
         // MARK: - Conversion attribution bridge (conversion-attribution-context-flutter)

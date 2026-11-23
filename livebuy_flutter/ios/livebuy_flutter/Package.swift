@@ -17,7 +17,9 @@
 //   • CI (flutter-bridge-build.yml) + local dev (example bootstrap) export
 //     LIVEBUY_SDK_LOCAL_PATH=<repo>/ios to compile against monorepo source.
 //   • Published consumers (no env var) resolve LivebuySDK from the distribution
-//     repo over Git. Floor 4.32.0 (bridge-native-pin-4-32-0-core): the plugin calls
+//     repo over Git. Floor 4.33.0 (resume-after-intercept-flutter-core): the plugin calls
+//     `Livebuy.resumeAfterIntercept()`, introduced in iOS v4.33.0.
+//     Previous floor 4.32.0 (bridge-native-pin-4-32-0-core): the plugin calls
 //     `Livebuy.placeBid` / `confirmBidWin` and reads the flash-sale fields, introduced in iOS v4.32.0.
 //     Previous floor 4.30.0 (bridge-native-pin-4-30-0-core): the drop-in auto-close on
 //     `advance_exhausted` needs the core that emits it (behavior floor). Previous floor 4.29.0: the bridge's `getLanguage` reads
@@ -33,7 +35,7 @@ let livebuySDKDependency: Package.Dependency = {
     return .package(
         name: "LivebuySDK",
         url: "https://github.com/ariesweng/livebuy-ios-sdk.git",
-        from: "4.32.0"
+        from: "4.33.0"
     )
 }()
 

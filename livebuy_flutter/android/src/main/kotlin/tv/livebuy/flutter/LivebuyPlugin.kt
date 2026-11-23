@@ -190,7 +190,8 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
                 val displayName: String? = call.argument("displayName")
                 val avatarUrl: String? = call.argument("avatarUrl")
                 val externalUserId: String? = call.argument("externalUserId")
-                val autoPipOnIntercept: Boolean = call.argument("autoPipOnIntercept") ?: true
+                // resume-after-intercept-flutter-core: missing → false, matching the Dart default.
+                val autoPipOnIntercept: Boolean = call.argument("autoPipOnIntercept") ?: false
                 val apiVersion: Int = (call.argument<Number?>("apiVersion"))?.toInt() ?: 1
                 val configFetchTimeoutMs: Int = (call.argument<Number?>("configFetchTimeoutMs"))?.toInt() ?: 5000
                 val enableConversionAttribution: Boolean = call.argument("enableConversionAttribution") ?: false
@@ -287,6 +288,11 @@ class LivebuyPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAw
             }
             "clearUser" -> {
                 LivebuySDK.clearUser()
+                result.success(null)
+            }
+            // resume-after-intercept-flutter-core: global restore after an intercepted navigation.
+            "resumeAfterIntercept" -> {
+                LivebuySDK.resumeAfterIntercept()
                 result.success(null)
             }
 
