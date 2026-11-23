@@ -2073,6 +2073,9 @@ class DefaultPlayerTemplate {
         soldOut: detail.soldOut,
       ));
       cartCTA.incrementOnAdd();
+      // cart-add-success-close-detail-flutter-template: close the detail (design
+      // `confirmAddToCart` / web `addCart()`, same as a placed bid). parity iOS / Android / RN.
+      productSheet.clearDetail();
       // cart-add-loading-state-flutter: 成功 → 解除 in-flight。
       _addToCartInFlight = false;
     } catch (e) {

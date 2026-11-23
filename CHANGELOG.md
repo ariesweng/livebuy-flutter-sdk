@@ -14,7 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-（目前無待發項目——`2.15.0` 已於下方發布，三套件共用版號 lockstep。）
+（目前無待發項目——`2.15.1` 已於下方發布，三套件共用版號 lockstep。）
+
+## 2.15.1 - 2026-11-23
+
+> **三套件版號 lockstep patch，無 BREAKING、公開 API 不變。** 原生依賴維持 iOS `~> 4.32`／`Package.swift` `from: "4.32.0"`／
+> Android `4.32.0`（只改 Dart view-model）。
+> **驗證範圍**：`flutter test`（`flutter-ui` 690、`flutter-reference-ui` 2902）、`flutter analyze` 通過，經獨立驗收。
+> **未經模擬器或真機實測。**
+
+### Fixed（`livebuy_flutter_ui`）
+
+- **drop-in 一般加購成功後商品明細不會自動收起、要手動按 ✕**（`cart-add-success-close-detail-flutter-template`）：成功時
+  `DefaultPlayerTemplate` 一併收起商品明細（從商品清單進入的回到清單），對齊設計稿與網頁前台、與 iOS／Android／RN 相同。
+  加購失敗、需登入、30 秒內重複加購保持開啟；不自動開購物車、不派 `VIEW_CART`。自繪畫面、假設成功後 `productSheet.detail`
+  仍在的 host 需調整。
 
 ## 2.15.0 - 2026-11-22
 
