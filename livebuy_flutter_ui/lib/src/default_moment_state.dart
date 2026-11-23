@@ -432,21 +432,96 @@ class DefaultProductOverlayState extends ChangeNotifier {
   /// always notifies exactly once.
   void _applyAndNotifyIfExposedChanged(void Function() mutate) {
     final visibleBefore = products;
-    final activeBeforeId = activeProduct?.id;
+    final activeBefore = activeProduct;
     mutate();
-    final sameIds = _sameIds(visibleBefore, products);
-    final sameActive = activeBeforeId == activeProduct?.id;
-    if (sameIds && sameActive) return;
+    final sameList = productsContentEqual(visibleBefore, products);
+    final sameActive = activeBefore == null || activeProduct == null
+        ? activeBefore == activeProduct
+        : productContentEqual(activeBefore, activeProduct!);
+    if (sameList && sameActive) return;
     notifyListeners();
   }
+}
 
-  static bool _sameIds(List<LBProduct> a, List<LBProduct> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i].id != b[i].id) return false;
-    }
-    return true;
+// product-overlay-content-diff-flutter-template (parity iOS `sameContent`): a 5s
+// refresh with the same ids but a changed field (buyingNum / stock / soldOut …) MUST
+// notify, so the product cards redraw. `LBProduct` / `LBSpec` / `LBSpecOption` are core
+// classes without `operator ==` (the view-model layer must not change core types), so
+// every field is compared here — add new model fields to these functions too.
+
+/// Same products (full content, nested specs included) in the same order.
+@visibleForTesting
+bool productsContentEqual(List<LBProduct> a, List<LBProduct> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (!productContentEqual(a[i], b[i])) return false;
   }
+  return true;
+}
+
+/// Field-by-field equality of two [LBProduct]s.
+@visibleForTesting
+bool productContentEqual(LBProduct a, LBProduct b) =>
+    identical(a, b) ||
+    (a.id == b.id &&
+        a.goodsNo == b.goodsNo &&
+        a.name == b.name &&
+        a.price == b.price &&
+        a.priceShow == b.priceShow &&
+        a.originalPrice == b.originalPrice &&
+        a.originalPriceShow == b.originalPriceShow &&
+        a.stock == b.stock &&
+        a.pic == b.pic &&
+        listEquals(a.photos, b.photos) &&
+        a.brief == b.brief &&
+        a.description == b.description &&
+        a.goodsGpn == b.goodsGpn &&
+        a.soldOut == b.soldOut &&
+        a.isHot == b.isHot &&
+        a.isOutSoon == b.isOutSoon &&
+        a.narrateStatus == b.narrateStatus &&
+        a.canView == b.canView &&
+        a.canBuy == b.canBuy &&
+        a.isNarrating == b.isNarrating &&
+        a.needLabel == b.needLabel &&
+        a.label == b.label &&
+        a.isAwait == b.isAwait &&
+        a.isAwaitNotice == b.isAwaitNotice &&
+        a.beginTime == b.beginTime &&
+        a.endTime == b.endTime &&
+        a.diversionUrl == b.diversionUrl &&
+        _listEqualBy(a.specifications, b.specifications, _specContentEqual) &&
+        _listEqualBy(a.specOptions, b.specOptions, _specOptionContentEqual) &&
+        a.videoId == b.videoId &&
+        a.saleKeyword == b.saleKeyword &&
+        a.buyingNum == b.buyingNum &&
+        a.totalBuyingNum == b.totalBuyingNum &&
+        a.limitNum == b.limitNum);
+
+bool _specContentEqual(LBSpec a, LBSpec b) =>
+    a.id == b.id &&
+    a.name == b.name &&
+    a.specificationNo == b.specificationNo &&
+    a.price == b.price &&
+    a.priceShow == b.priceShow &&
+    a.originalPrice == b.originalPrice &&
+    a.originalPriceShow == b.originalPriceShow &&
+    a.stock == b.stock &&
+    listEquals(a.photos, b.photos) &&
+    a.saleKeyword == b.saleKeyword &&
+    a.buyingNum == b.buyingNum &&
+    a.totalBuyingNum == b.totalBuyingNum &&
+    a.limitNum == b.limitNum;
+
+bool _specOptionContentEqual(LBSpecOption a, LBSpecOption b) =>
+    a.name == b.name && listEquals(a.child, b.child);
+
+bool _listEqualBy<T>(List<T> a, List<T> b, bool Function(T, T) eq) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (!eq(a[i], b[i])) return false;
+  }
+  return true;
 }
 
 // ── 4. PlayerHeader ──────────────────────────────────────────────────────────

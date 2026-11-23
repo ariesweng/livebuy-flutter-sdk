@@ -691,6 +691,10 @@ class DefaultPlayerTemplate {
   /// `ListenableBuilder` 綁定）。由 [TemplateAttachment] 的 `BID_WON` 經 [handleBidWon] 餵入。
   final DefaultBidWon bidWon = DefaultBidWon();
 
+  /// keyword-bid-result-toast-flutter-template — 聊天關鍵字下標結果通知（自己的 ChangeNotifier；
+  /// reference-ui 監聽後顯示提示）。由 [TemplateAttachment] 的 `BID_PLACE_RESULT` 經 [handleBidPlaceResult] 餵入。
+  final DefaultKeywordBidResult keywordBidResult = DefaultKeywordBidResult();
+
   /// 最近一次搶購下標結果；null = 這次嘗試 / 這個明細還沒有結果。純欄位、無 notify（同
   /// [addToCartFailed]：template 非 ChangeNotifier，reference-ui 在 `await addToCart()` 後讀取）。
   LBBidOutcome? _bidOutcome;
@@ -999,6 +1003,7 @@ class DefaultPlayerTemplate {
     cartCTA.resetForSession();
     // live-bid-flutter-template — 換片清空得標視窗與下標結果（同一支影片重新餵 channel 不會走到這裡）。
     bidWon.clear();
+    keywordBidResult.clear();
     _bidOutcome = null;
   }
 
@@ -2135,6 +2140,22 @@ class DefaultPlayerTemplate {
       case BidRejectionKind.failed:
         _bidOutcome = LBBidOutcomeFailed(rejection.code);
     }
+  }
+
+  /// keyword-bid-result-toast-flutter-template — core `BID_PLACE_RESULT` 由 [TemplateAttachment] 轉入。只處理
+  /// 聊天關鍵字下標（`is_keyword` 為真）：更新 [bidOutcome] 並經 [keywordBidResult] 通知 reference-ui 顯示提示。
+  /// 按鈕下標忽略（其 requester 已設定結果）；事件 `video_id` 不是目前影片（換片後才到）→ 忽略。
+  void handleBidPlaceResult(Map<String, Object?> params) {
+    final outcome = keywordBidOutcome(params);
+    if (outcome == null) return;
+    final eventVideo = params['video_id'];
+    final current = _currentVideoId;
+    if (eventVideo is String && eventVideo.isNotEmpty && current != null && current.isNotEmpty &&
+        eventVideo != current) {
+      return;
+    }
+    _bidOutcome = outcome;
+    keywordBidResult.record(outcome);
   }
 
   /// live-bid-flutter-template — core `BID_WON`（`ordered` 或 `failed`）由 [TemplateAttachment] 轉入。

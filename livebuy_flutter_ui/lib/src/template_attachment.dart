@@ -381,6 +381,12 @@ class TemplateAttachment {
         template.handleBidWon(event.params);
         return LBEventReply.acknowledge;
 
+      case LBEvent.bidPlaceResult:
+        // keyword-bid-result-toast-flutter-template — 聊天「關鍵字+數量」下標結果 → keywordBidResult 通知
+        // （按鈕下標在 handleBidPlaceResult 內忽略）。通知型事件：只觀察、回 `acknowledge` 不攔截。
+        template.handleBidPlaceResult(event.params);
+        return LBEventReply.acknowledge;
+
       default:
         // Every other event is owned by the host's primary listener.
         return LBEventReply.passthrough;

@@ -14,7 +14,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-（目前無待發項目——`2.15.1` 已於下方發布，三套件共用版號 lockstep。）
+（目前無待發項目——`2.16.0` 已於下方發布，三套件共用版號 lockstep。）
+
+## 2.16.0 - 2026-11-23
+
+> **三套件版號 lockstep minor，無 BREAKING（`livebuy_flutter_ui` 只新增公開 API）。** 原生依賴維持 iOS `~> 4.32`／
+> `Package.swift` `from: "4.32.0"`／Android `4.32.0`（只改 Dart view-model 與 reference-ui）。
+> **驗證範圍**：`flutter test`（`flutter-ui` 705、`flutter-reference-ui` 2908）、`flutter analyze` 通過，經獨立驗收。
+> **未經模擬器或真機實測。**
+
+### Added（`livebuy_flutter_ui`）
+
+- `DefaultKeywordBidResult`（`template.keywordBidResult`，ChangeNotifier）與 `DefaultPlayerTemplate.handleBidPlaceResult`：
+  聊天室「關鍵字+數量」下標結果的通知（`keyword-bid-result-toast-flutter-template`）。
+
+### Fixed
+
+- **聊天室「關鍵字+數量」下標沒有「已加入搶購」提示**（`livebuy_flutter_ui` ＋ `livebuy_flutter_reference_ui`，
+  `rb-flutter-keyword-bid-toast`）：關鍵字下標由原生 core 在背景送出，以前畫面拿不到結果、沒有任何提示（網頁會顯示「已加入搶購」）。
+  現在 view-model 接收 `BID_PLACE_RESULT`（`is_keyword` 為真）並經 `keywordBidResult` 通知，drop-in 顯示與按鈕下標相同的提示；
+  按鈕下標事件與換片後才到的舊結果忽略。與 iOS／Android／RN 同批。
+- **直播中商品資料刷新沒有通知畫面重畫**（`livebuy_flutter_ui`，`product-overlay-content-diff-flutter-template`）：`DefaultProductOverlayState`
+  原本只在商品 id 清單或介紹中商品改變時才通知，core 每 5 秒帶回的下標數、庫存、售完等欄位變動雖進了資料，已顯示的商品卡（「已售完」
+  標籤、庫存）卻不會重畫。現改為依商品完整內容判斷變更並通知；內容相同不通知、開場影片期間規則不變。與 iOS／Android／RN 同批。
 
 ## 2.15.1 - 2026-11-23
 

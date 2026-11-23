@@ -554,6 +554,17 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     _lastCartCount = _model.cartCount;
     widget.template?.cartCTA.addListener(_onCartCTAChanged);
     widget.template?.authGate.addListener(_consumeCartAddAuthGateIfOwned);
+    widget.template?.keywordBidResult.addListener(_onKeywordBidResult);
+  }
+
+  /// rb-flutter-keyword-bid-toast: a chat「關鍵字+數量」bid result (`template.keywordBidResult`, notified
+  /// once per result even when it repeats) flashes the same toast as the button path — placed
+  ///「已加入搶購」, failed → error copy by `error_code`. Runs outside build, so `setState` is safe.
+  void _onKeywordBidResult() {
+    final outcome = widget.template?.keywordBidResult.outcome;
+    if (!mounted || outcome == null) return;
+    final content = BidToastContent.resolve(outcome, _model.detail?.limitNum ?? 0);
+    _flashCartToast(isError: content.isError, label: content.text);
   }
 
   /// Re-read `cartCount` off the model and flash the toast on a STRICT rise past the seeded
@@ -586,6 +597,7 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     if (oldWidget.template != widget.template) {
       oldWidget.template?.cartCTA.removeListener(_onCartCTAChanged);
       oldWidget.template?.authGate.removeListener(_consumeCartAddAuthGateIfOwned);
+      oldWidget.template?.keywordBidResult.removeListener(_onKeywordBidResult);
       _model = ProductSheetsModel(
         template: widget.template,
         // Same Map instance across a template swap — cache contents (from prior
@@ -596,6 +608,7 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
       _lastCartCount = _model.cartCount; // re-seed so the new template's count does not flash.
       widget.template?.cartCTA.addListener(_onCartCTAChanged);
       widget.template?.authGate.addListener(_consumeCartAddAuthGateIfOwned);
+      widget.template?.keywordBidResult.addListener(_onKeywordBidResult);
     }
   }
 
@@ -605,6 +618,7 @@ class _ProductSheetsOverlayViewState extends State<ProductSheetsOverlayView> {
     _cartLoadingTimer?.cancel();
     widget.template?.cartCTA.removeListener(_onCartCTAChanged);
     widget.template?.authGate.removeListener(_consumeCartAddAuthGateIfOwned);
+    widget.template?.keywordBidResult.removeListener(_onKeywordBidResult);
     super.dispose();
   }
 

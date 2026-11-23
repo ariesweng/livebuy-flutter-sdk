@@ -208,6 +208,41 @@ class LBBidWonItem {
       Object.hash(buyingId, productId, specificationId, name, num, status);
 }
 
+/// keyword-bid-result-toast-flutter-template — 聊天「關鍵字+數量」下標結果通知（`template.keywordBidResult`）。
+/// 關鍵字下標由原生 core 在背景送出，結果只經 `BID_PLACE_RESULT` 回來；Flutter template 不是
+/// `ChangeNotifier`，reference-ui 只在 `await addToCart()` 前後讀 `bidOutcome`，看不到這條路徑——所以另外
+/// 以這個 `ChangeNotifier` 通知：每次 [record] 都通知一次（即使結果與上次相同，每次下標都是一次新事件），
+/// reference-ui 監聽後顯示與按鈕下標相同的「已加入搶購」／失敗提示。
+class DefaultKeywordBidResult extends ChangeNotifier {
+  LBBidOutcome? _outcome;
+
+  /// 最近一次關鍵字下標結果；換片時清為 null（不通知）。
+  LBBidOutcome? get outcome => _outcome;
+
+  /// 記錄一次結果並通知。
+  @internal
+  void record(LBBidOutcome outcome) {
+    _outcome = outcome;
+    notifyListeners();
+  }
+
+  /// 換片清空（不通知——沒有新結果要提示）。
+  @internal
+  void clear() => _outcome = null;
+}
+
+/// PURE（parity iOS / Android / RN `keywordBidOutcome`）：聊天關鍵字下標的 `BID_PLACE_RESULT` params → 結果；
+/// 按鈕下標（`is_keyword` 為假）回 null。`is_keyword` 接受 bool、`1` 或 `'1'`。
+@internal
+LBBidOutcome? keywordBidOutcome(Map<String, Object?> params) {
+  final raw = params['is_keyword'];
+  final isKeyword = raw == true || raw == 1 || raw == '1';
+  if (!isKeyword) return null;
+  if (params['status'] == 'placed') return const LBBidOutcomePlaced();
+  final code = params['backend_error_code'];
+  return LBBidOutcomeFailed(code is String && code.isNotEmpty ? code : null);
+}
+
 /// 「恭喜搶購成功」視窗 view-model（parity iOS / Android / RN `DefaultBidWon`，`template.bidWon`）。
 /// 收到 `BID_WON`（`ordered` 或 `failed` 都算得標）→ [record]；「確定」→
 /// `DefaultPlayerTemplate.confirmBidWin()`；「取消」/ 換片 → [clear]。自己是 `ChangeNotifier`
