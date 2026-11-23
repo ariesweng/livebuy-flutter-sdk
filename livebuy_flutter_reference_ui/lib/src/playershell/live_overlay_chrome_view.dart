@@ -110,9 +110,10 @@ class LiveOverlayChromeView extends StatelessWidget {
   /// `rb-flutter-pinned-card-tap-opens-detail`: type widened from `VoidCallback?` (no product
   /// param) — the turnkey container's default now forwards to `_defaultOnProductTap` (→
   /// `DefaultPlayerTemplate.handleProductTap`, opens that product's DETAIL sheet), the same
-  /// already-tested default `onProductTap` uses — NOT a new `simulateProductTap` round-trip
-  /// (that path is a confirmed Flutter-bridge dead end, see
-  /// `flutter-product-tap-diversion-wiring-reference-ui`).
+  /// already-tested default `onProductTap` uses. That default also sends the native
+  /// `simulateProductTap` telemetry first, but never relies on its round-trip to open the
+  /// sheet (a confirmed Flutter-bridge dead end, see
+  /// `flutter-product-tap-diversion-wiring-reference-ui` / `flutter-dropin-product-tap-telemetry`).
   final ValueChanged<LBProduct>? onTapPinnedProduct;
 
   /// Host-wired pinned-card CLOSE (the right-top X chip). `null` → no-op → the close chip is

@@ -983,26 +983,38 @@ class LivebuyPlayerConfig {
   /// guestNameEdit / more). 「留言…」comment is a separate seam (`onComment`).
   final ValueChanged<LBSideRailKind>? onTapRailItem;
 
-  /// Pinned product card tap. DEFAULT: `_defaultOnProductTap` (→
-  /// `DefaultPlayerTemplate.handleProductTap(product:,diversion:)`, opens that product's
-  /// DETAIL sheet — the same default forwarder [onProductTap] already uses).
+  /// Pinned product card tap. DEFAULT: `_defaultOnProductTap` — the same default
+  /// [onProductTap] uses: native telemetry (`productOverlay.simulateProductTap` →
+  /// `INFO_PRODUCT_VIEW` + `goods_pv` + `PRODUCT_CLICK`) then
+  /// `DefaultPlayerTemplate.handleProductTap(product:,diversion:)`, which opens that product's
+  /// DETAIL sheet (flutter-dropin-product-tap-telemetry). Setting this replaces BOTH exits.
   ///
   /// 🔴 **BREAKING（編譯期）**：型別由 `VoidCallback?`（無參數）加寬為
   /// `ValueChanged<LBProduct>?`（`rb-flutter-pinned-card-tap-opens-detail`）。Dart 不允許把
   /// 無參數 callback 指派給帶參數函式型別，故已覆寫此 seam 的 host 會在升級時編譯失敗，需把
   /// `onTapPinnedProduct: () { ... }` 改成 `onTapPinnedProduct: (product) { ... }`。舊預設
   /// `controller.operationPanel.simulateGoodsTap()` 語意錯誤（開商品**列表**、非該商品**明細**）
-  /// 已移除；MUST NOT 改呼叫 `controller.productOverlay.simulateProductTap(product)` ——該路徑
-  /// 已被 `flutter-product-tap-diversion-wiring-reference-ui` 於真機證實為 Flutter bridge 的
-  /// 死路（native method-channel round-trip，本容器的 `LivebuyPlayerCore(...)` 建構點從未接住
-  /// 其回程的 `onProductTap` 事件）。
+  /// 已移除。MUST NOT **只**呼叫 `controller.productOverlay.simulateProductTap(product)`
+  /// ——單靠該路徑開不了明細（`flutter-product-tap-diversion-wiring-reference-ui` 真機證實：
+  /// 本容器的 `LivebuyPlayerCore(...)` 建構點從未接住其回程的 `onProductTap` 事件）；它只負責
+  /// 送點擊統計，開明細一律由同一個預設再呼叫 `handleProductTap`（flutter-dropin-product-tap-telemetry）。
   final ValueChanged<LBProduct>? onTapPinnedProduct;
 
   /// LIVE「留言…」pill. DEFAULT: open + focus the on-demand chat composer.
   final VoidCallback? onComment;
 
-  /// Product-row / overlay product tap. DEFAULT:
-  /// `controller.productOverlay.simulateProductTap(product)`.
+  /// Product-row / overlay product tap (list row / add-cart / restock bell / VOD
+  /// now-introducing card / detail-sheet recommendation). DEFAULT (`_defaultOnProductTap`,
+  /// flutter-dropin-product-tap-telemetry): first `controller.productOverlay.simulateProductTap`
+  /// (native sends `INFO_PRODUCT_VIEW` + `goods_pv` + `PRODUCT_CLICK`), then
+  /// `DefaultPlayerTemplate.handleProductTap(product:,diversion:)` with the full product (opens
+  /// the detail sheet, or the purchase page when `diversion == 1`). Setting this replaces BOTH
+  /// exits — the container then sends no telemetry and opens nothing.
+  ///
+  /// Note: with a host listener installed, the native `PRODUCT_CLICK` reports "intercepted"
+  /// (the Flutter bridge treats sync-interceptor events as handled). A host that configured
+  /// `autoPipOnIntercept: true` therefore enters picture-in-picture on a default product tap —
+  /// same as RN; the default `false` is unaffected.
   final ValueChanged<LBProduct>? onProductTap;
 
   /// 頻道 / detail-footer 分享. DEFAULT (dropin-player-default-share-sheet-flutter): 以
@@ -2045,9 +2057,15 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
   /// into [forwardProductTapToTemplate] (below) — kept a separate, tiny method (rather than an
   /// inline closure) only so the `onProductTap:` call site reads as a plain named default,
   /// matching this file's existing convention (`_toggleMute` / `_routeRailItem`).
+  ///
+  /// flutter-dropin-product-tap-telemetry: the default now has TWO exits (see
+  /// [defaultProductTap]) — first the native product-tap telemetry
+  /// (`productOverlay.simulateProductTap` → `INFO_PRODUCT_VIEW` + `goods_pv` + `PRODUCT_CLICK`),
+  /// then the in-process detail-sheet open. Parity iOS `performProductTap` / Android
+  /// `defaultProductTap` / RN `defaultOpenProduct`.
   void _defaultOnProductTap(LBProduct product) {
-    forwardProductTapToTemplate(
-        product, _lastDiversion, LivebuyUI.playerTemplate);
+    defaultProductTap(product, _lastDiversion, LivebuyUI.playerTemplate,
+        _controller.productOverlay.simulateProductTap);
   }
 
   /// Route a side-rail tap to its core `operationPanel.simulate*` exit (kind-routed default).
@@ -2373,10 +2391,11 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       onToggleSubscribe: c.onToggleSubscribe ?? _gatedSubscribe,
       onTapRailItem: c.onTapRailItem ?? _routeRailItem,
       // rb-flutter-pinned-card-tap-opens-detail: reuse the SAME already-tested default
-      // forwarder onProductTap uses below — NOT a new call to
-      // controller.productOverlay.simulateProductTap(product), which is a confirmed Flutter
-      // bridge dead end (see _defaultOnProductTap's own doc comment).
-      onTapPinnedProduct: c.onTapPinnedProduct ?? _defaultOnProductTap,
+      // onProductTap uses below. flutter-dropin-product-tap-telemetry: that default sends the
+      // native telemetry (productOverlay.simulateProductTap) AND opens the detail in-process —
+      // the native round-trip alone is still a dead end for OPENING (see [defaultProductTap]).
+      onTapPinnedProduct:
+          resolveProductTapHandler(c.onTapPinnedProduct, _defaultOnProductTap),
       // LIVE「留言…」pill → 預設先判斷暱稱是否已設定（R2：讀容器本地鏡像 `_guestNickname`）：未設定
       // （訪客且尚未選名）→ 先呈現 設定暱稱 modal（composeAfter=true、送出後接 composer）；否則開
       // composer。host 自訂 config.onComment 則完全接管、不套 gating（parity iOS / Android / RN）。
@@ -2445,7 +2464,7 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // `POST /sdk/video/claim`（第二次後端回「已領過」→ 500 api.fail → 假失敗）。
       onSubmitClaim: c.onSubmitClaim ??
           buildAwardClaimSubmit(_controller.requestAwardClaim),
-      onProductTap: c.onProductTap ?? _defaultOnProductTap,
+      onProductTap: resolveProductTapHandler(c.onProductTap, _defaultOnProductTap),
       // 頻道/footer 分享預設（dropin-player-default-share-sheet-flutter，B 等義）：host 設了 onShare →
       // 覆蓋；未設 → 以 channel.share_url（playerTemplate.header.shareUrl）經 share_plus 開系統分享。
       // 空 url → no-op（lbShouldPresentChannelShare）。頻道級不附 ?t=。已設 onShare 的 host 零變更。
@@ -3198,3 +3217,31 @@ void forwardProductTapToTemplate(
     LBProduct product, int diversion, DefaultPlayerTemplate? template) {
   template?.handleProductTap(product: product, diversion: diversion);
 }
+
+/// Default product tap of the Flutter drop-in (flutter-dropin-product-tap-telemetry). Two
+/// exits, BOTH required, in this order (parity iOS `performProductTap` → native
+/// `productOverlayView.onProductTap`, Android `defaultProductTap`, RN `defaultOpenProduct`):
+///
+/// 1. [sendTelemetry] — the container passes `controller.productOverlay.simulateProductTap`,
+///    which reaches native `productOverlayView.simulateProductTap`; native then dispatches
+///    `INFO_PRODUCT_VIEW`, reports `goods_pv` and dispatches `PRODUCT_CLICK`. These three are
+///    native-only; Dart cannot send them.
+/// 2. [forwardProductTapToTemplate] with the FULL [product] — opens the detail sheet. The
+///    native `PRODUCT_CLICK` that comes back carries only `{product_id, video_id}`, and
+///    `TemplateAttachment` passes it through, so it never opens a second sheet.
+///
+/// Telemetry is fire-and-forget: a failed / missing native channel MUST NOT block or break
+/// opening the detail sheet, so its error is swallowed.
+void defaultProductTap(LBProduct product, int diversion,
+    DefaultPlayerTemplate? template, Future<void> Function(LBProduct) sendTelemetry) {
+  sendTelemetry(product).catchError((Object _) {});
+  forwardProductTapToTemplate(product, diversion, template);
+}
+
+/// `override ?? fallback` for the two product-tap seams (`onProductTap` /
+/// `onTapPinnedProduct`). A host override replaces the default entirely — neither the
+/// telemetry nor the detail open is then called by the container. Extracted so that rule is
+/// unit-testable without pumping the container (flutter-dropin-product-tap-telemetry).
+ValueChanged<LBProduct> resolveProductTapHandler(
+        ValueChanged<LBProduct>? override, ValueChanged<LBProduct> fallback) =>
+    override ?? fallback;

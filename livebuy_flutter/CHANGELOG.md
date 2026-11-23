@@ -6,6 +6,41 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+## 2.17.1 - 2026-11-24
+
+> **三套件版號 lockstep patch，無 BREAKING、既有公開 API 不變（無移除、無改簽章）。** `livebuy_flutter`：Android 原生依賴
+> `4.33.0` → `4.33.1`；iOS 維持 podspec `~> 4.33`／`Package.swift` `from: "4.33.0"`。`livebuy_flutter_reference_ui`：drop-in 點商品
+> 補送原生點擊統計。`livebuy_flutter_ui`：無內容變更、僅隨版號。**host 須三套件一起升到 `2.17.1`。**
+> **驗證範圍**：商品點擊統計（來源 change 驗收時）`flutter-reference-ui` 新增單元測試、`flutter test`、`flutter analyze` 通過，經獨立驗收；
+> Android pin 由實作者以 example `flutter build apk --debug` ＋ `dependencyInsight` 確認解析 `4.33.1`（未派獨立驗收）。
+> **未經模擬器或真機實測。**
+
+### ⚠️ 升級後行為差異：drop-in 點商品預設會送 `PRODUCT_CLICK`
+
+- **沒有設 `LivebuyPlayerConfig.onProductTap`／`onTapPinnedProduct` 的 host**：升級後點商品（商品列表、加購鈕、補貨鈴鐺、回放
+  「介紹中」卡、明細內推薦商品、直播釘選卡），host 的 listener 會收到 `PRODUCT_CLICK` 與 `INFO_PRODUCT_VIEW`，並送出 `goods_pv`
+  統計（`enableStatReporting: false` 時不送）。明細照舊打開，不會重複開。
+- 若同時在 `configure` 傳了 `autoPipOnIntercept: true`：點商品時播放器會進子母畫面，進不了時會暫停（Flutter plugin 只要有 Dart
+  listener 就把 `PRODUCT_CLICK` 回報為「已攔截」，與 RN 相同）。**預設 `false`，不受影響。**想避免可改回 `false`，或在回到播放器時呼叫
+  `LivebuySDK.resumeAfterIntercept()`。
+- 有設 `onProductTap`／`onTapPinnedProduct` 的 host：行為不變（容器不送統計、也不開明細，完全由 host 接手）。
+
+### Fixed（`livebuy_flutter_reference_ui`）
+
+- **drop-in 點商品不送原生點擊統計**（`flutter-dropin-product-tap-telemetry`）：以前 Flutter drop-in 點商品只在 Dart 端開明細、完全
+  不經原生，所以 `INFO_PRODUCT_VIEW`、`goods_pv`、`PRODUCT_CLICK` 從來沒送過，是四端唯一的缺口。現在預設先經 core
+  `productOverlay.simulateProductTap` 送出這三件，再開明細，與 iOS／Android／RN 相同；釘選卡走同一個預設。統計送不出去時不影響開明細。
+  新增頂層函式 `defaultProductTap`、`resolveProductTapHandler`（容器預設用，可供 host 測試；additive）。
+
+### Fixed（`livebuy_flutter`）
+
+- 原生依賴：Android `tv.livebuy:livebuy:4.33.0` → `4.33.1`（`flutter-android-pin-4-33-1-core`）。Android `4.33.1` 修正 `togglePlayPause`：
+  改依播放意圖決定方向，暫停後（宿主 `pause()`、自動子母畫面 fallback 暫停、App 進背景、片頭期間）第一次按播放鈕就會播放，
+  不再要按兩下（見 [`docs/release-notes/v4.33.1.md`](../docs/release-notes/v4.33.1.md)）。零 public 符號變動；iOS podspec `~> 4.33`／
+  `Package.swift` `from: "4.33.0"` 維持不變（已涵蓋）。
+- iOS 的同類修正（直播暫停後按播放無效）在 iOS `4.33.1`（已於 2026-11-24 發佈）。CocoaPods host 把 Podfile 中
+  `LivebuySDK` 的 podspec URL 改指 `v4.33.1`、SwiftPM host 重新解析套件即可取得，Flutter 端不需改版。
+
 ## 2.17.0 - 2026-11-23
 
 > **三套件版號 lockstep minor，源碼面無 BREAKING（只加不減）。** `livebuy_flutter`：新增 `resumeAfterIntercept()`、
