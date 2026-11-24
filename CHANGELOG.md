@@ -14,7 +14,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-（目前無待發項目——`2.17.1` 已於下方發布，三套件共用版號 lockstep。）
+（目前無待發項目——`2.17.2` 已於下方發布，三套件共用版號 lockstep。）
+
+## 2.17.2 - 2026-11-24
+
+> **三套件版號 lockstep patch，無 BREAKING、既有公開 API 不變（無移除、無改簽章）。** `livebuy_flutter_reference_ui`：drop-in 直播置頂卡改跟
+> `onProductTap`；新增 additive 頂層函式 `resolvePinnedProductTapHandler`。`livebuy_flutter`、`livebuy_flutter_ui`：無內容變更、僅隨版號
+> （原生依賴維持 iOS `~> 4.33`／`Package.swift` `from: "4.33.0"`、Android `4.33.1`）。**host 須三套件一起升到 `2.17.2`。**
+> **驗證範圍**：`flutter-reference-ui` 新增單元／widget 測試、`flutter test` 通過（來源 change 經獨立驗收）；模擬器上 drop-in 點商品列表
+> `PRODUCT_CLICK` 只送一次、明細只開一次。**置頂卡未經模擬器或真機實測**（需直播中且有置頂商品的頻道）。
+
+### ⚠️ 升級後行為差異：只設 `onProductTap` 的 host，直播置頂卡也交給它
+
+- **設了 `LivebuyPlayerConfig.onProductTap`、沒設 `onTapPinnedProduct` 的 host**：點直播置頂商品卡改呼叫 `onProductTap`（帶該商品），**不再開
+  SDK 明細、也不送點擊統計**——與商品列表、回放「介紹中」卡相同，也與 iOS／Android／RN 相同。若你的 `onProductTap` 只為商品列表設計，請確認它也能
+  處理置頂卡傳來的商品。
+- 設了 `onTapPinnedProduct` 的 host：不變（它優先）。兩個都沒設：不變（預設送統計並開明細）。
+
+### Fixed（`livebuy_flutter_reference_ui`）
+
+- **只設 `onProductTap` 時直播置頂卡仍開 SDK 明細**（`rb-flutter-pinned-card-follows-on-product-tap`；ledger #62）：解析順序改為
+  `onTapPinnedProduct ?? onProductTap ?? 預設`。新增頂層函式 `resolvePinnedProductTapHandler`（容器用，可供 host 測試；additive）。
+
+### iOS core 修正（不需升 Flutter 套件）
+
+- iOS `4.33.2` 修直播子母畫面系統播放／暫停鈕操作後，回到 App 第一次按播放鈕沒反應。Flutter iOS 依賴為寬鬆約束；CocoaPods host 把
+  Podfile 中 `LivebuySDK` 的 podspec URL 改指 `v4.33.2` 並 `pod update LivebuySDK`、SwiftPM host 重新解析即可。
+
+### 更正 `2.17.1` 說明
+
+- `2.17.1` 的「有設 `onProductTap`／`onTapPinnedProduct` 的 host：行為不變（容器不送統計、也不開明細，完全由 host 接手）」不準確：在 `2.17.1`，
+  **只設 `onProductTap`** 的 host 點直播置頂卡仍走預設（送統計並開 SDK 明細）。`2.17.2` 起改為交給 `onProductTap`（見上）。
 
 ## 2.17.1 - 2026-11-24
 
@@ -33,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 若同時在 `configure` 傳了 `autoPipOnIntercept: true`：點商品時播放器會進子母畫面，進不了時會暫停（Flutter plugin 只要有 Dart
   listener 就把 `PRODUCT_CLICK` 回報為「已攔截」，與 RN 相同）。**預設 `false`，不受影響。**想避免可改回 `false`，或在回到播放器時呼叫
   `LivebuySDK.resumeAfterIntercept()`。
-- 有設 `onProductTap`／`onTapPinnedProduct` 的 host：行為不變（容器不送統計、也不開明細，完全由 host 接手）。
+- 有設 `onProductTap`／`onTapPinnedProduct` 的 host：商品列表等入口由 host 接手（容器不送統計、也不開明細）。**更正（2026-11-24）**：只設 `onProductTap`、沒設 `onTapPinnedProduct` 時，直播置頂卡在本版仍走預設（送統計並開 SDK 明細）；`2.17.2` 起改交給 `onProductTap`。
 
 ### Fixed（`livebuy_flutter_reference_ui`）
 

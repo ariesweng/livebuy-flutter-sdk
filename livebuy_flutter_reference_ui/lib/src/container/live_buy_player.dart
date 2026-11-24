@@ -983,11 +983,20 @@ class LivebuyPlayerConfig {
   /// guestNameEdit / more). 「留言…」comment is a separate seam (`onComment`).
   final ValueChanged<LBSideRailKind>? onTapRailItem;
 
-  /// Pinned product card tap. DEFAULT: `_defaultOnProductTap` — the same default
-  /// [onProductTap] uses: native telemetry (`productOverlay.simulateProductTap` →
-  /// `INFO_PRODUCT_VIEW` + `goods_pv` + `PRODUCT_CLICK`) then
-  /// `DefaultPlayerTemplate.handleProductTap(product:,diversion:)`, which opens that product's
-  /// DETAIL sheet (flutter-dropin-product-tap-telemetry). Setting this replaces BOTH exits.
+  /// Pinned product card tap. Resolution order (rb-flutter-pinned-card-follows-on-product-tap,
+  /// parity iOS / Android where the pinned card goes through `onProductTap`):
+  /// `onTapPinnedProduct ?? onProductTap ?? _defaultOnProductTap`.
+  ///
+  /// - Set → it handles the pinned card (unchanged from before).
+  /// - Unset but [onProductTap] set → the pinned card goes to [onProductTap] too, like the
+  ///   product list row and the VOD now-introducing card. ⚠️ Behaviour change: before this,
+  ///   such a host still got the SDK detail sheet + telemetry on the pinned card.
+  /// - Both unset → `_defaultOnProductTap`: native telemetry
+  ///   (`productOverlay.simulateProductTap` → `INFO_PRODUCT_VIEW` + `goods_pv` +
+  ///   `PRODUCT_CLICK`) then `DefaultPlayerTemplate.handleProductTap(product:,diversion:)`,
+  ///   which opens that product's DETAIL sheet (flutter-dropin-product-tap-telemetry).
+  ///
+  /// Whichever host callback is used replaces BOTH default exits.
   ///
   /// 🔴 **BREAKING（編譯期）**：型別由 `VoidCallback?`（無參數）加寬為
   /// `ValueChanged<LBProduct>?`（`rb-flutter-pinned-card-tap-opens-detail`）。Dart 不允許把
@@ -1004,7 +1013,8 @@ class LivebuyPlayerConfig {
   final VoidCallback? onComment;
 
   /// Product-row / overlay product tap (list row / add-cart / restock bell / VOD
-  /// now-introducing card / detail-sheet recommendation). DEFAULT (`_defaultOnProductTap`,
+  /// now-introducing card / detail-sheet recommendation — and the LIVE pinned card when
+  /// [onTapPinnedProduct] is not set, rb-flutter-pinned-card-follows-on-product-tap). DEFAULT (`_defaultOnProductTap`,
   /// flutter-dropin-product-tap-telemetry): first `controller.productOverlay.simulateProductTap`
   /// (native sends `INFO_PRODUCT_VIEW` + `goods_pv` + `PRODUCT_CLICK`), then
   /// `DefaultPlayerTemplate.handleProductTap(product:,diversion:)` with the full product (opens
@@ -2394,8 +2404,11 @@ class _LivebuyPlayerState extends State<LivebuyPlayer>
       // onProductTap uses below. flutter-dropin-product-tap-telemetry: that default sends the
       // native telemetry (productOverlay.simulateProductTap) AND opens the detail in-process —
       // the native round-trip alone is still a dead end for OPENING (see [defaultProductTap]).
-      onTapPinnedProduct:
-          resolveProductTapHandler(c.onTapPinnedProduct, _defaultOnProductTap),
+      // rb-flutter-pinned-card-follows-on-product-tap: onTapPinnedProduct ?? onProductTap ??
+      // default — a host that only sets onProductTap also gets the pinned card (parity iOS /
+      // Android, whose pinned card goes through config.onProductTap).
+      onTapPinnedProduct: resolvePinnedProductTapHandler(
+          c.onTapPinnedProduct, c.onProductTap, _defaultOnProductTap),
       // LIVE「留言…」pill → 預設先判斷暱稱是否已設定（R2：讀容器本地鏡像 `_guestNickname`）：未設定
       // （訪客且尚未選名）→ 先呈現 設定暱稱 modal（composeAfter=true、送出後接 composer）；否則開
       // composer。host 自訂 config.onComment 則完全接管、不套 gating（parity iOS / Android / RN）。
@@ -3238,10 +3251,23 @@ void defaultProductTap(LBProduct product, int diversion,
   forwardProductTapToTemplate(product, diversion, template);
 }
 
-/// `override ?? fallback` for the two product-tap seams (`onProductTap` /
-/// `onTapPinnedProduct`). A host override replaces the default entirely — neither the
-/// telemetry nor the detail open is then called by the container. Extracted so that rule is
-/// unit-testable without pumping the container (flutter-dropin-product-tap-telemetry).
+/// `override ?? fallback` for the `onProductTap` seam (the pinned card uses
+/// [resolvePinnedProductTapHandler], which falls back to `onProductTap` first). A host override
+/// replaces the default entirely — neither the telemetry nor the detail open is then called by
+/// the container. Extracted so that rule is unit-testable without pumping the container
+/// (flutter-dropin-product-tap-telemetry).
 ValueChanged<LBProduct> resolveProductTapHandler(
         ValueChanged<LBProduct>? override, ValueChanged<LBProduct> fallback) =>
     override ?? fallback;
+
+/// Pinned-card handler: `pinnedOverride ?? productTapOverride ?? fallback`
+/// (rb-flutter-pinned-card-follows-on-product-tap). A host that only sets `onProductTap` gets
+/// the pinned card too — parity iOS (`routeDropInProductTap`) / Android (`config.onProductTap
+/// ?: defaultProductTap`), where all product entries share one handler. `onTapPinnedProduct`
+/// stays the more specific seam and wins when set. Extracted so the four combinations are
+/// unit-testable without pumping the container.
+ValueChanged<LBProduct> resolvePinnedProductTapHandler(
+        ValueChanged<LBProduct>? pinnedOverride,
+        ValueChanged<LBProduct>? productTapOverride,
+        ValueChanged<LBProduct> fallback) =>
+    pinnedOverride ?? productTapOverride ?? fallback;
