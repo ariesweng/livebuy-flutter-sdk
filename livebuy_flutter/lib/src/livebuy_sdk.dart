@@ -686,8 +686,12 @@ class LivebuySDK {
   /// live-bid-flutter-core; parity iOS `Livebuy.confirmBidWin(videoId:buyingIds:)`
   /// / Android `LivebuySDK.confirmBidWin(videoId, buyingIds)`). The native core
   /// calls `POST /sdk/video/bidconfirm`, which only marks the records as read
-  /// (the back office then stops the LINE / Telegram unread reminders). The SDK
-  /// never calls it by itself and it dispatches no event.
+  /// (the back office then stops the LINE / Telegram unread reminders). It
+  /// dispatches no event. Wins with `shop_cart_synced == true` (168money /
+  /// 直播管家) are already confirmed by the native core right after ordering
+  /// (bid-won-auto-confirm-synced-core); calling it again is harmless (the
+  /// backend answers success for confirmed records). For `false` (168+EC) the
+  /// host still calls it after the viewer acknowledges the win.
   ///
   /// Call it only after `BID_WON` arrived (the SDK has ordered the win already);
   /// confirming first makes the order step fail for 168+EC shops. `BID_WON`'s

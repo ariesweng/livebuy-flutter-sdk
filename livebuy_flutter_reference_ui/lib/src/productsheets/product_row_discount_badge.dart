@@ -16,6 +16,8 @@
 // 相符；`round(33.708...) == 34` 不符——這是採用 `floor` 而非 `round` 的判定依據（設計來源
 // 沒有明確的取捨註解，demo data 是唯一可查證的 ground truth）。
 
+import '../reference_ui_number_format.dart';
+
 /// 商品列 `.row` 排版「原價劃線 + 折扣百分比」的百分比純決策
 /// （rb-flutter-product-row-layout-and-price-color）。
 ///
@@ -26,13 +28,20 @@
 /// - [originalPrice] 未實際高於 [price]，或非正值（避免除以零）；
 /// - 算出的百分比 floor 後恰好是 `0`（例如 `originalPrice: 101, price: 100` →
 ///   `0.99...%` → floor → `0`——一個真實但罕見的 floor 取整邊界，不是錯誤；顯示一個誤導
-///   的「0%」標籤會比完全不顯示更糟）。
+///   的「0%」標籤會比完全不顯示更糟）；
+/// - 百分比無法表示成 int（NaN／±infinity／超出 int64，例如 `price: -1.7e308,
+///   originalPrice: 1.7e308` 差值溢位成 infinity）——不丟例外、不顯示徽章
+///   （rb-flutter-price-int-conversion-guard，parity iOS `ProductRowDiscountBadge.percent`）。
+///   可表示的值不設上限：負價格算出超過 100% 時照舊回傳（與 Android／RN／iOS 一致）。
 int? productRowDiscountPercent({
   required double? price,
   required double? originalPrice,
 }) {
   if (price == null || originalPrice == null) return null;
   if (originalPrice <= price || originalPrice <= 0) return null;
-  final off = ((originalPrice - price) / originalPrice * 100).floor();
+  final off = referenceUiSafeInt(
+    ((originalPrice - price) / originalPrice * 100).floorToDouble(),
+  );
+  if (off == null) return null;
   return off > 0 ? off : null;
 }

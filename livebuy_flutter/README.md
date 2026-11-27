@@ -6,12 +6,22 @@ and methods.
 
 ## Installation
 
-Add to `pubspec.yaml`:
+`livebuy_flutter` is **not published on pub.dev**. Add it to `pubspec.yaml` as a git dependency
+on the `livebuy-flutter-sdk` mirror repository, pinned to a release tag:
 
 ```yaml
 dependencies:
-  livebuy_flutter: ^1.2.0-rc.2
+  livebuy_flutter:
+    git:
+      url: https://github.com/ariesweng/livebuy-flutter-sdk.git
+      path: livebuy_flutter
+      ref: v2.17.2   # pin to a release tag — see the mirror repository's CHANGELOG.md
 ```
+
+Do not replace the `git:` block with a hosted version range (a bare version after the package
+name) — that asks pub.dev for a package with this name, which Livebuy does not publish there. If you also use the drop-in
+UI, declare `livebuy_flutter_ui` and `livebuy_flutter_reference_ui` the same way (same `url`, their
+own `path`, the same `ref`).
 
 Then:
 

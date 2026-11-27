@@ -93,23 +93,65 @@ int referenceUiImageTierSidePx(
   }
 }
 
+/// Largest number of pixels one remote-image decode may produce (4096 × 4096 = 64 MiB as
+/// RGBA), whatever the source and the tier (rb-image-decode-pixel-cap). The "shorter side =
+/// tier size" rule alone keeps an extreme-aspect source whose shorter side is already at most
+/// the tier size at its original size — e.g. a 65535 × 420 PNG of a few dozen KB → ~105 MiB.
+/// Same value on iOS / Android.
+const int kReferenceUiMaxDecodedPixels = 16777216;
+
 /// The size to decode a source of [intrinsicWidth]×[intrinsicHeight] at so that its
 /// SHORTER side is [minSidePx] (aspect ratio preserved — the decoded image then covers any
 /// box whose sides are both at most [minSidePx], however it is fitted at paint time), or
 /// `null` = decode at the source's own size. Never upscales: a source whose shorter side
-/// is already at most [minSidePx] → `null`. Pure.
+/// is already at most [minSidePx] → `null`.
+///
+/// Either way the result never exceeds [maxPixels] pixels (rb-image-decode-pixel-cap): when
+/// it would, both sides are scaled down further (aspect kept, rounded DOWN) until it fits — at
+/// an extreme aspect ratio the decode then no longer covers the box, the accepted trade-off.
+/// `null` is therefore only returned when the whole source is within [maxPixels]. Pure.
 ({int width, int height})? referenceUiDecodeTargetSize({
   required int intrinsicWidth,
   required int intrinsicHeight,
   required int minSidePx,
+  int maxPixels = kReferenceUiMaxDecodedPixels,
 }) {
   if (intrinsicWidth <= 0 || intrinsicHeight <= 0 || minSidePx <= 0) return null;
   final double scale = minSidePx / math.min(intrinsicWidth, intrinsicHeight);
-  if (scale >= 1.0) return null;
-  return (
-    width: math.max(1, (intrinsicWidth * scale).ceil()),
-    height: math.max(1, (intrinsicHeight * scale).ceil()),
+  if (scale < 1.0) {
+    final ({int width, int height}) cover = (
+      width: math.max(1, (intrinsicWidth * scale).ceil()),
+      height: math.max(1, (intrinsicHeight * scale).ceil()),
+    );
+    if (maxPixels <= 0 || cover.width * cover.height <= maxPixels) return cover;
+  }
+  return referenceUiPixelCappedSize(
+    intrinsicWidth: intrinsicWidth,
+    intrinsicHeight: intrinsicHeight,
+    maxPixels: maxPixels,
   );
+}
+
+/// The largest aspect-preserving size (both sides rounded DOWN, each at least 1) of a
+/// [intrinsicWidth]×[intrinsicHeight] source that is within [maxPixels] pixels, or `null`
+/// when the whole source already is (or [maxPixels] is not positive). Pure.
+({int width, int height})? referenceUiPixelCappedSize({
+  required int intrinsicWidth,
+  required int intrinsicHeight,
+  int maxPixels = kReferenceUiMaxDecodedPixels,
+}) {
+  if (intrinsicWidth <= 0 || intrinsicHeight <= 0 || maxPixels <= 0) return null;
+  final double area = intrinsicWidth.toDouble() * intrinsicHeight.toDouble();
+  if (area <= maxPixels) return null;
+  final double scale = math.sqrt(maxPixels / area);
+  int width = math.max(1, (intrinsicWidth * scale).floor());
+  int height = math.max(1, (intrinsicHeight * scale).floor());
+  // An edge clamped up to 1 px (a sliver of a source) leaves the other edge to absorb the cap.
+  if (width * height > maxPixels) {
+    if (width == 1) height = maxPixels;
+    if (height == 1) width = maxPixels;
+  }
+  return (width: width, height: height);
 }
 
 /// Cache key of [ReferenceUiSizedImage]: the wrapped provider's own key plus the size.

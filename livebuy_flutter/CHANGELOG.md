@@ -6,6 +6,46 @@ Format conforms to [pub.dev CHANGELOG guidelines](https://dart.dev/tools/pub/pac
 
 ## [Unreleased]
 
+（目前無待發項目——`2.18.0` 已於下方發布，三套件共用版號 lockstep。）
+
+## 2.18.0 - 2026-11-27
+
+> **三套件版號 lockstep minor，無 BREAKING、既有公開 API 不變（無移除、無改簽章）。** 本版收錄資安稽核 run-1 的 Flutter 端修正，並把
+> Android 原生依賴 `4.33.1` → `4.34.0`（iOS 維持 podspec `~> 4.33`／`Package.swift` `from: "4.33.0"`，宿主重新解析即拿到 `4.34.0`）。
+> 新增 additive 公開函式 `externalLiveDecision`（`livebuy_flutter_reference_ui`）。有升級後看得到的行為變化（見 ⚠️），所以判定 minor。
+> **host 須三套件一起升到 `2.18.0`。**
+> **驗證範圍**：各來源 change 經獨立驗收（`flutter test`／`flutter analyze`）；Android pin 以 example `flutter build apk --debug` 確認解析
+> `4.34.0`。**未經模擬器或真機實測**（搶購自動確認、換會員需要真實後端）。
+
+### ⚠️ 升級後行為差異
+
+- **原生 core `4.34.0` 的行為變化一併帶入**（見 [`docs/release-notes/v4.34.0.md`](../docs/release-notes/v4.34.0.md)）：`clearUser()` 會換一組新的
+  訪客 id 並清除訪客暱稱；`shop_cart_synced = true`（168money／直播管家）的得標由原生 core 自動確認，host 再呼叫 `confirmBidWin` 也無妨，
+  `false`（168+EC）仍由 host 呼叫；`setFbclid`／`captureAdClick` 只接受 1–500 個 `A-Z a-z 0-9 _ -` 字元的 `fbclid`。
+- **登出或換會員後，drop-in 清掉上一位觀眾的中獎、領獎結果與得標狀態**（`livebuy_flutter_ui`，`template-clear-viewer-state-on-identity-change`）。
+  訪客登入、同一位會員重複登入、設定暱稱都不清。
+- **外部平台直播只認 `http`／`https`**（`livebuy_flutter_reference_ui`，`rb-url-exit-policy-gate`）：直播卡 `liveurl` 先經 `LBURLOpenPolicy.decide`，
+  自訂 App scheme、`intent:`、`javascript:` 等即使網域在外部平台清單裡也不算外部直播，改走一般點影片流程。新增 `externalLiveDecision(urlString)`
+  （回傳判定結果或 `null`；`isExternalLiveUrl` 行為等同 `externalLiveDecision(...) != null`）。
+
+### Fixed（`livebuy_flutter_reference_ui`）
+
+- **商品價格與折扣遇到異常值不再畫出錯誤區塊或錯誤數字**（`rb-flutter-price-int-conversion-guard`）：價格為 NaN、無限大或超出 int64 時顯示空白、不畫折扣徽章，
+  與 iOS 相同。正常價格顯示不變。
+- **遠端圖片解碼有像素上限**（`rb-image-decode-pixel-cap`）：每張圖最多 4096×4096 像素，超過才依比例縮小。正常商品圖不變。
+
+### Changed（`livebuy_flutter`）
+
+- Android 原生依賴 `tv.livebuy:livebuy:4.33.1` → `4.34.0`（`flutter-android-pin-4-34-0-core`）。
+- 文件：`confirmBidWin` 與 `BID_WON` 說明補上自動確認（`confirm-bid-win-doc-auto-call-core`）；README／podspec 註解改為 git 依賴寫法並說明
+  registry 回退風險（`registry-name-dependency-guidance-core`）；`LBURLOpenPolicy` 檔頭註解訂正（`url-open-policy-stale-bypass-notes-core`）。
+- 範例 App 移除寫死的憑證，改由 `--dart-define` 或 `.env.local` 注入（`flutter-example-credentials-dart-define`）。
+
+### iOS 原生依賴
+
+- Flutter iOS 依賴為寬鬆約束（podspec `~> 4.33`／`Package.swift` `from: "4.33.0"`），不必改套件即可拿到 iOS `4.34.0`：CocoaPods host 把 Podfile
+  中 `LivebuySDK` 的 podspec URL 改指 `v4.34.0` 並 `pod update LivebuySDK`、SwiftPM host 重新解析即可。
+
 ## 2.17.2 - 2026-11-24
 
 > **三套件版號 lockstep patch，無 BREAKING、既有公開 API 不變（無移除、無改簽章）。** `livebuy_flutter_reference_ui`：drop-in 直播置頂卡改跟

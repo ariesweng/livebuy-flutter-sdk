@@ -1300,10 +1300,63 @@ class DefaultPlayerTemplate {
   /// Updates the identity-label AND, on `logged_in`, clears the auth-gate prompt
   /// (two independent view-models → each fires its own single notification).
   /// Reads snake_case wire (`state` / `display_name`); `resumed_action` ignored.
+  ///
+  /// template-clear-viewer-state-on-identity-change: when [identityTransition] says the
+  /// viewer changed, the previous viewer's [winClaim] state (unclaimed wins, result incl.
+  /// award code, last submitted id, in-flight flag) and [bidWon] items are dropped, each
+  /// view-model firing its own single notification (same convention as above).
   void handleAuthStateChanged(Map<String, Object?> params) {
     final st = params['state'] as String?;
     identityLabel.update(st, params['display_name'] as String?);
     if (st == 'logged_in') authGate.clearOnLogin();
+    final transition = identityTransition(
+        _viewerIdentity, st ?? '', params['external_user_id'] as String?);
+    _viewerIdentity = transition.next;
+    if (transition.clearsViewerState) {
+      winClaim.resetForIdentityChange();
+      bidWon.clear();
+    }
+  }
+
+  /// Last identity seen through `AUTH_STATE_CHANGED` (`loggedIn: false` = guest / not
+  /// yet seen); see [identityTransition].
+  ({bool loggedIn, String? externalUserId}) _viewerIdentity =
+      (loggedIn: false, externalUserId: null);
+
+  /// Pure (parity iOS / Android / RN `identityTransition`): does this
+  /// `AUTH_STATE_CHANGED` mean a different viewer?
+  ///  - `logged_out` → yes (forget the identity).
+  ///  - `logged_in` after guest / nothing seen → no (guest → login keeps the guest's
+  ///    wins: a product award blocked by `requireLoginForAddToCart` is claimed right
+  ///    after login).
+  ///  - `logged_in` after `logged_in` → no only when both `external_user_id`s are
+  ///    non-empty and equal; a missing id cannot prove "same viewer", so it clears.
+  ///  - `guest` (nickname set) / unknown states → no, identity unchanged.
+  @visibleForTesting
+  static ({
+    bool clearsViewerState,
+    ({bool loggedIn, String? externalUserId}) next
+  }) identityTransition(
+    ({bool loggedIn, String? externalUserId}) previous,
+    String state,
+    String? externalUserId,
+  ) {
+    if (state == 'logged_out') {
+      return (
+        clearsViewerState: true,
+        next: (loggedIn: false, externalUserId: null)
+      );
+    }
+    if (state != 'logged_in') {
+      return (clearsViewerState: false, next: previous);
+    }
+    final id =
+        (externalUserId != null && externalUserId.isNotEmpty) ? externalUserId : null;
+    final sameViewer = id != null && id == previous.externalUserId;
+    return (
+      clearsViewerState: previous.loggedIn && !sameViewer,
+      next: (loggedIn: true, externalUserId: id)
+    );
   }
 
   /// Host-triggered「請求改名」intent (guest態). Forwards to the injected

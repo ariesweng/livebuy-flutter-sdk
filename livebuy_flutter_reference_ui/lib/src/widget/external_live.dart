@@ -1,4 +1,5 @@
-import 'package:livebuy_flutter/livebuy_flutter.dart' show LBVideoItem;
+import 'package:livebuy_flutter/livebuy_flutter.dart'
+    show LBURLOpenDecision, LBURLOpenPolicy, LBVideoItem;
 import 'package:url_launcher/url_launcher.dart';
 
 // external_live — external-platform live detection (rb-flutter-external-live-watch).
@@ -25,24 +26,46 @@ const List<String> kExternalLiveHosts = ['facebook.com', 'fb.watch', 'fb.gg'];
 /// in-app playback. Sub-domain match is anchored on a leading dot (`host == base` OR
 /// `host.endsWith('.$base')`) so look-alikes like `facebook.com.evil.example` and
 /// `notfacebook.com` do NOT match.
-bool isExternalLiveUrl(String urlString) {
-  final host = Uri.tryParse(urlString)?.host.toLowerCase();
-  if (host == null || host.isEmpty) return false;
-  return kExternalLiveHosts.any((base) => host == base || host.endsWith('.$base'));
+///
+/// **Scheme gate (`rb-url-exit-policy-gate`)**: the string is first run through the
+/// core `LBURLOpenPolicy.decide` allowlist — a `null` decision (custom app scheme /
+/// `intent:` / `file:` / `javascript:` / …) is NEVER an external live, even with a
+/// `facebook.com` host. A live URL must additionally be `http` / `https` (`mailto` /
+/// `tel` / `sms` are openable but are not lives). The host check runs on the policy's
+/// parsed `decision.url` (one parser, no parser differential).
+bool isExternalLiveUrl(String urlString) => externalLiveDecision(urlString) != null;
+
+/// Schemes an external live URL may use (a subset of the core openable allowlist).
+const Set<String> _kExternalLiveSchemes = {'http', 'https'};
+
+/// The core policy decision for [urlString] when it is an external live, else null.
+/// Callers open `decision.url` (never re-parse the raw string).
+LBURLOpenDecision? externalLiveDecision(String urlString) {
+  final decision = LBURLOpenPolicy.decide(urlString);
+  if (decision == null) return null;
+  if (!_kExternalLiveSchemes.contains(decision.url.scheme.toLowerCase())) return null;
+  final host = decision.url.host.toLowerCase();
+  if (host.isEmpty) return null;
+  return kExternalLiveHosts.any((base) => host == base || host.endsWith('.$base'))
+      ? decision
+      : null;
 }
 
 /// The external-platform watch URL when this live's `liveurl` is an external broadcast
-/// (Facebook today), else null. Tapping such a live opens this URL externally.
+/// (Facebook today), else null. Tapping such a live opens this URL externally. The
+/// value is the core policy decision's parsed URL (`decision.url.toString()`).
 String? externalLiveWatchUrl(LBVideoItem item) =>
-    isExternalLiveUrl(item.liveurl) ? item.liveurl : null;
+    externalLiveDecision(item.liveurl)?.url.toString();
 
 /// Default external open — launches [url] in the installed Facebook app / browser via
-/// `url_launcher` (externalApplication mode). Fire-and-forget.
+/// `url_launcher` (externalApplication mode). Fire-and-forget. Gated by the core
+/// `LBURLOpenPolicy.decide` (rb-url-exit-policy-gate): a `null` decision is a no-op and
+/// the launched value is the decision's parsed `Uri`.
 void _defaultOpenExternal(String url) {
-  final uri = Uri.tryParse(url);
-  if (uri == null) return;
+  final decision = LBURLOpenPolicy.decide(url);
+  if (decision == null) return;
   // ignore: discarded_futures
-  launchUrl(uri, mode: LaunchMode.externalApplication);
+  launchUrl(decision.url, mode: LaunchMode.externalApplication);
 }
 
 /// Wraps a host-wired [onTapVideo] into an external-aware callback: when the tapped

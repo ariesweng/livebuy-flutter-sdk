@@ -235,6 +235,19 @@ class DefaultWinClaim extends ChangeNotifier {
   /// still be able to clear the right entry.
   String? _lastSubmittedWinnerId;
 
+  /// template-clear-viewer-state-on-identity-change: winner ids dropped by
+  /// [resetForIdentityChange]. A host sheet may still hold the previous viewer's
+  /// [LBWinner], so the submit entry points refuse these ids (otherwise the next
+  /// viewer's token would claim the previous viewer's ticket). A fresh [onWin] of the
+  /// same id lifts the block.
+  final Set<String> _revokedWinnerIds = {};
+
+  /// template-clear-viewer-state-on-identity-change: set when an identity change
+  /// happened while a previous submit may still be outstanding — its late
+  /// `AWARD_CLAIM_RESULT` (possibly carrying the previous viewer's award code) MUST NOT
+  /// reach the next viewer. Cleared by the next submit.
+  bool _dropsLateResult = false;
+
   DefaultWinClaim({
     // ignore: deprecated_member_use_from_same_package
     @Deprecated('EMAIL-LESS seam — 改用 contactSubmitter；下一個 major 移除。')
@@ -248,6 +261,7 @@ class DefaultWinClaim extends ChangeNotifier {
   /// On showWin(text, winner): add to the unclaimed set, deduped by winner.id.
   /// Re-delivering the same id does NOT inflate the count.
   void onWin(LBWinner winner) {
+    _revokedWinnerIds.remove(winner.id);
     _unclaimed[winner.id] = winner;
     notifyListeners(); // coalesced "unclaimed changed" — once per recordWin (D1).
   }
@@ -321,6 +335,7 @@ class DefaultWinClaim extends ChangeNotifier {
   /// identical (design.md D2).
   bool submitWithEmail(LBWinner winner, String email) {
     if (_submitInFlight) return false;
+    if (_revokedWinnerIds.contains(winner.id)) return false;
     if (!isValidEmail(email)) return false;
     _beginSubmit(winner, LBAwardClaimInput(email: email.trim()));
     return true;
@@ -345,6 +360,7 @@ class DefaultWinClaim extends ChangeNotifier {
   )
   void submit(LBWinner winner) {
     if (_submitInFlight) return;
+    if (_revokedWinnerIds.contains(winner.id)) return;
     _beginSubmit(winner, null);
   }
 
@@ -359,6 +375,7 @@ class DefaultWinClaim extends ChangeNotifier {
   /// reference-ui behaves identically.
   void _beginSubmit(LBWinner winner, LBAwardClaimInput? contact) {
     _lastSubmittedWinnerId = winner.id;
+    _dropsLateResult = false;
     _resultState = null;
     _submitInFlight = true;
     final contactSubmitter = _contactSubmitter;
@@ -436,6 +453,8 @@ class DefaultWinClaim extends ChangeNotifier {
     String? awardCode,
     String? winnerId,
   }) {
+    // A result for a submit made before an identity change belongs to the previous viewer.
+    if (_dropsLateResult) return;
     _resultState = LBClaimResultState.fromResult(
       status: status,
       awardType: awardType,
@@ -483,5 +502,20 @@ class DefaultWinClaim extends ChangeNotifier {
     _resultState = null;
     _submitInFlight = false;
     notifyListeners();
+  }
+
+  /// Identity change (template-clear-viewer-state-on-identity-change): drop everything
+  /// the previous viewer owned — unclaimed set, result (incl. award code), in-flight
+  /// flag (via [clear]), plus [lastSubmittedWinnerId] — and block re-submitting the
+  /// dropped ids. Notifies once (through [clear]).
+  void resetForIdentityChange() {
+    _revokedWinnerIds.addAll(_unclaimed.keys);
+    final last = _lastSubmittedWinnerId;
+    if (last != null) {
+      _revokedWinnerIds.add(last);
+      _dropsLateResult = true;
+    }
+    _lastSubmittedWinnerId = null;
+    clear();
   }
 }

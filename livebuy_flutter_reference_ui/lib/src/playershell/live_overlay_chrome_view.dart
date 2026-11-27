@@ -6,6 +6,7 @@ import 'package:livebuy_flutter/livebuy_flutter.dart' show LBProduct;
 import '../productsheets/equalizer_glyph.dart';
 import '../productsheets/product_status_badge.dart';
 import '../productsheets/sheet_scaffold.dart' show liveProductImage;
+import '../reference_ui_number_format.dart';
 import '../reference_ui_theme.dart';
 import '../testing/lb_test_keys.dart';
 import 'megaphone_glyph.dart';
@@ -655,14 +656,21 @@ class LiveOverlayChromeView extends StatelessWidget {
   String _imageUrl(LBProduct product) =>
       product.photos.isNotEmpty ? product.photos.first : product.pic;
 
-  /// The live-price label. Prefers the pre-formatted `priceShow`; falls back to
-  /// `NT$ <price>` when the show string is empty. Pure.
-  String _livePriceText(LBProduct product) {
-    final show = product.priceShow.trim();
-    if (show.isNotEmpty) return show;
-    final price = product.price ?? 0;
-    return 'NT\$ ${price.toInt()}';
-  }
+  /// The live-price label. See [liveOverlayPriceText]. Pure.
+  String _livePriceText(LBProduct product) => liveOverlayPriceText(product);
+}
+
+/// The live-price label for the pinned card / host caption. Prefers the pre-formatted
+/// `priceShow` (trimmed); falls back to `NT$ <price>` when the show string is empty
+/// (`price == null` → `0`). When `price` cannot be represented as an int (NaN,
+/// ±infinity, outside int64) it returns `""` instead of throwing
+/// (rb-flutter-price-int-conversion-guard, parity iOS
+/// `LiveOverlayChromeView.livePriceText(_:)`). Pure; package-internal (not exported).
+String liveOverlayPriceText(LBProduct product) {
+  final show = product.priceShow.trim();
+  if (show.isNotEmpty) return show;
+  final price = referenceUiSafeInt(product.price ?? 0);
+  return price == null ? '' : 'NT\$ $price';
 }
 
 // ── LBPGestureHint auto-fade wrapper ──────────────────────────────────────
